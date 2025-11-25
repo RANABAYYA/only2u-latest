@@ -1,0 +1,102 @@
+{
+  "expo": {
+    "name": "Only2U",
+    "slug": "only2u",
+    "description": "Official Only2U app by Only2U Fashion Private Limited, delivering AI-powered fashion commerce.",
+    "version": "1.0.2",
+    "scheme": "only2u",
+    "platforms": ["ios", "android"],
+    "web": {
+      "favicon": "./assets/icon.png"
+    },
+    "experiments": {
+      "tsconfigPaths": true
+    },
+    "plugins": [
+      "expo-dev-client",
+      "expo-image-picker",
+      "expo-av"
+    ],
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.only2u.only2u",
+      "deploymentTarget": "13.4",
+      "associatedDomains": ["applinks:only2u.app", "applinks:*.only2u.app"],
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "Only2U needs access to your camera to take photos for your profile picture and to enable AI face swap previews that show you how products look on you.",
+        "NSPhotoLibraryUsageDescription": "Only2U needs access to your photo library to select photos for your profile picture, enable face swap previews, and allow product customization with AI technology.",
+        "NSPhotoLibraryAddUsageDescription": "Only2U needs permission to save your face swap results and personalized product images to your photo library.",
+        "NSMicrophoneUsageDescription": "Only2U needs access to your microphone for recording videos and creating personalized content with products.",
+        "NSSpeechRecognitionUsageDescription": "Only2U uses speech recognition to enable voice commands and improve accessibility for hands-free navigation and product search.",
+        "NSContactsUsageDescription": "Only2U needs access to your contacts to help you connect with friends already using the app."
+      },
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.only2u.only2u",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.READ_CONTACTS"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "only2u.app",
+              "pathPrefix": "/shared-collection"
+            },
+            {
+              "scheme": "https",
+              "host": "only2u.app",
+              "pathPrefix": "/product"
+            },
+            {
+              "scheme": "only2u"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
+      "usesCleartextTraffic": true,
+      "compileSdkVersion": 34,
+      "targetSdkVersion": 34,
+      "buildToolsVersion": "34.0.0",
+      "proguard": {
+        "enabled": true
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "23280bb9-6b62-412f-a55b-292d7738e440"
+      }
+    },
+    "owner": "nischalrapireddy-2"
+  }
+}
+
