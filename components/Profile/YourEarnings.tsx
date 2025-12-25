@@ -17,6 +17,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import type { StackNavigationProp } from '@react-navigation/stack';
+import type { RootStackParamList } from '~/types/navigation';
 import { supabase } from '~/utils/supabase';
 import { useUser } from '~/contexts/UserContext';
 import { ResellerService } from '~/services/resellerService';
@@ -175,7 +177,7 @@ const toTitleCase = (value?: string | null) => {
 };
 
 export default function ResellerEarnings() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
   const { userData } = useUser();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -387,6 +389,39 @@ export default function ResellerEarnings() {
 
       const rawOrders: ResellerOrderRecord[] = (data as ResellerOrderRecord[] | null) ?? [];
 
+      // Add mock reseller order for sample/demo purposes
+      const mockResellerOrder: EnrichedOrder = {
+        id: '00000000-0000-0000-0000-000000000010',
+        order_number: 'RSL789012',
+        created_at: new Date('2025-11-10').toISOString(),
+        total_amount: 5998,
+        original_total: 4998,
+        reseller_margin_amount: 1000,
+        reseller_profit: 1000,
+        payment_status: 'paid',
+        status: 'delivered',
+        estimated_delivery_date: new Date('2025-11-15').toISOString(),
+        expected_completion_date: new Date('2025-11-20').toISOString(),
+        order_items: [
+          {
+            id: '00000000-0000-0000-0000-000000000011',
+            product_id: '00000000-0000-0000-0000-000000000012',
+            quantity: 1,
+            unit_price: 2499,
+            total_price: 2499,
+            reseller_price: 1999,
+          },
+          {
+            id: '00000000-0000-0000-0000-000000000013',
+            product_id: '00000000-0000-0000-0000-000000000014',
+            quantity: 1,
+            unit_price: 3499,
+            total_price: 3499,
+            reseller_price: 2999,
+          },
+        ],
+      };
+
       const mapOrder = (order: ResellerOrderRecord): EnrichedOrder => {
         const originalTotal = (order.items || []).reduce((sum, item) => sum + Number(item.total_price || 0), 0);
         const marginAmount = Number(order.reseller_commission || 0);
@@ -406,7 +441,7 @@ export default function ResellerEarnings() {
         };
       };
 
-      const allEnrichedOrders = rawOrders.map(mapOrder);
+      const allEnrichedOrders = [mockResellerOrder, ...rawOrders.map(mapOrder)];
 
       const filteredOrders = selectedFilter === 'all'
         ? allEnrichedOrders
@@ -504,9 +539,9 @@ export default function ResellerEarnings() {
       <TouchableOpacity
         style={styles.orderCard}
         activeOpacity={0.7}
-        onPress={() =>
-          navigation.navigate('OrderDetails' as never, { orderId: item.id } as never)
-        }
+        onPress={() => {
+          navigation.navigate('OrderDetails', { orderId: item.id });
+        }}
       >
       <View style={styles.orderHeader}>
           <View style={styles.orderHeaderLeft}>
@@ -869,11 +904,6 @@ export default function ResellerEarnings() {
                           size={14}
                           color={tierTheme.accent}
                         />
-                        <Text style={styles.tierHintText}>
-                          {unlocked
-                            ? 'Cashback active on every order in this tier'
-                            : `${formatCurrency(unlockNeed)} more sales to unlock`}
-                        </Text>
                       </View>
                     </View>
                   );
@@ -884,7 +914,7 @@ export default function ResellerEarnings() {
                 <Text style={styles.tierTipTitle}>How to reach the next tier?</Text>
                 <Text style={styles.tierTipText}>
                   Share curated catalogs daily, follow up with interested shoppers, and keep your cart earnings healthy to
-                  unlock higher cashbacks.
+                  unlock higher reward points.
                 </Text>
               </View>
             </ScrollView>

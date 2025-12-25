@@ -94,10 +94,11 @@ const ProfilePictureUpload = () => {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.8,
+      quality: 0.85,
     });
 
     if (!result.canceled && result.assets[0]) {
+      // Image will be compressed to 1080p during upload
       setSelectedImage(result.assets[0].uri);
     }
     setShowImagePickerModal(false);
@@ -111,10 +112,11 @@ const ProfilePictureUpload = () => {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.8,
+      quality: 0.85,
     });
 
     if (!result.canceled && result.assets[0]) {
+      // Image will be compressed to 1080p during upload
       setSelectedImage(result.assets[0].uri);
     }
     setShowImagePickerModal(false);

@@ -385,7 +385,7 @@ class PiAPIFaceSwapService {
       try {
         const piStatus = await this.pollFaceSwapTaskStatus(task.pi_task_id);
 
-        if (piStatus.status === 'completed' && piStatus.result_urls) {
+        if (piStatus.status === 'completed' && piStatus.result_urls && piStatus.result_urls.length > 0) {
           await supabase
             .from('face_swap_tasks')
             .update({
@@ -489,52 +489,10 @@ class PiAPIFaceSwapService {
 
     // New API format: status can be "Completed", "Processing", "Pending", "Failed", "Staged"
     if (status === 'completed') {
-      // Try to find the result image URL in various possible locations
-      let imageUrl: string | null = null;
-      
-      // Check output object
-      if (data.output) {
-        if (typeof data.output === 'string') {
-          imageUrl = data.output;
-        } else if (data.output.image) {
-          imageUrl = data.output.image;
-        } else if (data.output.url) {
-          imageUrl = data.output.url;
-        } else if (Array.isArray(data.output) && data.output.length > 0) {
-          imageUrl = data.output[0];
-        }
+      const urls = this.collectResultUrls(data);
+      if (urls.length > 0) {
+        return { status: 'completed', result_urls: urls };
       }
-      
-      // Check direct image properties
-      if (!imageUrl) {
-        if (data.image) imageUrl = data.image;
-        else if (data.url) imageUrl = data.url;
-        else if (Array.isArray(data.images) && data.images.length > 0) {
-          imageUrl = data.images[0];
-        }
-      }
-      
-      // Deep search for image URLs
-      if (!imageUrl) {
-        const urls: string[] = [];
-        const visit = (v: any) => {
-          if (!v) return;
-          if (typeof v === 'string' && /^https?:\/\//.test(v)) {
-            urls.push(v);
-            return;
-          }
-          if (Array.isArray(v)) return v.forEach(visit);
-          if (typeof v === 'object') Object.values(v).forEach(visit);
-        };
-        visit(data);
-        const images = urls.filter(u => /(\.png|\.jpg|\.jpeg|\.webp)(\?|$)/i.test(u));
-        if (images.length) imageUrl = images[0];
-      }
-      
-      if (imageUrl) {
-        return { status: 'completed', result_urls: [imageUrl] };
-      }
-
       return { status: 'failed', error: 'Completed without image URL' };
     }
 
@@ -549,6 +507,57 @@ class PiAPIFaceSwapService {
 
     // Status is "Processing", "Pending", or "Staged"
     return { status: 'processing' };
+  }
+
+  private collectResultUrls(payload: any): string[] {
+    const urls: string[] = [];
+    const visit = (value: any) => {
+      if (!value) return;
+      if (typeof value === 'string' && /^https?:\/\//.test(value)) {
+        urls.push(value);
+        return;
+      }
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+        return;
+      }
+      if (typeof value === 'object') {
+        Object.values(value).forEach(visit);
+      }
+    };
+
+    if (payload.output) visit(payload.output);
+    if (payload.data?.output) visit(payload.data.output);
+    if (payload.result) visit(payload.result);
+    visit(payload);
+
+    return this.normalizeResultUrls(urls);
+  }
+
+  private normalizeResultUrls(rawUrls: string[]): string[] {
+    const deduped: string[] = [];
+    rawUrls.forEach((url) => {
+      if (!url || typeof url !== 'string') return;
+      const trimmed = url.trim();
+      if (!/^https?:\/\//i.test(trimmed)) return;
+      if (deduped.includes(trimmed)) return;
+      deduped.push(trimmed);
+    });
+
+    const imageLike = deduped.filter((url) => {
+      const lower = url.toLowerCase();
+      return (
+        /\.(png|jpg|jpeg|webp|gif)(\?|$)/.test(lower) ||
+        lower.includes('piapi.ai') ||
+        lower.includes('theapi.app') ||
+        lower.includes('amazonaws.com') ||
+        lower.includes('googleusercontent') ||
+        lower.includes('cloudfront')
+      );
+    });
+
+    const preferred = imageLike.length > 0 ? imageLike : deduped;
+    return preferred.slice(0, 6);
   }
 
   /**

@@ -349,6 +349,11 @@ const FriendSearchScreen: React.FC = () => {
               renderItem={renderResult}
               ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
               contentContainerStyle={styles.resultsList}
+              removeClippedSubviews={true}
+              maxToRenderPerBatch={10}
+              windowSize={10}
+              initialNumToRender={10}
+              updateCellsBatchingPeriod={50}
             />
           )}
         </View>

@@ -18,6 +18,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useUser } from '~/contexts/UserContext';
 import { useAuth } from '~/contexts/useAuth';
 import { supabase } from '~/utils/supabase';
+import { ResellerService } from '~/services/resellerService';
 import Toast from 'react-native-toast-message';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -78,6 +79,9 @@ const OrderDetails = () => {
   const [returnReason, setReturnReason] = useState('');
   const [returnDescription, setReturnDescription] = useState('');
   const [returnImages, setReturnImages] = useState<string[]>([]);
+  const [replacementSize, setReplacementSize] = useState<string>('');
+  const [availableSizes, setAvailableSizes] = useState<{ id: string; name: string }[]>([]);
+  const [loadingSizes, setLoadingSizes] = useState(false);
 
   // Report state
   const [reportReason, setReportReason] = useState('');
@@ -159,6 +163,164 @@ const OrderDetails = () => {
         return;
       }
 
+      // First, try to fetch from reseller_orders table (for reseller orders)
+      if (userData?.id) {
+        try {
+          const resellerProfile = await ResellerService.getResellerByUserId(userData.id);
+          if (resellerProfile) {
+            // Check if this is a mock reseller order
+            if (orderId === '00000000-0000-0000-0000-000000000010') {
+              // Return mock reseller order details
+              const mockResellerOrderDetails: OrderDetails = {
+                id: '00000000-0000-0000-0000-000000000010',
+                order_number: 'RSL789012',
+                status: 'delivered',
+                total_amount: 2499,
+                created_at: new Date('2025-11-10').toISOString(),
+                payment_status: 'paid',
+                payment_method: 'UPI',
+                shipping_address: {
+                  name: 'Priya Sharma',
+                  phone: '+91 98765 43211',
+                  address_line1: '456 Reseller Street',
+                  address_line2: 'Shop No. 5',
+                  city: 'Delhi',
+                  state: 'Delhi',
+                  pincode: '110001',
+                  country: 'India',
+                },
+                tracking_number: 'RSL1234567890',
+                shipped_at: new Date('2025-11-12').toISOString(),
+                delivered_at: new Date('2025-11-15').toISOString(),
+                order_items: [
+                  {
+                    id: '00000000-0000-0000-0000-000000000011',
+                    product_id: '00000000-0000-0000-0000-000000000012',
+                    product_name: 'Designer Silk Saree',
+                    product_image: 'https://images.unsplash.com/photo-1583292650898-7d22cd27ca6f?w=400',
+                    size: 'Free Size',
+                    color: 'Maroon',
+                    quantity: 1,
+                    unit_price: 2499,
+                    total_price: 2499,
+                  },
+                  {
+                    id: '00000000-0000-0000-0000-000000000013',
+                    product_id: '00000000-0000-0000-0000-000000000014',
+                    product_name: 'Embroidered Lehenga Set',
+                    product_image: 'https://images.unsplash.com/photo-1594633312681-425c7b97ccd1?w=400',
+                    size: 'M',
+                    color: 'Pink',
+                    quantity: 1,
+                    unit_price: 3499,
+                    total_price: 3499,
+                  },
+                ],
+              };
+              
+              setOrderDetails(mockResellerOrderDetails);
+              setLoading(false);
+              return;
+            }
+
+            const { data: resellerOrderData, error: resellerOrderError } = await supabase
+              .from('reseller_orders')
+              .select(`
+                id,
+                order_number,
+                status,
+                total_amount,
+                created_at,
+                payment_status,
+                payment_method,
+                customer_name,
+                customer_phone,
+                customer_email,
+                customer_address,
+                customer_city,
+                customer_state,
+                customer_pincode,
+                tracking_number,
+                shipped_at,
+                delivered_at,
+                items:reseller_order_items(
+                  id,
+                  product_id,
+                  variant_id,
+                  quantity,
+                  unit_price,
+                  total_price,
+                  product:products(
+                    id,
+                    name,
+                    image_urls
+                  ),
+                  variant:product_variants(
+                    id,
+                    size_id,
+                    color_id
+                  )
+                )
+              `)
+              .eq('id', orderId)
+              .eq('reseller_id', resellerProfile.id)
+              .maybeSingle();
+
+            // Check if we got data (maybeSingle returns null if no rows, not an error)
+            if (resellerOrderData) {
+              // Transform reseller order to match OrderDetails interface
+              const transformedOrder: OrderDetails = {
+                id: resellerOrderData.id,
+                order_number: resellerOrderData.order_number,
+                status: resellerOrderData.status || 'pending',
+                total_amount: Number(resellerOrderData.total_amount || 0),
+                created_at: resellerOrderData.created_at,
+                payment_status: resellerOrderData.payment_status || 'pending',
+                payment_method: resellerOrderData.payment_method || '',
+                shipping_address: {
+                  name: resellerOrderData.customer_name || '',
+                  phone: resellerOrderData.customer_phone || '',
+                  address_line1: resellerOrderData.customer_address || '',
+                  address_line2: '',
+                  city: resellerOrderData.customer_city || '',
+                  state: resellerOrderData.customer_state || '',
+                  pincode: resellerOrderData.customer_pincode || '',
+                  country: 'India',
+                },
+                tracking_number: resellerOrderData.tracking_number || null,
+                shipped_at: resellerOrderData.shipped_at || null,
+                delivered_at: resellerOrderData.delivered_at || null,
+                order_items: (resellerOrderData.items || []).map((item: any) => ({
+                  id: item.id,
+                  product_id: item.product_id || item.product?.id || '',
+                  product_name: item.product?.name || 'Product',
+                  product_image: Array.isArray(item.product?.image_urls) && item.product.image_urls.length > 0
+                    ? item.product.image_urls[0]
+                    : '',
+                  size: '', // Size will be empty for reseller orders - can be enhanced later
+                  color: '', // Color will be empty for reseller orders - can be enhanced later
+                  quantity: item.quantity || 0,
+                  unit_price: Number(item.unit_price || 0),
+                  total_price: Number(item.total_price || 0),
+                })),
+              };
+
+              setOrderDetails(transformedOrder);
+              setLoading(false);
+              return;
+            }
+            // If error is not "no rows", log it but continue to regular orders
+            if (resellerOrderError && resellerOrderError.code !== 'PGRST116') {
+              console.log('Error fetching reseller order:', resellerOrderError);
+            }
+          }
+        } catch (resellerError) {
+          console.log('Error checking reseller profile or fetching reseller order:', resellerError);
+          // Continue to try regular orders table
+        }
+      }
+
+      // Try regular orders table
       const { data, error } = await supabase
         .from('orders')
         .select(`
@@ -187,7 +349,7 @@ const OrderDetails = () => {
         `)
         .eq('id', orderId)
         .eq('user_id', userId)
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.error('Error fetching order details:', error);
@@ -195,6 +357,17 @@ const OrderDetails = () => {
           type: 'error',
           text1: 'Error',
           text2: 'Failed to load order details',
+        });
+        navigation.goBack();
+        return;
+      }
+
+      if (!data) {
+        console.error('Order not found');
+        Toast.show({
+          type: 'error',
+          text1: 'Order Not Found',
+          text2: 'This order could not be found',
         });
         navigation.goBack();
         return;
@@ -623,15 +796,6 @@ const OrderDetails = () => {
           <Text style={styles.sectionTitle}>Items in Your Order</Text>
           {orderDetails.order_items.map((item) => (
             <View key={item.id} style={styles.itemCard}>
-              <View style={styles.itemImageContainer}>
-                {item.product_image ? (
-                  <Image source={{ uri: item.product_image }} style={styles.itemImage} />
-                ) : (
-                  <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
-                    <Ionicons name="image-outline" size={32} color="#ccc" />
-                  </View>
-                )}
-              </View>
               <View style={styles.itemDetails}>
                 <Text style={styles.itemName}>{item.product_name}</Text>
                 <Text style={styles.itemMeta}>

@@ -65,7 +65,7 @@ const CatalogShare = () => {
     console.log('[CatalogShare] Product media found:', productMedia.length);
     console.log('[CatalogShare] Images:', productMedia.filter(m => m.type === 'image').length);
     console.log('[CatalogShare] Videos:', productMedia.filter(m => m.type === 'video').length);
-    console.log('[CatalogShare] Product variants:', product.variants?.length || product.product_variants?.length || 0);
+    console.log('[CatalogShare] Product variants:', product.variants?.length || 0);
     console.log('[CatalogShare] Product video_urls:', product.video_urls?.length || 0);
     if (product.variants) {
       product.variants.forEach((v: any, idx: number) => {
@@ -76,7 +76,7 @@ const CatalogShare = () => {
   
   // Extract available sizes - try multiple ways to get size data
   const extractAvailableSizes = (): string => {
-    const variants = product.variants || product.product_variants || [];
+    const variants = product.variants || [];
     const sizeSet = new Set<string>();
     
     // Method 1: Try to get from variant.size.name
@@ -135,31 +135,28 @@ const CatalogShare = () => {
     }
   };
 
-  // Process media URL for download - handles images and videos
+  // Process image URL for download - ensures Bunny storage and other URLs are properly formatted
   const processMediaUrl = (url: string, isVideo: boolean): string => {
     if (!url || typeof url !== 'string') return url;
 
-    if (isVideo) {
-      // Optimize Cloudinary videos
-      if (isCloudinaryUrl(url)) {
-        try {
-          return optimizeCloudinaryVideoUrl(url, {
-            quality: 'auto:good',
-            format: 'auto',
-            width: 1080,
-            bitrate: '2m',
-            fps: 30,
-          });
-        } catch (error) {
-          console.error('Error optimizing Cloudinary video URL:', error);
-        }
+    // Only process images (videos are skipped)
+    if (!isVideo) {
+      // Ensure Bunny storage URLs are properly formatted
+      let processedUrl = url;
+      
+      // Bunny CDN image URLs are already direct
+      if (processedUrl.includes('b-cdn.net')) {
+        // Bunny CDN URLs are ready to download
+        console.log('[CatalogShare] Bunny CDN image URL detected:', processedUrl);
+        return processedUrl;
       }
-      // Convert Google Drive URLs
-      return convertGoogleDriveVideoUrl(url);
-    } else {
-      // Process image URLs to ensure they're accessible
-      return getSafeImageUrl(url);
+      
+      // Use getSafeImageUrl for other image sources
+      processedUrl = getSafeImageUrl(url);
+      return processedUrl;
     }
+    
+    return url;
   };
 
   // Download product images and videos
@@ -200,96 +197,72 @@ const CatalogShare = () => {
   };
 
   const downloadProductMedia = async () => {
-    if (downloadedImages.length > 0 && downloadedVideos.length > 0) {
-      return { images: downloadedImages, videos: downloadedVideos };
+    if (downloadedImages.length > 0) {
+      return { images: downloadedImages, videos: [] };
     }
     
     setDownloadingImages(true);
     const downloadedImagePaths: string[] = [];
-    const downloadedVideoPaths: string[] = [];
     
     try {
       // Request media library permissions
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please grant photo library access to save product media.');
+        Alert.alert('Permission Required', 'Please grant photo library access to save product images.');
         return { images: [], videos: [] };
       }
 
       // Prepare the base directory where media will be stored
       const downloadDirectory = await ensureMediaDownloadDirectory();
 
-      // Download each product media item (images and videos)
-      const mediaToDownload = productMedia.slice(0, 10); // Limit to 10 items total for better sharing
+      // Filter only images from product media (skip videos)
+      const imagesToDownload = productMedia
+        .filter(item => item.type === 'image')
+        .slice(0, 10); // Limit to 10 images for better sharing
       
-      for (let i = 0; i < mediaToDownload.length; i++) {
-        const mediaItem = mediaToDownload[i];
+      console.log(`[CatalogShare] Found ${imagesToDownload.length} images to download`);
+      
+      for (let i = 0; i < imagesToDownload.length; i++) {
+        const mediaItem = imagesToDownload[i];
         if (!mediaItem || !mediaItem.url) continue;
 
         try {
-          const isVideo = mediaItem.type === 'video';
-          // Process the URL to ensure it's accessible
-          const processedUrl = processMediaUrl(mediaItem.url, isVideo);
-          const extension = isVideo ? 'mp4' : 'jpg';
-          const filename = `product_${product.id}_${isVideo ? 'video' : 'image'}_${i + 1}_${Date.now()}.${extension}`;
+          // Process the URL to ensure it's accessible (Bunny storage, etc.)
+          const processedUrl = processMediaUrl(mediaItem.url, false);
+          const filename = `product_${product.id}_image_${i + 1}_${Date.now()}.jpg`;
           const fileUri = `${downloadDirectory}${filename}`;
           
-          console.log(`[CatalogShare] Downloading ${isVideo ? 'video' : 'image'} ${i + 1}/${mediaToDownload.length}:`);
+          console.log(`[CatalogShare] Downloading image ${i + 1}/${imagesToDownload.length}:`);
           console.log(`  Original URL:`, mediaItem.url);
           console.log(`  Processed URL:`, processedUrl);
           console.log(`  Target file:`, fileUri);
           
-          if (processedUrl !== mediaItem.url) {
-            console.log(`[CatalogShare] URL processed:`, mediaItem.url, '->', processedUrl);
-          }
-          
-          // Download the media with proper options
+          // Download the image with proper options
           const downloadResult = await FileSystem.downloadAsync(processedUrl, fileUri, {
             headers: {
-              'Accept': isVideo ? 'video/*' : 'image/*',
+              'Accept': 'image/*',
               'User-Agent': 'Mozilla/5.0 (compatible; Only2U/1.0)',
             },
           });
           
           if (downloadResult.status === 200) {
-            console.log(`Successfully downloaded ${isVideo ? 'video' : 'image'}:`, downloadResult.uri);
+            console.log(`✅ Successfully downloaded image:`, downloadResult.uri);
             
             // Verify the file exists and is readable
             const fileInfo = await FileSystem.getInfoAsync(downloadResult.uri);
-            if (fileInfo.exists && fileInfo.size > 0) {
-              if (isVideo) {
-                // Additional validation for videos
-                console.log(`Video file info - Size: ${fileInfo.size} bytes, URI: ${downloadResult.uri}`);
-                // Ensure the file has .mp4 extension for proper recognition
-                if (!downloadResult.uri.toLowerCase().endsWith('.mp4')) {
-                  const newUri = downloadResult.uri.replace(/\.[^/.]+$/, '') + '.mp4';
-                  try {
-                    await FileSystem.moveAsync({
-                      from: downloadResult.uri,
-                      to: newUri,
-                    });
-                    console.log(`Renamed video file to .mp4:`, newUri);
-                    downloadedVideoPaths.push(newUri);
-                  } catch (renameError) {
-                    console.log('Failed to rename video file, using original:', renameError);
-                    downloadedVideoPaths.push(downloadResult.uri);
-                  }
-                } else {
-                  downloadedVideoPaths.push(downloadResult.uri);
-                }
-              } else {
-                downloadedImagePaths.push(downloadResult.uri);
-              }
+            if (fileInfo.exists && 'size' in fileInfo && fileInfo.size > 0) {
+              console.log(`✅ Image verified - Size: ${(fileInfo.size / 1024).toFixed(2)}KB`);
+              downloadedImagePaths.push(downloadResult.uri);
             } else {
-              console.log(`Downloaded ${isVideo ? 'video' : 'image'} file is empty or doesn't exist - exists: ${fileInfo.exists}, size: ${fileInfo.size}`);
+              console.log(`❌ Downloaded image file is empty or doesn't exist - exists: ${fileInfo.exists}, size: ${'size' in fileInfo ? fileInfo.size : 0}`);
             }
           } else {
-            console.error(`[CatalogShare] Download failed with status ${downloadResult.status} for URL:`, processedUrl);
-            console.error(`[CatalogShare] Original URL was:`, mediaItem.url);
+            console.error(`❌ Download failed with status ${downloadResult.status} for URL:`, processedUrl);
+            console.error(`   Original URL was:`, mediaItem.url);
           }
         } catch (error: any) {
-          console.error(`[CatalogShare] Failed to download ${mediaItem.type} ${i + 1}:`, error);
-          console.error(`[CatalogShare] Error details:`, {
+          console.error(`❌ Failed to download image ${i + 1}:`, error);
+          console.error(`   Error details:`, {
             message: error?.message,
             code: error?.code,
             url: mediaItem.url,
@@ -298,20 +271,55 @@ const CatalogShare = () => {
         }
       }
       
-      console.log('Total downloaded images:', downloadedImagePaths.length);
-      console.log('Total downloaded videos:', downloadedVideoPaths.length);
+      console.log(`✅ Total downloaded images: ${downloadedImagePaths.length}/${imagesToDownload.length}`);
       setDownloadedImages(downloadedImagePaths);
-      setDownloadedVideos(downloadedVideoPaths);
-      return { images: downloadedImagePaths, videos: downloadedVideoPaths };
+      setDownloadedVideos([]); // No videos downloaded
+      return { images: downloadedImagePaths, videos: [] };
     } catch (error) {
-      console.log('Error downloading media:', error);
-      Alert.alert('Error', 'Failed to download product media. Sharing will continue without media.');
+      console.log('❌ Error downloading media:', error);
+      Alert.alert('Error', 'Failed to download product images. Sharing will continue without media.');
       return { images: [], videos: [] };
     } finally {
       setDownloadingImages(false);
     }
   };
 
+
+  // Helper function to get the first video URL from product variants
+  const getProductVideoUrl = (): string | null => {
+    try {
+      // Try to get video from product-level video_urls
+      if (product.video_urls && Array.isArray(product.video_urls) && product.video_urls.length > 0) {
+        const videoUrl = product.video_urls[0];
+        if (videoUrl && typeof videoUrl === 'string') {
+          return videoUrl;
+        }
+      }
+
+      // Try to get video from variants
+      if (product.variants && Array.isArray(product.variants)) {
+        for (const variant of product.variants) {
+          if (variant.video_urls && Array.isArray(variant.video_urls) && variant.video_urls.length > 0) {
+            const videoUrl = variant.video_urls[0];
+            if (videoUrl && typeof videoUrl === 'string') {
+              return videoUrl;
+            }
+          }
+        }
+      }
+
+      // Try to get from productMedia (videos)
+      const videoMedia = productMedia.find(m => m.type === 'video');
+      if (videoMedia?.url) {
+        return videoMedia.url;
+      }
+
+      return null;
+    } catch (error) {
+      console.log('[CatalogShare] Error getting video URL:', error);
+      return null;
+    }
+  };
 
   const generateShareContent = () => {
     let content = `🛍️ *${product.name}*\n\n`;
@@ -320,7 +328,8 @@ const CatalogShare = () => {
     if (product.resellPrice) {
       content += `💰 *Price: ₹${product.resellPrice}*\n`;
     } else {
-      content += `💰 *Price: ₹${product.price}*\n`;
+      const firstVariantPrice = product.variants?.[0]?.price || product.variants?.[0]?.rsp_price || 0;
+      content += `💰 *Price: ₹${firstVariantPrice}*\n`;
     }
     
     content += `📏 *Available Sizes: ${availableSizes}*\n`;
@@ -328,6 +337,12 @@ const CatalogShare = () => {
     
     if (customMessage) {
       content += `💬 *Message:* ${customMessage}\n\n`;
+    }
+    
+    // Add video URL if available from product variants
+    const videoUrl = getProductVideoUrl();
+    if (videoUrl) {
+      content += `🎥 *Watch Product Video:*\n${videoUrl}\n\n`;
     }
     
     content += `🛒 Order now and get the best deals!\n`;
@@ -346,12 +361,12 @@ const CatalogShare = () => {
     try {
       const shareContent = generateShareContent();
       
-      const { images: imagesToShare, videos: videosToShare } = await downloadProductMedia();
+      // Only download images (videos are skipped)
+      const { images: imagesToShare } = await downloadProductMedia();
         
       const savedImageUris: string[] = [];
-      const savedVideoUris: string[] = [];
       
-      if (imagesToShare.length > 0 || videosToShare.length > 0) {
+      if (imagesToShare.length > 0) {
           try {
             const { status } = await MediaLibrary.requestPermissionsAsync();
             if (status === 'granted') {
@@ -375,79 +390,7 @@ const CatalogShare = () => {
                 console.log('Error creating/getting album, saving to default location:', albumError);
               }
               
-              // Save videos FIRST (so they appear on top in gallery)
-              const allVideoAssets: MediaLibrary.Asset[] = [];
-              for (const videoPath of videosToShare) {
-                try {
-                  // Verify file exists before saving
-                  const fileInfo = await FileSystem.getInfoAsync(videoPath);
-                  if (fileInfo.exists && fileInfo.size > 0) {
-                    console.log('Attempting to save video to gallery:', videoPath, 'Size:', fileInfo.size);
-                    
-                    // Create asset
-                    const asset = await MediaLibrary.createAssetAsync(videoPath);
-                    console.log('Successfully saved video to gallery:', asset.id, 'Type:', asset.mediaType, 'Duration:', asset.duration);
-                    
-                    // Verify the asset was created and is a video
-                    if (asset && asset.id) {
-                      console.log('Video asset created successfully:', {
-                        id: asset.id,
-                        uri: asset.uri,
-                        filename: asset.filename,
-                        mediaType: asset.mediaType,
-                      });
-                      
-                      // Add to album if available
-                      if (album) {
-                        try {
-                          await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
-                          console.log('Video added to Only2U album');
-                        } catch (albumError) {
-                          console.log('Failed to add video to album:', albumError);
-                        }
-                      }
-                      
-                      allVideoAssets.push(asset);
-                      savedVideoUris.push(asset.uri);
-                      
-                      // Double-check it's actually a video
-                      if (asset.mediaType === 'video' || asset.mediaType === 'unknown') {
-                        console.log('Video saved successfully to gallery! URI:', asset.uri);
-                      } else {
-                        console.log('Warning: Asset type is not video:', asset.mediaType);
-                      }
-                    } else {
-                      console.log('Video asset creation returned invalid result:', asset);
-                      savedVideoUris.push(videoPath);
-                    }
-                  } else {
-                    console.log('Video file does not exist or is empty:', videoPath);
-                    savedVideoUris.push(videoPath);
-                  }
-                } catch (error: any) {
-                  console.log('Failed to save video to gallery:', error);
-                  savedVideoUris.push(videoPath);
-                  
-                  // Try alternative method
-                  try {
-                    if (!videoPath.toLowerCase().endsWith('.mp4')) {
-                      const newPath = videoPath.replace(/\.[^/.]+$/, '') + '.mp4';
-                      await FileSystem.moveAsync({ from: videoPath, to: newPath });
-                      const asset = await MediaLibrary.createAssetAsync(newPath);
-                      if (asset && asset.uri) {
-                        if (album) {
-                          await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
-                        }
-                        savedVideoUris[savedVideoUris.length - 1] = asset.uri;
-                      }
-                    }
-                  } catch (altError) {
-                    console.log('Alternative video save method failed:', altError);
-                  }
-                }
-              }
-              
-              // Save images AFTER videos (so videos appear on top)
+              // Save images to gallery
               const allImageAssets: MediaLibrary.Asset[] = [];
               for (const imagePath of imagesToShare) {
                 try {
@@ -480,31 +423,27 @@ const CatalogShare = () => {
               
               // Store the saved asset URIs
               setSavedImageAssets(savedImageUris);
-              setSavedVideoAssets(savedVideoUris);
             }
           } catch (error) {
             console.log('Failed to save media to gallery:', error);
             // Fallback to file paths
             setSavedImageAssets(imagesToShare);
-            setSavedVideoAssets(videosToShare);
         }
       } else {
         // No media to save, use empty arrays
         setSavedImageAssets([]);
-        setSavedVideoAssets([]);
       }
 
       // For sharing, use file paths (not asset URIs) as Share API needs accessible file paths
       // Asset URIs are for gallery tracking, but file paths work better for sharing
-      // Videos especially need to be shared from file paths, not asset URIs
-      console.log('Sharing images:', imagesToShare.length, 'videos:', videosToShare.length);
-      console.log('Video paths for sharing:', videosToShare);
+      // Share images only (videos are skipped)
+      console.log('Sharing images:', imagesToShare.length);
       
-      await shareViaWhatsApp(shareContent, imagesToShare, videosToShare);
+      await shareViaWhatsApp(shareContent, imagesToShare, []);
 
       // Show success modal with animation
       setSharedImageCount(imagesToShare.length);
-      setSharedVideoCount(videosToShare.length);
+      setSharedVideoCount(0);
       setShowSuccessModal(true);
       
       // Animate the success modal
@@ -545,7 +484,6 @@ const CatalogShare = () => {
           const shareResult = await Share.share(shareOptions, {
             dialogTitle: 'Share to WhatsApp',
             subject: product.name,
-            UTI: 'public.jpeg',
             excludedActivityTypes: Platform.OS === 'ios' ? ['com.apple.UIKit.activity.Mail', 'com.apple.UIKit.activity.Message'] : undefined,
           });
           
@@ -562,11 +500,9 @@ const CatalogShare = () => {
                   message: '',
                   url: images[i],
                   title: product.name,
-                  type: 'image/jpeg',
                 }, {
                   dialogTitle: 'Share additional image to WhatsApp',
                   subject: product.name,
-                  UTI: 'public.jpeg',
                 });
                 if (i < Math.min(images.length, 5) - 1) {
                   await new Promise(resolve => setTimeout(resolve, 1500));
@@ -589,7 +525,6 @@ const CatalogShare = () => {
           const shareResult = await Share.share(shareOptions, {
             dialogTitle: 'Share to WhatsApp',
             subject: product.name,
-            UTI: 'public.mpeg-4',
             excludedActivityTypes: Platform.OS === 'ios' ? ['com.apple.UIKit.activity.Mail', 'com.apple.UIKit.activity.Message'] : undefined,
           });
           
@@ -618,11 +553,9 @@ const CatalogShare = () => {
                 message: i === startIndex && images.length === 0 ? content : '', // Include message only with first video if no images
                 url: videos[i],
                 title: product.name,
-                type: 'video/mp4',
               }, {
                 dialogTitle: `Share video ${i + 1} to WhatsApp`,
                 subject: product.name,
-                UTI: 'public.mpeg-4',
               });
               
               if (i < Math.min(videos.length, 5) - 1) {
@@ -655,7 +588,6 @@ const CatalogShare = () => {
                   message: '',
                   url: images[i],
                   title: product.name,
-                  type: 'image/jpeg',
                 });
                 if (i < Math.min(images.length, 5) - 1) {
                   await new Promise(resolve => setTimeout(resolve, 2000));
@@ -674,7 +606,6 @@ const CatalogShare = () => {
                     message: '',
                     url: videos[i],
                     title: product.name,
-                    type: 'video/mp4',
                   });
                   if (i < Math.min(videos.length, 5) - 1) {
                     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -735,7 +666,7 @@ const CatalogShare = () => {
           <Text style={styles.previewTitle}>Product Preview</Text>
           <View style={styles.productCard}>
             <Image
-              source={{ uri: productImages[0] || product.image }}
+              source={{ uri: productImages[0] || '' }}
               style={styles.productImage}
               resizeMode="cover"
             />
@@ -750,12 +681,12 @@ const CatalogShare = () => {
                   <>
                     <Text style={styles.resellPrice}>₹{product.resellPrice}</Text>
                     <View style={styles.marginInfo}>
-                      <Text style={styles.basePrice}>Base: ₹{product.basePrice || product.price}</Text>
+                      <Text style={styles.basePrice}>Base: ₹{product.basePrice || product.variants?.[0]?.price || product.variants?.[0]?.rsp_price || 0}</Text>
                       <Text style={styles.marginText}>+{product.margin}% margin</Text>
                     </View>
                   </>
                 ) : (
-                  <Text style={styles.productPrice}>₹{product.price}</Text>
+                  <Text style={styles.productPrice}>₹{product.variants?.[0]?.price || product.variants?.[0]?.rsp_price || 0}</Text>
                 )}
               </View>
               

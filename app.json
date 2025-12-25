@@ -5,7 +5,10 @@
     "description": "Official Only2U app by Only2U Fashion Private Limited, delivering AI-powered fashion commerce.",
     "version": "1.0.2",
     "scheme": "only2u",
-    "platforms": ["ios", "android"],
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "web": {
       "favicon": "./assets/icon.png"
     },
@@ -15,7 +18,9 @@
     "plugins": [
       "expo-dev-client",
       "expo-image-picker",
-      "expo-av"
+      "expo-av",
+      "expo-secure-store",
+      "expo-web-browser"
     ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -32,7 +37,10 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.only2u.only2u",
       "deploymentTarget": "13.4",
-      "associatedDomains": ["applinks:only2u.app", "applinks:*.only2u.app"],
+      "associatedDomains": [
+        "applinks:only2u.app",
+        "applinks:*.only2u.app"
+      ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Only2U needs access to your camera to take photos for your profile picture and to enable AI face swap previews that show you how products look on you.",
@@ -80,7 +88,10 @@
               "scheme": "only2u"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ],
       "usesCleartextTraffic": true,
@@ -99,4 +110,3 @@
     "owner": "nischalrapireddy-2"
   }
 }
-

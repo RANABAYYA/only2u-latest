@@ -20,10 +20,9 @@ import {
   Linking,
   ActivityIndicator,
   StatusBar,
+  Vibration,
 } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { MaterialIcons } from '@expo/vector-icons';
-import { AntDesign } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons, AntDesign } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import * as ImagePicker from 'expo-image-picker';
@@ -56,15 +55,15 @@ import {
 import type { Product, ProductVariant, LegacyProduct } from '~/types/product';
 import { akool } from '~/services/akoolApi';
 import { uploadProfilePhoto, validateImage } from '~/utils/profilePhotoUpload';
+import { compressImageForProfilePhoto } from '~/utils/imageCompression';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { optimizeCloudinaryVideoUrl, isCloudinaryUrl } from '~/utils/cloudinaryVideoOptimization';
 import { getPlayableVideoUrl, isHlsUrl, getFallbackVideoUrl } from '../utils/videoUrlHelpers';
 
 const { width } = Dimensions.get('window');
-const RESELL_TUTORIAL_VIDEO_URL = 'https://res.cloudinary.com/dtt75ypdv/video/upload/v1763566954/productvideos/cw11qeyqdpfpjsyjjwzm.mov';
+const RESELL_TUTORIAL_VIDEO_URL = 'https://vz-025b9bde-754.b-cdn.net/b0227bc1-daa8-4c85-8233-5e3880ad5828/playlist.m3u8';
 const RESELL_TUTORIAL_STORAGE_KEY = 'ONLY2U_RESELL_TUTORIAL_SEEN';
-const TRYON_TUTORIAL_VIDEO_URL = 'https://res.cloudinary.com/dtt75ypdv/video/upload/v1763566957/productvideos/tryon-tutorial.mov';
+const TRYON_TUTORIAL_VIDEO_URL = 'https://vz-025b9bde-754.b-cdn.net/eee865c8-7e76-4830-b662-00ed3f645d95/playlist.m3u8';
 const TRYON_TUTORIAL_STORAGE_KEY = 'ONLY2U_TRYON_TUTORIAL_SEEN';
 
 type ProductDetailsNavigationProp = StackNavigationProp<RootStackParamList>;
@@ -73,12 +72,14 @@ type ProductDetailsRouteProp = RouteProp<RootStackParamList, 'ProductDetails'>;
 const ProductDetails = () => {
   const navigation = useNavigation<ProductDetailsNavigationProp>();
   const route = useRoute<ProductDetailsRouteProp>();
-  const { product, productId } = route.params || {};
+  const { product, productId, scrollToReviews: shouldScrollToReviews } = route.params || {};
   const isFocused = useIsFocused();
-  
+
   // State for fetched product (when only productId is provided)
   const [fetchedProduct, setFetchedProduct] = useState<any>(null);
   const [fetchingProduct, setFetchingProduct] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [refetchTrigger, setRefetchTrigger] = useState(0);
 
   const { userData, setUserData } = useUser();
   const { addToCart } = useCart();
@@ -114,6 +115,10 @@ const ProductDetails = () => {
     [key: number]: { isPlaying: boolean; isMuted: boolean };
   }>({});
   const videoRefs = useRef<{ [key: number]: any }>({});
+  const faceSwapPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const videoFaceSwapPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRefs = useRef<NodeJS.Timeout[]>([]);
+  const isMountedRef = useRef(true);
 
   // Unified media interface
   interface MediaItem {
@@ -133,6 +138,7 @@ const ProductDetails = () => {
   // Try on modal state
   const [showTryOnModal, setShowTryOnModal] = useState(false);
   const [showTryOnCompleteModal, setShowTryOnCompleteModal] = useState(false);
+  const [completedFaceSwapProduct, setCompletedFaceSwapProduct] = useState<any>(null);
   const [selectedOption, setSelectedOption] = useState<'photo' | 'video' | null>(null);
   const [replacementPolicyVisible, setReplacementPolicyVisible] = useState(false);
   const [coinBalance, setCoinBalance] = useState(0);
@@ -225,6 +231,30 @@ const ProductDetails = () => {
       }
     };
     loadTutorialFlags();
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // Cleanup polling intervals
+      if (faceSwapPollingIntervalRef.current) {
+        clearInterval(faceSwapPollingIntervalRef.current);
+        faceSwapPollingIntervalRef.current = null;
+      }
+      if (videoFaceSwapPollingIntervalRef.current) {
+        clearInterval(videoFaceSwapPollingIntervalRef.current);
+        videoFaceSwapPollingIntervalRef.current = null;
+      }
+      // Cleanup all timeouts
+      timeoutRefs.current.forEach(timeout => clearTimeout(timeout));
+      timeoutRefs.current = [];
+      // Cleanup videos
+      Object.values(videoRefs.current).forEach(ref => {
+        if (ref?.pauseAsync) ref.pauseAsync().catch(() => { });
+        if (ref?.unloadAsync) ref.unloadAsync().catch(() => { });
+      });
+    };
   }, []);
 
   useEffect(() => {
@@ -490,11 +520,12 @@ const ProductDetails = () => {
   useEffect(() => {
     const fetchProductById = async () => {
       if (!productId || product) return; // Don't fetch if product is already provided
-      
+
       try {
         setFetchingProduct(true);
         setLoading(true);
-        
+        setFetchError(null);
+
         // Fetch product with all necessary fields including variants
         const { data, error } = await supabase
           .from('products')
@@ -519,17 +550,19 @@ const ProductDetails = () => {
           `)
           .eq('id', productId)
           .single();
-        
+
         if (error) {
           console.error('Error fetching product:', error);
-          Toast.show({
-            type: 'error',
-            text1: 'Error',
-            text2: 'Failed to load product details',
-          });
+          // Check if it's a network error
+          const errorMessage = error.message || '';
+          if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network') || errorMessage.includes('network')) {
+            setFetchError('No internet connection. Please check your network and try again.');
+          } else {
+            setFetchError('Failed to load product details. Please try again.');
+          }
           return;
         }
-        
+
         if (data) {
           console.log('✅ Fetched product with variants:', {
             id: data.id,
@@ -539,7 +572,7 @@ const ProductDetails = () => {
             video_urls: data.video_urls?.length || 0,
           });
           setFetchedProduct(data);
-          
+
           // Set variants from fetched product if available
           if (data.product_variants && Array.isArray(data.product_variants) && data.product_variants.length > 0) {
             const variantsData: ProductVariant[] = data.product_variants.map((item: any) => ({
@@ -561,7 +594,7 @@ const ProductDetails = () => {
               color: undefined, // Will be populated separately if color_id exists
               size: Array.isArray(item.size) ? item.size[0] : item.size,
             }));
-            
+
             // Fetch color data separately for variants that have color_id (same as fetchProductVariants)
             const variantsWithColors = variantsData.filter((v) => v.color_id);
             if (variantsWithColors.length > 0) {
@@ -582,33 +615,36 @@ const ProductDetails = () => {
                 return;
               }
             }
-            
+
             setVariants(variantsData);
             console.log('✅ Set variants from fetched product:', variantsData.length);
-            
-            // Set default variant (first variant with images, or first variant)
+
+            // Set default variant (prioritize M size, then first variant with images)
             if (variantsData.length > 0 && !selectedVariant) {
-              const defaultVariant = variantsData.find((v) => v.image_urls && v.image_urls.length > 0) || variantsData[0];
+              const mVariant = variantsData.find((v) => v.size?.name?.trim().toUpperCase() === 'M' && v.image_urls && v.image_urls.length > 0);
+              const defaultVariant = mVariant || variantsData.find((v) => v.image_urls && v.image_urls.length > 0) || variantsData[0];
               setSelectedVariant(defaultVariant);
-              console.log('✅ Set default variant from fetched product:', defaultVariant.id);
+              console.log('✅ Set default variant from fetched product:', defaultVariant.id, 'Size:', defaultVariant.size?.name);
             }
           }
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error fetching product by ID:', error);
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: 'Failed to load product details',
-        });
+        // Check if it's a network error
+        const errorMessage = error?.message || error?.toString() || '';
+        if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Network') || errorMessage.includes('network') || !navigator.onLine) {
+          setFetchError('No internet connection. Please check your network and try again.');
+        } else {
+          setFetchError('Failed to load product details. Please try again.');
+        }
       } finally {
         setFetchingProduct(false);
         setLoading(false);
       }
     };
-    
+
     fetchProductById();
-  }, [productId, product]);
+  }, [productId, product, refetchTrigger]);
 
   // Use fetched product if available, otherwise use passed product
   const effectiveProduct = fetchedProduct || product;
@@ -676,7 +712,11 @@ const ProductDetails = () => {
   const defaultSize = userData?.size || '';
   const [selectedSize, setSelectedSize] = useState('');
   const [selectedColor, setSelectedColor] = useState('');
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity] = useState(0);
+  // Animation for size section jitter
+  const sizeSectionJitter = useRef(new Animated.Value(0)).current;
+  // Animation for quantity section jitter
+  const quantitySectionJitter = useRef(new Animated.Value(0)).current;
   const [activeTab, setActiveTab] = useState('details');
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [replacementPolicyExpanded, setReplacementPolicyExpanded] = useState(false);
@@ -688,18 +728,68 @@ const ProductDetails = () => {
   const [selectedMargin, setSelectedMargin] = useState(15); // Default 15% margin
   const [customPrice, setCustomPrice] = useState<string>('');
   const [customPriceError, setCustomPriceError] = useState<string | null>(null);
-  const [showLowCoinsModal, setShowLowCoinsModal] = useState(false);
+  const [showCoinsModal, setShowCoinsModal] = useState(false);
+  const [referralCode, setReferralCode] = useState<string>('');
 
   // More Like This suggestions
   const [suggestedProducts, setSuggestedProducts] = useState<any[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
   const { t } = useTranslation();
-  const [langMenuVisible, setLangMenuVisible] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const suggestionsListRef = useRef<any>(null);
   const suggestionsScrollOffsetRef = useRef<number>(0);
   const suggestionsStartOffsetRef = useRef<number>(0);
+
+  // Generate referral code
+  const generateReferralCode = useCallback(() => {
+    if (!userData?.id) return '';
+    const namePart = (userData?.name || 'ONLY2U')
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .slice(0, 6)
+      .toUpperCase() || 'ONLY2U';
+    const idPart = userData.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase();
+    return `${namePart}${idPart}`;
+  }, [userData?.id, userData?.name]);
+
+  // Memoize failedVideos string for stable dependency
+  const failedVideosKey = useMemo(() => {
+    return Array.from(failedVideos).sort().join(',');
+  }, [failedVideos]);
+
+  // Load referral code when modal opens
+  useEffect(() => {
+    if (showCoinsModal && userData?.id) {
+      const code = generateReferralCode();
+      setReferralCode(code);
+    }
+  }, [showCoinsModal, userData?.id, generateReferralCode]);
+
+  // Share referral on WhatsApp
+  const handleShareReferral = async () => {
+    if (!referralCode) {
+      Toast.show({
+        type: 'info',
+        text1: 'Generating Code',
+        text2: 'Please wait while we prepare your referral code.',
+      });
+      return;
+    }
+
+    const message = `🎉 Download Only2U app and get ₹100 worth of rewards!\n\nUse my referral code: ${referralCode}\n\n📱 Download Links:\n• Android: https://play.google.com/store/apps/details?id=com.only2u.only2u\n• iOS: https://apps.apple.com/in/app/only2u-virtual-try-on-store/id6753112805\n\nJoin me and start shopping with amazing rewards! 🛍️✨`;
+    const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
+    const whatsappWebUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
+
+    try {
+      await Linking.openURL(whatsappUrl);
+    } catch {
+      try {
+        await Linking.openURL(whatsappWebUrl);
+      } catch {
+        await Share.share({ message });
+      }
+    }
+  };
 
   // Pan gesture to manually control horizontal scroll on Android
   const suggestionsPanResponder = useMemo(
@@ -731,12 +821,18 @@ const ProductDetails = () => {
   );
 
   const handleResellButtonPress = useCallback(() => {
+    // Check if user is logged in
+    if (!userData?.id) {
+      showLoginSheet();
+      return;
+    }
+
     if (!hasSeenResellTutorial) {
       setShowResellTutorialModal(true);
       return;
     }
     setShowMarginModal(true);
-  }, [hasSeenResellTutorial]);
+  }, [hasSeenResellTutorial, userData?.id, showLoginSheet]);
 
   const handleDismissResellTutorial = useCallback(() => {
     setResellTutorialDontShowAgain(false);
@@ -769,7 +865,8 @@ const ProductDetails = () => {
       fetchProductReviews();
       fetchSuggestedProducts();
     }
-  }, [productData.id, fetchedProduct]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productData.id, fetchedProduct?.id]);
 
   // Fetch user coin balance
   useEffect(() => {
@@ -785,51 +882,45 @@ const ProductDetails = () => {
         id: productData.id,
         image_urls: productData.image_urls,
         video_urls: productData.video_urls,
-        image: productData.image,
         selectedVariant: selectedVariant?.id,
       });
 
-      // Helper function to optimize Cloudinary video URLs or convert external links to playable formats
+      // Helper function to convert video URLs to playable formats (Bunny Stream embed -> direct MP4)
       const optimizeVideoUrl = (url: string): string => {
         if (!url || typeof url !== 'string') return url;
 
+        // Convert Bunny Stream embed URLs to direct playable MP4 URLs
         const playableUrl = getPlayableVideoUrl(url);
         if (!playableUrl) return url;
 
-        if (isCloudinaryUrl(playableUrl)) {
-          try {
-            const optimized = optimizeCloudinaryVideoUrl(playableUrl, {
-              quality: 'auto:good',
-              format: 'auto',
-              width: 1080,
-              bitrate: '2m',
-              fps: 30,
-            });
-            console.log('✅ Optimized Cloudinary video URL:', playableUrl, '->', optimized);
-            return optimized;
-          } catch (error) {
-            console.error('Error optimizing Cloudinary video URL:', error);
-            return playableUrl;
-          }
-        }
-
+        console.log('✅ Converted video URL:', url, '->', playableUrl);
         return playableUrl;
       };
 
       let unifiedMediaItems: MediaItem[] = [];
-      const allImageUrls = new Set<string>(); // Use Set to avoid duplicates
 
-      // Collect images from ALL variants (not just selected variant)
+      // Helper to validate image URLs (filter out placeholders)
+      const isValidImageUrl = (url: string) =>
+        url &&
+        typeof url === 'string' &&
+        !url.includes('placeholder') &&
+        !url.includes('placehold') &&
+        !url.includes('via.placeholder') &&
+        !url.includes('unsplash.com/photo-1610030469983');
+
+      // 1) If a specific variant is selected and has images, show those first
+      let variantImages: string[] = [];
+      if (selectedVariant && Array.isArray(selectedVariant.image_urls) && selectedVariant.image_urls.length > 0) {
+        variantImages = selectedVariant.image_urls.filter(isValidImageUrl);
+      }
+
+      // 2) Collect images from ALL variants (secondary pool)
+      const allImageUrls = new Set<string>(); // Use Set to avoid duplicates
       if (variants && variants.length > 0) {
         variants.forEach((variant: any) => {
           if (variant.image_urls && Array.isArray(variant.image_urls)) {
             variant.image_urls.forEach((url: string) => {
-              if (url && 
-                  typeof url === 'string' && 
-                  !url.includes('placeholder') && 
-                  !url.includes('placehold') &&
-                  !url.includes('via.placeholder') &&
-                  !url.includes('unsplash.com/photo-1610030469983')) {
+              if (isValidImageUrl(url)) {
                 allImageUrls.add(url);
               }
             });
@@ -837,37 +928,33 @@ const ProductDetails = () => {
         });
       }
 
-      // If we have images from variants, use them
-      if (allImageUrls.size > 0) {
+      // Build unified image list prioritizing the selected variant's images
+      if (variantImages.length > 0) {
+        const otherImages = Array.from(allImageUrls).filter((url) => !variantImages.includes(url));
+        const mergedImages = [...variantImages, ...otherImages];
+        unifiedMediaItems = mergedImages.map((url) => ({ type: 'image' as const, url }));
+        console.log(
+          '✅ Using images for selected variant first, then others:',
+          unifiedMediaItems.length
+        );
+      } else if (allImageUrls.size > 0) {
+        // Fallback: no variant-specific images, use all variant images
         unifiedMediaItems = Array.from(allImageUrls).map((url) => ({ type: 'image' as const, url }));
-        console.log('✅ Using images from all variants:', unifiedMediaItems.length);
+        console.log('✅ Using images from all variants (no variant-specific images):', unifiedMediaItems.length);
       }
-      // Priority 2: Check for images in product variants first
+      // Priority 3: Check for images in product variants first
       else {
         const productImages = getProductImages(productData);
         if (productImages.length > 0) {
           const cacheKey = `product_${productData.id}`;
           if (processedImageCache.current[cacheKey]) {
-            const cachedImages = processedImageCache.current[cacheKey].filter((url: string) => 
-              url && 
-              !url.includes('placeholder') && 
-              !url.includes('placehold') &&
-              !url.includes('via.placeholder') &&
-              !url.includes('unsplash.com/photo-1610030469983')
-            );
+            const cachedImages = processedImageCache.current[cacheKey].filter(isValidImageUrl);
             unifiedMediaItems = cachedImages.map((url) => ({ type: 'image' as const, url }));
             console.log('✅ Using cached images from product variants:', cachedImages);
           } else {
             // Use raw URLs for faster processing
             // Filter out placeholder images
-            const images = productImages.filter((url: string) => 
-              url && 
-              typeof url === 'string' && 
-              !url.includes('placeholder') && 
-              !url.includes('placehold') &&
-              !url.includes('via.placeholder') &&
-              !url.includes('unsplash.com/photo-1610030469983')
-            );
+            const images = productImages.filter(isValidImageUrl);
             unifiedMediaItems = images.map((url: string) => ({ type: 'image' as const, url }));
             processedImageCache.current[cacheKey] = images;
             console.log('✅ Using raw images from product variants:', images);
@@ -881,47 +968,24 @@ const ProductDetails = () => {
         ) {
           const cacheKey = `product_urls_${productData.id}`;
           if (processedImageCache.current[cacheKey]) {
-            const cachedImages = processedImageCache.current[cacheKey].filter((url: string) => 
-              url && 
-              !url.includes('placeholder') && 
-              !url.includes('placehold') &&
-              !url.includes('via.placeholder') &&
-              !url.includes('unsplash.com/photo-1610030469983')
-            );
+            const cachedImages = processedImageCache.current[cacheKey].filter(isValidImageUrl);
             unifiedMediaItems = cachedImages.map((url) => ({ type: 'image' as const, url }));
             console.log('✅ Using cached image_urls array:', cachedImages);
           } else {
             // Use raw URLs for faster processing
             // Filter out placeholder images
-            const images = productData.image_urls.filter((url: string) => 
-              url && 
-              typeof url === 'string' && 
-              !url.includes('placeholder') && 
-              !url.includes('placehold') &&
-              !url.includes('via.placeholder') &&
-              !url.includes('unsplash.com/photo-1610030469983')
-            );
+            const images = productData.image_urls.filter(isValidImageUrl);
             unifiedMediaItems = images.map((url: string) => ({ type: 'image' as const, url }));
             processedImageCache.current[cacheKey] = images;
             console.log('✅ Using raw image_urls array:', images);
           }
-        }
-        // Priority 4: Fallback to old image field
-        else if (productData.image && 
-                 !productData.image.includes('placeholder') && 
-                 !productData.image.includes('placehold') &&
-                 !productData.image.includes('via.placeholder') &&
-                 !productData.image.includes('unsplash.com/photo-1610030469983')) {
-          // Old format: single image from image field (only if not placeholder)
-          unifiedMediaItems = [{ type: 'image' as const, url: productData.image }];
-          console.log('✅ Using image field:', productData.image);
         }
       }
 
       // Add videos if available (from ALL variants, then product)
       let videoItems: MediaItem[] = [];
       const allVideoUrls = new Set<string>(); // Use Set to avoid duplicates
-      
+
       // Collect videos from ALL variants
       if (variants && variants.length > 0) {
         variants.forEach((variant: any) => {
@@ -937,7 +1001,7 @@ const ProductDetails = () => {
           }
         });
       }
-      
+
       // If we have videos from variants, use them
       if (allVideoUrls.size > 0) {
         videoItems = Array.from(allVideoUrls)
@@ -955,7 +1019,7 @@ const ProductDetails = () => {
       ) {
         videoItems = productData.video_urls
           .map((url: string) => getPlayableVideoUrl(url))
-          .filter((url): url is string => !!url && !failedVideos.has(url))
+          .filter((url: any): url is string => !!url && !failedVideos.has(url))
           .map((url: string) => ({
             type: 'video' as const,
             url: optimizeVideoUrl(url),
@@ -992,7 +1056,7 @@ const ProductDetails = () => {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productData.image_urls, productData.video_urls, productData.image, selectedVariant, variants, Array.from(failedVideos).join(',')]);
+  }, [productData.image_urls, productData.video_urls, selectedVariant, variants, failedVideosKey]);
 
   // Pre-load all images for faster switching using React Native Image.prefetch
   useEffect(() => {
@@ -1115,25 +1179,18 @@ const ProductDetails = () => {
       });
       setAvailableSizes(sortedSizes);
 
-      // Set default selections if available
+      // Set default color selection if available (but not size - user must select size)
       if (availableColorsArray.length > 0 && !selectedColor) {
         setSelectedColor(availableColorsArray[0].id);
       }
-      if (sortedSizes.length > 0 && !selectedSize) {
-        // Try to match user's default size with available sizes
-        const userSizeMatch = sortedSizes.find((s) => s.name === defaultSize);
-        if (userSizeMatch) {
-          setSelectedSize(userSizeMatch.id);
-        } else {
-          setSelectedSize(sortedSizes[0].id);
-        }
-      }
-      
-      // Set default variant if no variant is selected (first variant with images, or first variant)
+      // Size selection is now required - no auto-selection
+
+      // Set default variant if no variant is selected (prioritize M size, then first variant with images)
       if (variantsData.length > 0 && !selectedVariant) {
-        const defaultVariant = variantsData.find((v) => v.image_urls && v.image_urls.length > 0) || variantsData[0];
+        const mVariant = variantsData.find((v) => v.size?.name?.trim().toUpperCase() === 'M' && v.image_urls && v.image_urls.length > 0);
+        const defaultVariant = mVariant || variantsData.find((v) => v.image_urls && v.image_urls.length > 0) || variantsData[0];
         setSelectedVariant(defaultVariant);
-        console.log('✅ Set default variant:', defaultVariant.id);
+        console.log('✅ Set default variant:', defaultVariant.id, 'Size:', defaultVariant.size?.name);
       }
     } catch (error) {
       console.error('Error fetching variants:', error);
@@ -1179,14 +1236,15 @@ const ProductDetails = () => {
     try {
       setSuggestionsLoading(true);
 
-      // Fetch all products from the database (not filtered by category)
-      const { data, error } = await supabase
+      // Fetch products from the same category
+      let query = supabase
         .from('products')
         .select(`
           id,
           name,
           image_urls,
           vendor_name,
+          category_id,
           product_variants(
             id, 
             price, 
@@ -1199,14 +1257,20 @@ const ProductDetails = () => {
         .neq('id', productData.id)
         .eq('is_active', true)
         .order('created_at', { ascending: false })
-        .limit(50); // Fetch 50 products to ensure variety
+        .limit(50);
+
+      if (productData?.category_id) {
+        query = query.eq('category_id', productData.category_id);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         console.error('Error fetching suggested products:', error);
         return;
       }
 
-      console.log('📦 Fetched suggested products:', data?.length || 0, 'products');
+      console.log('📦 Fetched suggested products from same category:', data?.length || 0, 'products');
 
       setSuggestedProducts(data || []);
     } catch (error) {
@@ -1231,7 +1295,7 @@ const ProductDetails = () => {
       }
 
       setSelectedVariant(variant);
-      setQuantity(1); // Reset quantity when variant changes
+      setQuantity(0); // Reset quantity when variant changes
     }
   }, [selectedColor, selectedSize, variants]);
 
@@ -1413,11 +1477,57 @@ const ProductDetails = () => {
     }
   };
 
+  // Helper function for jitter animation
+  const triggerJitterAnimation = (animatedValue: Animated.Value) => {
+    if (Platform.OS === 'ios') {
+      Vibration.vibrate([0, 50, 50, 50]);
+    } else {
+      Vibration.vibrate([0, 100, 50, 100]);
+    }
+
+    Animated.sequence([
+      Animated.timing(animatedValue, {
+        toValue: -10,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+      Animated.timing(animatedValue, {
+        toValue: 10,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+      Animated.timing(animatedValue, {
+        toValue: -10,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+      Animated.timing(animatedValue, {
+        toValue: 10,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+      Animated.timing(animatedValue, {
+        toValue: 0,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
   const handleAddToCart = async () => {
+    // Check size first
     if (!selectedSize) {
-      Alert.alert('Error', 'Please select a size');
+      triggerJitterAnimation(sizeSectionJitter);
+      Toast.show({
+        type: 'error',
+        text1: 'Size Required',
+        text2: 'Please select a size to add to cart',
+        position: 'top',
+        visibilityTime: 2000,
+      });
       return;
     }
+
     if (availableColors.length > 0 && !selectedColor) {
       Alert.alert('Error', 'Please select a color');
       return;
@@ -1426,8 +1536,25 @@ const ProductDetails = () => {
       Alert.alert('Error', 'Selected combination is not available');
       return;
     }
-    if (quantity < 1 || quantity > selectedVariant.quantity) {
-      Alert.alert('Error', 'Invalid quantity');
+
+    // Check quantity - if 0, set to 1 automatically and vibrate to show user
+    let quantityToAdd = quantity;
+    if (quantity < 1) {
+      quantityToAdd = 1;
+      setQuantity(1);
+      // Vibrate quantity section to show user that quantity was auto-set
+      triggerJitterAnimation(quantitySectionJitter);
+    }
+
+    if (quantityToAdd > selectedVariant.quantity) {
+      triggerJitterAnimation(quantitySectionJitter);
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid Quantity',
+        text2: `Only ${selectedVariant.quantity} available in stock`,
+        position: 'top',
+        visibilityTime: 2000,
+      });
       return;
     }
 
@@ -1441,11 +1568,11 @@ const ProductDetails = () => {
       variantId: selectedVariant?.id || null,
       name: productData.name,
       price: selectedVariant?.price || productData.price,
-      image: productData.image,
-      image_urls: productData.image_urls || (productData.image ? [productData.image] : []),
+      image: productData.image_urls?.[0] || '', // Required by CartItem type, but display uses image_urls
+      image_urls: productData.image_urls || [],
       size: selectedSizeData?.name || selectedSize,
       color: selectedColorData?.name || selectedColor || 'N/A',
-      quantity,
+      quantity: quantityToAdd,
       stock: selectedVariant.quantity,
       category: productData.category,
       sku: productData.sku || productData.id,
@@ -1454,11 +1581,8 @@ const ProductDetails = () => {
 
     setAddToCartLoading(false);
 
-    // Increment quantity if stock is still available
-    const maxQuantity = getAvailableQuantity();
-    if (quantity < maxQuantity) {
-      setQuantity((prevQty) => Math.min(prevQty + 1, maxQuantity));
-    }
+    // Set quantity to 1 after successful add to cart
+    setQuantity(1);
 
     // Show toast notification
     Toast.show({
@@ -1485,12 +1609,19 @@ const ProductDetails = () => {
     }
   };
 
-  
+
 
   const continueTryOnFlow = async () => {
     if (!userData?.id) {
       setShowConsentModal(false);
       promptLoginForTryOn();
+      return;
+    }
+
+
+    // Check coins before proceeding
+    if (coinBalance < 25) {
+      setShowCoinsModal(true);
       return;
     }
 
@@ -1526,6 +1657,12 @@ const ProductDetails = () => {
   };
 
   const handleTryOnFlowStart = useCallback(async () => {
+    // Check coins before showing any modals
+    if (coinBalance < 50) {
+      setShowCoinsModal(true);
+      return;
+    }
+
     if (availableSizes.length > 0) {
       const initialSize = selectedSize || availableSizes[0]?.id || null;
       setSizeSelectionDraft(initialSize);
@@ -1535,11 +1672,17 @@ const ProductDetails = () => {
     }
 
     await continueTryOnFlow();
-  }, [availableSizes.length, continueTryOnFlow, selectedSize]);
+  }, [availableSizes.length, continueTryOnFlow, selectedSize, coinBalance]);
 
   const handleTryOnButtonPress = useCallback(async () => {
     if (!userData?.id) {
       promptLoginForTryOn();
+      return;
+    }
+
+    // Check coins first before showing any modals
+    if (coinBalance < 50) {
+      setShowCoinsModal(true);
       return;
     }
 
@@ -1554,6 +1697,7 @@ const ProductDetails = () => {
     hasSeenTryOnTutorial,
     promptLoginForTryOn,
     userData?.id,
+    coinBalance,
   ]);
 
   const handleDismissTryOnTutorial = useCallback(() => {
@@ -1579,6 +1723,13 @@ const ProductDetails = () => {
   const handleConfirmSizeSelection = async () => {
     if (!sizeSelectionDraft) {
       setSizeSelectionError('Please choose a size to continue.');
+      return;
+    }
+
+    // Check coins before proceeding
+    if (coinBalance < 50) {
+      setShowSizeSelectionModal(false);
+      setShowCoinsModal(true);
       return;
     }
 
@@ -1687,7 +1838,15 @@ const ProductDetails = () => {
     });
 
     if (!result.canceled && result.assets[0]?.uri) {
-      await handleProfilePhotoUpload(result.assets[0].uri);
+      try {
+        // Compress image to 1080p (max 1920x1080) immediately after camera capture
+        const compressedUri = await compressImageForProfilePhoto(result.assets[0].uri);
+        await handleProfilePhotoUpload(compressedUri);
+      } catch (error) {
+        console.error('Error compressing camera image:', error);
+        // Fallback to original if compression fails
+        await handleProfilePhotoUpload(result.assets[0].uri);
+      }
     }
   };
 
@@ -1740,8 +1899,8 @@ const ProductDetails = () => {
         return;
       }
 
-      if (coinBalance < 25) {
-        setShowLowCoinsModal(true);
+      if (coinBalance < 50) {
+        setShowCoinsModal(true);
         return;
       }
 
@@ -1781,7 +1940,7 @@ const ProductDetails = () => {
       // Fallback to first variant with image, or product default image
       if (!productImageUrl) {
         const firstVariantWithImage = variants.find((v) => v.image_urls && v.image_urls.length > 0);
-        productImageUrl = firstVariantWithImage?.image_urls?.[0] || productData.image_urls?.[0] || productData.image;
+        productImageUrl = firstVariantWithImage?.image_urls?.[0] || productData.image_urls?.[0];
         console.log('Face Swap - Using fallback image:', productImageUrl);
       }
 
@@ -1792,7 +1951,7 @@ const ProductDetails = () => {
 
       // Process the product image URL to ensure it's safe and accessible
       const safeProductImageUrl = getSafeImageUrl(productImageUrl, 'product');
-      
+
       // Check if we got a fallback image (which means the original URL was invalid)
       if (safeProductImageUrl === FALLBACK_IMAGES.product && productImageUrl !== FALLBACK_IMAGES.product) {
         console.warn('Product image URL invalid, using fallback:', productImageUrl);
@@ -1802,26 +1961,26 @@ const ProductDetails = () => {
 
       setShowTryOnModal(false);
 
-      // Update coin balance (deduct 25 coins for face swap)
-      setCoinBalance((prev) => prev - 25);
+      // Update coin balance (deduct 50 coins for face swap)
+      setCoinBalance((prev) => prev - 50);
 
       // Also update user context
       if (userData) {
-        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 25 });
+        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 50 });
       }
 
       // Deduct coins from database
       const { error: coinUpdateError } = await supabase
         .from('users')
-        .update({ coin_balance: (userData?.coin_balance || 0) - 25 })
+        .update({ coin_balance: (userData?.coin_balance || 0) - 50 })
         .eq('id', userData?.id);
 
       if (coinUpdateError) {
         console.error('Error updating coin balance:', coinUpdateError);
         // Refund coins on database error
-        setCoinBalance((prev) => prev + 25);
+        setCoinBalance((prev) => prev + 50);
         if (userData) {
-          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 25 });
+          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
         }
         Alert.alert('Error', 'Failed to update coin balance. Please try again.');
         return;
@@ -1830,13 +1989,13 @@ const ProductDetails = () => {
       // Check if piAPIVirtualTryOnService is available
       if (!piAPIVirtualTryOnService || typeof piAPIVirtualTryOnService.initiateVirtualTryOn !== 'function') {
         // Refund coins on service error
-        setCoinBalance((prev) => prev + 25);
+        setCoinBalance((prev) => prev + 50);
         if (userData) {
-          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 25 });
+          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
         }
         await supabase
           .from('users')
-          .update({ coin_balance: (userData?.coin_balance || 0) + 25 })
+          .update({ coin_balance: (userData?.coin_balance || 0) + 50 })
           .eq('id', userData?.id);
 
         Alert.alert('Service Unavailable', 'Face Swap service is currently unavailable. Please try again later.');
@@ -1862,13 +2021,13 @@ const ProductDetails = () => {
         });
       } else {
         // Refund coins on failure
-        setCoinBalance((prev) => prev + 25);
+        setCoinBalance((prev) => prev + 50);
         if (userData) {
-          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 25 });
+          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
         }
         await supabase
           .from('users')
-          .update({ coin_balance: (userData?.coin_balance || 0) + 25 })
+          .update({ coin_balance: (userData?.coin_balance || 0) + 50 })
           .eq('id', userData?.id);
 
         Alert.alert('Face Swap Failed', response?.error || 'Failed to start face swap. Your coins have been refunded.');
@@ -1877,15 +2036,15 @@ const ProductDetails = () => {
       console.error('Error starting face swap:', error);
 
       // Refund coins on any error
-      setCoinBalance((prev) => prev + 25);
+      setCoinBalance((prev) => prev + 50);
       if (userData) {
-        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 25 });
+        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
       }
 
       try {
         await supabase
           .from('users')
-          .update({ coin_balance: (userData?.coin_balance || 0) + 25 })
+          .update({ coin_balance: (userData?.coin_balance || 0) + 50 })
           .eq('id', userData?.id);
       } catch (refundError) {
         console.error('Error refunding coins:', refundError);
@@ -1911,8 +2070,8 @@ const ProductDetails = () => {
       return;
     }
 
-    if (coinBalance < 25) {
-      setShowLowCoinsModal(true);
+    if (coinBalance < 50) {
+      setShowCoinsModal(true);
       return;
     }
 
@@ -1929,12 +2088,12 @@ const ProductDetails = () => {
     setShowTryOnModal(false);
 
     try {
-      // Update coin balance (deduct 25 coins for video face swap)
-      setCoinBalance((prev) => prev - 25);
+      // Update coin balance (deduct 50 coins for video face swap)
+      setCoinBalance((prev) => prev - 50);
 
       // Also update user context
       if (userData) {
-        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 25 });
+        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 50 });
       }
 
       // Initiate video face swap with PiAPI
@@ -1964,10 +2123,23 @@ const ProductDetails = () => {
   };
 
   const startFaceSwapPolling = (productId: string, taskId: string) => {
+    // Clear any existing polling interval
+    if (faceSwapPollingIntervalRef.current) {
+      clearInterval(faceSwapPollingIntervalRef.current);
+      faceSwapPollingIntervalRef.current = null;
+    }
+
     let pollCount = 0;
     const maxPollAttempts = 60; // 5 minutes timeout (60 * 5 seconds)
 
     const interval = setInterval(async () => {
+      // Check if component is still mounted
+      if (!isMountedRef.current) {
+        clearInterval(interval);
+        faceSwapPollingIntervalRef.current = null;
+        return;
+      }
+
       try {
         pollCount++;
         console.log(`[ProductDetails] Polling attempt ${pollCount}/${maxPollAttempts}`);
@@ -1976,6 +2148,7 @@ const ProductDetails = () => {
 
         if (status.status === 'completed' && status.resultImages) {
           clearInterval(interval);
+          faceSwapPollingIntervalRef.current = null;
 
           // Save results permanently
           // if (userData?.id) {
@@ -2002,11 +2175,24 @@ const ProductDetails = () => {
             stock_quantity: 1,
             variants: [],
             isPersonalized: true,
-            originalProductImage: productData.image_urls?.[0] || productData.image || '',
+            originalProductImage: productData.image_urls?.[0] || '',
             faceSwapDate: new Date().toISOString(),
             originalProductId: productId,
           };
           addToPreview(personalizedProduct);
+
+          // Store the product data for navigation
+          setCompletedFaceSwapProduct({
+            id: personalizedProduct.id,
+            name: productData.name,
+            description: productData.description || '',
+            image_urls: orderedImages,
+            video_urls: [],
+            faceSwapDate: new Date().toISOString(),
+            originalProductId: productId,
+            isVideoPreview: false,
+            originalProductImage: productData.image_urls?.[0] || '',
+          });
 
           // Toast.show({
           //   type: 'success',
@@ -2014,33 +2200,57 @@ const ProductDetails = () => {
           //   text2: 'Your personalized product has been added to Your Preview.',
           // });
           // Show custom modal instead of Alert
-          setShowTryOnCompleteModal(true);
+          if (isMountedRef.current) {
+            setShowTryOnCompleteModal(true);
+          }
         } else if (status.status === 'failed') {
           clearInterval(interval);
-          Alert.alert('Error', status.error || 'Face swap failed. Please try again.');
+          faceSwapPollingIntervalRef.current = null;
+          if (isMountedRef.current) {
+            Alert.alert('Error', status.error || 'Face swap failed. Please try again.');
+          }
         } else if (pollCount >= maxPollAttempts) {
           // Timeout after 5 minutes
           clearInterval(interval);
+          faceSwapPollingIntervalRef.current = null;
           console.warn('[ProductDetails] Face swap polling timeout');
-          Alert.alert(
-            'Processing Timeout',
-            'Face swap is taking longer than expected. Please try again later or contact support if the issue persists.'
-          );
+          if (isMountedRef.current) {
+            Alert.alert(
+              'Processing Timeout',
+              'Face swap is taking longer than expected. Please try again later or contact support if the issue persists.'
+            );
+          }
         }
       } catch (error) {
         console.error('Error checking face swap status:', error);
         if (pollCount >= maxPollAttempts) {
           clearInterval(interval);
+          faceSwapPollingIntervalRef.current = null;
         }
       }
     }, 5000); // Poll every 5 seconds
+
+    faceSwapPollingIntervalRef.current = interval;
   };
 
   const startVideoFaceSwapPolling = (productId: string, taskId: string) => {
+    // Clear any existing polling interval
+    if (videoFaceSwapPollingIntervalRef.current) {
+      clearInterval(videoFaceSwapPollingIntervalRef.current);
+      videoFaceSwapPollingIntervalRef.current = null;
+    }
+
     let pollCount = 0;
     const maxPollAttempts = 120; // 10 minutes timeout for video (120 * 5 seconds) - videos take longer
 
     const interval = setInterval(async () => {
+      // Check if component is still mounted
+      if (!isMountedRef.current) {
+        clearInterval(interval);
+        videoFaceSwapPollingIntervalRef.current = null;
+        return;
+      }
+
       try {
         pollCount++;
         console.log(`[ProductDetails] Video polling attempt ${pollCount}/${maxPollAttempts}`);
@@ -2049,6 +2259,7 @@ const ProductDetails = () => {
 
         if (status.status === 'completed' && status.resultVideo) {
           clearInterval(interval);
+          videoFaceSwapPollingIntervalRef.current = null;
 
           // Save results permanently (store video URL in result_images array)
           if (userData?.id) {
@@ -2069,44 +2280,55 @@ const ProductDetails = () => {
             variants: [],
             isPersonalized: true,
             isVideoPreview: true,
-            originalProductImage: productData.image_urls?.[0] || productData.image || '', // Required by PreviewProduct
+            originalProductImage: productData.image_urls?.[0] || '', // Required by PreviewProduct
             originalProductVideo: status.resultVideo,
             faceSwapDate: new Date().toISOString(),
             originalProductId: productId,
           };
-          addToPreview(personalizedProduct);
+          if (isMountedRef.current) {
+            addToPreview(personalizedProduct);
 
-          Toast.show({
-            type: 'success',
-            text1: 'Video Preview Ready!',
-            text2: 'Your personalized video has been added to Your Preview.',
-          });
+            Toast.show({
+              type: 'success',
+              text1: 'Video Preview Ready!',
+              text2: 'Your personalized video has been added to Your Preview.',
+            });
+          }
         } else if (status.status === 'failed') {
           clearInterval(interval);
-          Alert.alert('Error', status.error || 'Video face swap failed. Please try again.');
+          videoFaceSwapPollingIntervalRef.current = null;
+          if (isMountedRef.current) {
+            Alert.alert('Error', status.error || 'Video face swap failed. Please try again.');
+          }
         } else if (pollCount >= maxPollAttempts) {
           // Timeout after 10 minutes
           clearInterval(interval);
+          videoFaceSwapPollingIntervalRef.current = null;
           console.warn('[ProductDetails] Video face swap polling timeout');
-          Alert.alert(
-            'Processing Timeout',
-            'Video face swap is taking longer than expected. Video processing can take up to 10 minutes. Please try again later or contact support if the issue persists.'
-          );
+          if (isMountedRef.current) {
+            Alert.alert(
+              'Processing Timeout',
+              'Video face swap is taking longer than expected. Video processing can take up to 10 minutes. Please try again later or contact support if the issue persists.'
+            );
+          }
         }
       } catch (error) {
         console.error('Error checking video face swap status:', error);
         if (pollCount >= maxPollAttempts) {
           clearInterval(interval);
+          videoFaceSwapPollingIntervalRef.current = null;
         }
       }
     }, 5000); // Poll every 5 seconds
+
+    videoFaceSwapPollingIntervalRef.current = interval;
   };
 
   const handleShare = async () => {
     try {
       await Share.share({
-        message: `${productData.name}\n${productData.description}\n${productData.image}`,
-        url: productData.image,
+        message: `${productData.name}\n${productData.description}\n${productData.image_urls?.[0] || ''}`,
+        url: productData.image_urls?.[0] || '',
         title: productData.name,
       });
     } catch (error) {
@@ -2200,15 +2422,15 @@ const ProductDetails = () => {
     setShareModalVisible(true);
   };
 
-  const shareUrl = mediaItems[currentImageIndex]?.url || productData.image;
+  const shareUrl = mediaItems[currentImageIndex]?.url || productData.image_urls?.[0] || '';
   const productDeepLink = `https://only2u.app/product/${productData.id}`;
-  
+
   const playStoreLink = 'https://play.google.com/store/apps/details?id=com.only2u.only2u';
   const appStoreLink = 'https://apps.apple.com/in/app/only2u-virtual-try-on-store/id6753112805';
 
   const productPrice = productData?.variants?.[0]?.rsp_price || productData?.price || 'Check price in app';
-  const productDescription = productData?.description ? 
-    (productData.description.length > 150 ? productData.description.substring(0, 150) + '...' : productData.description) 
+  const productDescription = productData?.description ?
+    (productData.description.length > 150 ? productData.description.substring(0, 150) + '...' : productData.description)
     : '';
 
   const shareText = `🛍️ ${productData.name}\n\n${productDescription ? productDescription + '\n\n' : ''}💰 Price: ₹${productPrice}\n\n🔗 View product: ${productDeepLink}\n\n📱 Download Only2U app:\n• Android: ${playStoreLink}\n• iOS: ${appStoreLink}\n\n✨ Try on clothes virtually with AI!`;
@@ -2216,7 +2438,7 @@ const ProductDetails = () => {
   const shareOnWhatsApp = () => {
     const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(shareText)}`;
     const whatsappWebUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
-    
+
     Linking.openURL(whatsappUrl).catch(() => {
       Linking.openURL(whatsappWebUrl).catch(() => {
         Share.share({ message: shareText }).catch(() => {
@@ -2374,6 +2596,16 @@ const ProductDetails = () => {
     }, 400);
   };
 
+  // Handle scrollToReviews param from navigation
+  useEffect(() => {
+    if (shouldScrollToReviews && !reviewsLoading && contentHeight > 0) {
+      // Wait a bit for the screen to fully render
+      setTimeout(() => {
+        scrollToReviews();
+      }, 800);
+    }
+  }, [shouldScrollToReviews, reviewsLoading, contentHeight]);
+
   const renderReview = (review: any) => {
     const getRatingText = (rating: number) => {
       if (rating >= 5) return 'Very Good';
@@ -2439,7 +2671,8 @@ const ProductDetails = () => {
 
     const handleShareReview = async (review: any) => {
       try {
-        const shareMessage = `Check out this review by ${review.reviewer_name || 'Only2U User'}:\n\n"${review.comment}"\n\nRating: ${review.rating}/5 stars`;
+        const productLink = productData?.id ? `https://only2u.app/product/${productData.id}` : '';
+        const shareMessage = `Check out this review by ${review.reviewer_name || 'Only2U User'}:\n\n"${review.comment}"\n\nRating: ${review.rating}/5 stars${productLink ? `\n\nView product: ${productLink}` : ''}`;
 
         await Share.share({
           message: shareMessage,
@@ -2487,16 +2720,6 @@ const ProductDetails = () => {
         {/* Review Title - Large and Bold */}
         <Text style={styles.reviewTitleBold}>
           {review.comment || 'Very beautiful and cloth quality superb!'}
-        </Text>
-
-        {/* Review Metadata */}
-        <Text style={styles.reviewMetadataText}>
-          Reviewed in India on {formatDate(review.created_at)}
-        </Text>
-
-        {/* Product Specifications */}
-        <Text style={styles.productSpecsText}>
-          Size: XL | Colour: Rani Pink
         </Text>
 
         {/* Review Images & Videos - Display horizontally */}
@@ -2570,39 +2793,37 @@ const ProductDetails = () => {
           </ScrollView>
         )}
 
-        {/* Additional Review Comment */}
-        <View style={styles.additionalCommentContainer}>
-          <Text style={styles.additionalCommentText}>
-            Very Very nice suit
-          </Text>
-        </View>
-
-        {/* Helpfulness Indicator */}
-        <Text style={styles.helpfulnessText}>
-          {helpfulCount} people found this helpful
-        </Text>
-
         {/* Action Buttons */}
         <View style={styles.actionButtonsContainer}>
-          <TouchableOpacity
-            style={styles.helpfulButtonNew}
-            onPress={() => handleHelpfulVote(review.id)}
-          >
-            <Text style={styles.helpfulButtonTextNew}>Helpful</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.shareButtonNew}
-            onPress={() => handleShareReview(review)}
-          >
-            <Ionicons name="share-outline" size={14} color="#333" />
-            <Text style={styles.shareButtonTextNew}>Share</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.reportButtonNew}
-            onPress={() => handleReportReview(review.id)}
-          >
-            <Text style={styles.reportButtonTextNew}>Report</Text>
-          </TouchableOpacity>
+          <View style={styles.primaryActionButtonsRow}>
+            <TouchableOpacity
+              style={[
+                styles.helpfulButtonNew,
+                helpfulVotes[review.id] && styles.helpfulButtonActive
+              ]}
+              onPress={() => handleHelpfulVote(review.id)}
+            >
+              <Text style={[
+                styles.helpfulButtonTextNew,
+                helpfulVotes[review.id] && styles.helpfulButtonTextActive
+              ]}>
+                Helpful
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.shareButtonNew}
+              onPress={() => handleShareReview(review)}
+            >
+              <Ionicons name="share-outline" size={14} color="#333" />
+              <Text style={styles.shareButtonTextNew}>Share</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.reportButtonNew}
+              onPress={() => handleReportReview(review.id)}
+            >
+              <Text style={styles.reportButtonTextNew}>Report</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Replacement Policy Modal */}
@@ -2657,12 +2878,12 @@ const ProductDetails = () => {
                   replacement (subject to availability).
                 </Text>
                 <Text style={{ color: '#666', fontStyle: 'italic', marginBottom: 10 }}>
-                  Note: Size replacement requests must also be made within 48 hours of receiving the
+                  Note: Size replacement requests must also be made within 24 hours of receiving the
                   product.
                 </Text>
                 <Text style={{ color: '#333', marginBottom: 10 }}>
-                  4. Report Within 48 Hours – All replacement requests (damaged/defective/size
-                  issues) should be raised within 48 hours of delivery through the app.
+                  4. Report Within 24 Hours – All replacement requests (damaged/defective/size
+                  issues) should be raised within 24 hours of delivery through the app.
                 </Text>
                 <Text style={{ color: '#333', marginBottom: 16 }}>
                   5. Original Packaging – Keep the dress in its original packaging until
@@ -2736,7 +2957,11 @@ const ProductDetails = () => {
                 console.error('❌ Video error for index:', currentImageIndex, error);
                 console.error('❌ Video URL:', currentMedia.url);
 
-                const fallbackUrl = getFallbackVideoUrl(currentMedia.url);
+                // Extract error code first
+                const errorCode = error?.code || error?.nativeEvent?.code || error?.message?.match(/(\d{3})/)?.[0] || '';
+                const errorMessage = error?.message || error?.nativeEvent?.message || '';
+
+                const fallbackUrl = getFallbackVideoUrl(currentMedia.url, errorCode);
                 if (
                   fallbackUrl &&
                   fallbackUrl !== currentMedia.url &&
@@ -2749,11 +2974,7 @@ const ProductDetails = () => {
                   }));
                   return;
                 }
-                
-                // Track failed videos (401, 403, 404, etc.)
-                const errorCode = error?.code || error?.nativeEvent?.code || '';
-                const errorMessage = error?.message || error?.nativeEvent?.message || '';
-                
+
                 // Check for authentication/authorization errors (401, 403) or other errors
                 if (errorCode === '401' || errorCode === '403' || errorMessage.includes('401') || errorMessage.includes('403')) {
                   console.warn('⚠️ Video access denied (401/403), removing from media items:', currentMedia.url);
@@ -2762,7 +2983,7 @@ const ProductDetails = () => {
                     newSet.add(currentMedia.url);
                     return newSet;
                   });
-                  
+
                   // Remove this video from media items
                   setMediaItems(prev => prev.filter((item, idx) => {
                     // Remove if it's the failed video
@@ -2782,24 +3003,6 @@ const ProductDetails = () => {
                 console.log('✅ Video URL:', currentMedia.url);
               }}
             />
-
-            {/* Video Controls Overlay */}
-            <View style={styles.videoControlsOverlay}>
-              <TouchableOpacity
-                style={styles.videoControlButton}
-                onPress={() => togglePlay(currentImageIndex)}>
-                <Ionicons name={videoState.isPlaying ? 'pause' : 'play'} size={24} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.videoControlButton}
-                onPress={() => toggleMute(currentImageIndex)}>
-                <Ionicons
-                  name={videoState.isMuted ? 'volume-mute' : 'volume-high'}
-                  size={24}
-                  color="#fff"
-                />
-              </TouchableOpacity>
-            </View>
           </TouchableOpacity>
         ) : (
           <>
@@ -2809,7 +3012,7 @@ const ProductDetails = () => {
                 <ActivityIndicator size="large" color="#F53F7A" />
               </View>
             )}
-            
+
             <TouchableOpacity
               activeOpacity={0.95}
               onPress={() => {
@@ -2817,11 +3020,11 @@ const ProductDetails = () => {
               }}
               style={styles.productImageTouchable}
             >
-              {currentMedia.url && 
-               !currentMedia.url.includes('placeholder') && 
-               !currentMedia.url.includes('placehold') &&
-               !currentMedia.url.includes('via.placeholder') &&
-               !currentMedia.url.includes('unsplash.com/photo-1610030469983') ? (
+              {currentMedia.url &&
+                !currentMedia.url.includes('placeholder') &&
+                !currentMedia.url.includes('placehold') &&
+                !currentMedia.url.includes('via.placeholder') &&
+                !currentMedia.url.includes('unsplash.com/photo-1610030469983') ? (
                 <Image
                   source={{ uri: currentMedia.url }}
                   style={styles.productImage}
@@ -2988,15 +3191,39 @@ const ProductDetails = () => {
             style={styles.fullViewButton}
             onPress={() => openFullScreen(currentMedia.type, currentImageIndex)}
             activeOpacity={0.7}
+            accessibilityLabel={t('view_full_image', 'View full image')}
           >
-            <Ionicons name="search-outline" size={20} color="#333" />
+            {/* Use an expand icon instead of a search icon for clarity */}
+            <Ionicons name="expand-outline" size={20} color="#333" />
+          </TouchableOpacity>
+        )}
+
+        {/* Video mute button (under wishlist) - Only show for videos */}
+        {currentMedia.type === 'video' && (
+          <TouchableOpacity
+            style={styles.fullViewButton}
+            onPress={() => toggleMute(currentImageIndex)}
+            activeOpacity={0.7}
+            accessibilityLabel={
+              videoState.isMuted
+                ? t('unmute_video', 'Unmute video')
+                : t('mute_video', 'Mute video')
+            }
+          >
+            <Ionicons
+              name={videoState.isMuted ? 'volume-mute' : 'volume-high'}
+              size={20}
+              color="#333"
+            />
           </TouchableOpacity>
         )}
 
         {/* Floating Buttons */}
-        <TouchableOpacity style={styles.floatingBackButton} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={22} color="#333" />
-        </TouchableOpacity>
+        <View style={styles.floatingTopButtons}>
+          <TouchableOpacity style={styles.floatingBackButton} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={22} color="#333" />
+          </TouchableOpacity>
+        </View>
         {/* <TouchableOpacity style={styles.shareButton} onPress={handleSharePress}>
           <Ionicons name="share-outline" size={24} color="#333" />
         </TouchableOpacity> */}
@@ -3038,6 +3265,46 @@ const ProductDetails = () => {
     );
   };
 
+  // Show error screen if there's a fetch error
+  if (fetchError) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <View style={styles.statusBarSpacer} />
+          <View style={styles.headerContent}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color="#333" />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Only2ULogo size="medium" />
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.errorContainer}>
+          <View style={styles.errorIconContainer}>
+            <Ionicons name="cloud-offline-outline" size={80} color="#EF4444" />
+          </View>
+          <Text style={styles.errorTitle}>
+            {fetchError.includes('internet') ? 'No Internet Connection' : 'Error Loading Product'}
+          </Text>
+          <Text style={styles.errorMessage}>{fetchError}</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={() => {
+              setFetchError(null);
+              setRefetchTrigger(prev => prev + 1);
+            }}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="refresh" size={20} color="#fff" />
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* Fixed Header - Dashboard style */}
@@ -3059,82 +3326,31 @@ const ProductDetails = () => {
             ) : null}
           </View>
           <View style={styles.headerRight}>
-            <View style={styles.languageContainer}>
-              <TouchableOpacity
-                onPress={() => setLangMenuVisible((v) => !v)}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Ionicons name="globe-outline" size={16} color="#666" />
-                <Text style={styles.languageText}>{i18n.language === 'te' ? 'TE' : 'EN'}</Text>
-              </TouchableOpacity>
-              {langMenuVisible && (
-                <View
-                  style={{
-                    position: 'absolute',
-                    top: 32,
-                    right: 0,
-                    backgroundColor: '#f7f8fa',
-                    borderRadius: 12,
-                    shadowColor: '#000',
-                    shadowOpacity: 0.08,
-                    shadowRadius: 8,
-                    shadowOffset: { width: 0, height: 2 },
-                    elevation: 4,
-                    minWidth: 120,
-                    zIndex: 100,
-                  }}>
-                  <TouchableOpacity
-                    style={{
-                      padding: 12,
-                      borderTopLeftRadius: 12,
-                      borderTopRightRadius: 12,
-                      backgroundColor: i18n.language === 'en' ? '#f1f2f4' : 'transparent',
-                    }}
-                    onPress={() => {
-                      i18n.changeLanguage('en');
-                      setLangMenuVisible(false);
-                    }}>
-                    <Text style={{ color: '#222', fontSize: 16 }}>{t('english')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={{
-                      padding: 12,
-                      borderBottomLeftRadius: 12,
-                      borderBottomRightRadius: 12,
-                      backgroundColor: i18n.language === 'te' ? '#f1f2f4' : 'transparent',
-                    }}
-                    onPress={() => {
-                      i18n.changeLanguage('te');
-                      setLangMenuVisible(false);
-                    }}>
-                    <Text style={{ color: '#222', fontSize: 18 }}>{t('telugu')} (Telugu)</Text>
-                  </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.currencyContainer}
+              onPress={() => setShowCoinsModal(true)}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons name="face-man-shimmer" size={16} color="#F53F7A" />
+              <Text style={styles.currencyText}>{userData?.coin_balance || 0}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={() => (navigation as any).navigate('TabNavigator', {
+                screen: 'Home',
+                params: {
+                  screen: 'Wishlist'
+                }
+              })}>
+              <Ionicons name="heart-outline" size={22} color="#F53F7A" />
+              {wishlist.length > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{wishlist.length > 99 ? '99+' : wishlist.length}</Text>
                 </View>
               )}
-            </View>
-            <View style={styles.currencyContainer}>
-              <Text style={styles.currencyText}>{userData?.coin_balance || 0}</Text>
-              <MaterialCommunityIcons name="face-man-shimmer" size={18} color="#F53F7A" />
-            </View>
-            <View>
-              <TouchableOpacity
-                style={styles.iconButton}
-                onPress={() => (navigation as any).navigate('Wishlist')}>
-                <Ionicons name="heart-outline" size={24} color="#333" />
-                {wishlist.length > 0 && (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>{wishlist.length}</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            </View>
+            </TouchableOpacity>
             <TouchableOpacity
-              style={[
-                styles.iconButton,
-                {
-                  backgroundColor: userData?.profilePhoto ? 'transparent' : 'lightgray',
-                  borderRadius: 20,
-                },
-              ]}
+              style={styles.profileButton}
               onPress={() => navigation.navigate('Profile')}>
               {userData?.profilePhoto ? (
                 <Image source={{ uri: userData.profilePhoto }} style={styles.avatarImage} />
@@ -3221,22 +3437,22 @@ const ProductDetails = () => {
               {(() => {
                 // Get the variant to use for price (selected variant or first variant)
                 const variantToUse = selectedVariant || (variants.length > 0 ? variants[0] : null);
-                
+
                 // Use rsp_price or mrp_price from variant if available, otherwise use price
                 const displayPrice = variantToUse?.rsp_price || variantToUse?.mrp_price || variantToUse?.price || productData.price || 0;
                 const mrpPrice = variantToUse?.mrp_price || productData.originalPrice || 0;
                 const discount = variantToUse?.discount_percentage || productData.discount || 0;
-                const calculatedDiscount = mrpPrice > 0 && displayPrice < mrpPrice 
+                const calculatedDiscount = mrpPrice > 0 && displayPrice < mrpPrice
                   ? Math.round(((mrpPrice - displayPrice) / mrpPrice) * 100)
                   : discount;
-                
+
                 // Only show price if it's greater than 0
                 if (displayPrice <= 0) {
                   return (
                     <Text style={styles.price}>Price not available</Text>
                   );
                 }
-                
+
                 return (
                   <>
                     <Text style={styles.price}>
@@ -3259,17 +3475,19 @@ const ProductDetails = () => {
             <View style={styles.productOptionsSection}>
               {/* Size Selection */}
               {availableSizes.length > 0 && (
-                <View style={styles.optionSection}>
+                <Animated.View
+                  style={[
+                    styles.optionSection,
+                    {
+                      transform: [{ translateX: sizeSectionJitter }],
+                    },
+                  ]}
+                >
                   <View style={styles.optionSectionHeader}>
                     <Text style={styles.optionSectionTitle}>{t('select_size')}</Text>
-                    {selectedSize && (
-                      <Text style={styles.selectedOptionBadge}>
-                        {availableSizes.find(s => s.id === selectedSize)?.name}
-                      </Text>
-                    )}
                   </View>
                   <View style={styles.sizesContainer}>{availableSizes.map(renderSizeOption)}</View>
-                </View>
+                </Animated.View>
               )}
 
               {/* Color Selection */}
@@ -3289,7 +3507,14 @@ const ProductDetails = () => {
 
               {/* Quantity Selection */}
               {selectedSize && getAvailableQuantity() > 0 && (
-                <View style={styles.optionSection}>
+                <Animated.View
+                  style={[
+                    styles.optionSection,
+                    {
+                      transform: [{ translateX: quantitySectionJitter }],
+                    },
+                  ]}
+                >
                   <View style={styles.quantitySectionHeader}>
                     <View style={styles.quantityHeaderLeft}>
                       <Text style={styles.optionSectionTitle}>{t('quantity')}</Text>
@@ -3299,12 +3524,12 @@ const ProductDetails = () => {
                     </View>
                     <View style={styles.quantityContainer}>
                       <TouchableOpacity
-                        style={[styles.quantityButton, quantity <= 1 && styles.quantityButtonDisabled]}
-                        onPress={() => setQuantity((q) => Math.max(1, q - 1))}
-                        disabled={quantity <= 1}
+                        style={[styles.quantityButton, quantity <= 0 && styles.quantityButtonDisabled]}
+                        onPress={() => setQuantity((q) => Math.max(0, q - 1))}
+                        disabled={quantity <= 0}
                         activeOpacity={0.7}
                       >
-                        <Ionicons name="remove" size={16} color={quantity <= 1 ? '#D1D5DB' : '#F53F7A'} />
+                        <Ionicons name="remove" size={16} color={quantity <= 0 ? '#D1D5DB' : '#F53F7A'} />
                       </TouchableOpacity>
                       <View style={styles.quantityDisplay}>
                         <Text style={styles.quantityText}>{quantity}</Text>
@@ -3326,7 +3551,7 @@ const ProductDetails = () => {
                       </TouchableOpacity>
                     </View>
                   </View>
-                </View>
+                </Animated.View>
               )}
 
               {/* Action Buttons */}
@@ -3349,51 +3574,53 @@ const ProductDetails = () => {
                       <TouchableOpacity
                         style={[
                           styles.addToCartButtonPro,
-                          (getAvailableQuantity() === 0 || !selectedSize || addToCartLoading || quantity >= getAvailableQuantity()) && styles.buttonDisabled,
+                          (getAvailableQuantity() === 0 || addToCartLoading) && styles.buttonDisabled,
                         ]}
                         onPress={handleAddToCart}
-                        disabled={getAvailableQuantity() === 0 || addToCartLoading || !selectedSize || quantity >= getAvailableQuantity()}
+                        disabled={getAvailableQuantity() === 0 || addToCartLoading}
                         activeOpacity={0.85}
                       >
                         {addToCartLoading ? (
                           <ActivityIndicator size="small" color="#fff" />
                         ) : (
                           <View style={styles.buttonIconContainer}>
-                            <Ionicons 
-                              name="cart" 
-                              size={20} 
-                              color={(getAvailableQuantity() === 0 || !selectedSize || quantity >= getAvailableQuantity()) ? '#9CA3AF' : '#fff'} 
+                            <Ionicons
+                              name="cart"
+                              size={20}
+                              color={(getAvailableQuantity() === 0 || !selectedSize) ? '#9CA3AF' : '#fff'}
                             />
                           </View>
                         )}
                         <Text style={[
                           styles.addToCartButtonTextPro,
-                          (getAvailableQuantity() === 0 || !selectedSize || quantity >= getAvailableQuantity()) && styles.buttonDisabledText,
+                          (getAvailableQuantity() === 0) && styles.buttonDisabledText,
                         ]}>
-                          {addToCartLoading ? t('adding') : (quantity >= getAvailableQuantity() ? 'Out of Stock' : t('add_to_cart'))}
+                          {addToCartLoading
+                            ? t('adding')
+                            : (getAvailableQuantity() === 0
+                              ? 'Out of Stock'
+                              : t('add_to_cart'))}
                         </Text>
                       </TouchableOpacity>
                     </View>
 
                     {/* Bottom Row: Resell Button (Full Width) */}
-                    {userData?.id && (
-                      <TouchableOpacity
-                        style={styles.resellButtonPro}
-                        onPress={handleResellButtonPress}
-                        activeOpacity={0.85}
-                      >
-                        <View style={styles.resellButtonContent}>
-                          <View style={styles.resellIconContainer}>
-                            <Ionicons name="storefront" size={18} color="#fff" />
-                          </View>
-                          <View style={styles.resellTextContainer}>
-                            <Text style={styles.resellButtonTextPro}>Resell & Earn</Text>
-                            <Text style={styles.resellButtonSubtext}>Share and make money</Text>
-                          </View>
-                          <Ionicons name="arrow-forward" size={18} color="#fff" style={{ opacity: 0.9 }} />
+                    <TouchableOpacity
+                      style={styles.resellButtonPro}
+                      onPress={handleResellButtonPress}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.resellButtonContent}>
+                        <View style={styles.resellIconContainer}>
+                          <Ionicons name="storefront" size={18} color="#fff" />
                         </View>
-                      </TouchableOpacity>
-                    )}
+                        <View style={styles.resellTextContainer}>
+                          <Text style={styles.resellButtonTextPro}>Resell & Earn</Text>
+                          <Text style={styles.resellButtonSubtext}>Share and make money</Text>
+                        </View>
+                        <Ionicons name="arrow-forward" size={18} color="#fff" style={{ opacity: 0.9 }} />
+                      </View>
+                    </TouchableOpacity>
                   </>
                 ) : (
                   <>
@@ -3415,18 +3642,16 @@ const ProductDetails = () => {
                         <Text style={styles.addToCartButtonTextPro}>Preview Only</Text>
                       </TouchableOpacity>
 
-                      {userData?.id && (
-                        <TouchableOpacity
-                          style={styles.resellButtonCompactPro}
-                          onPress={handleResellButtonPress}
-                          activeOpacity={0.85}
-                        >
-                          <View style={styles.buttonIconContainer}>
-                            <Ionicons name="storefront" size={18} color="#fff" />
-                          </View>
-                          <Text style={styles.resellButtonTextCompactPro}>Resell</Text>
-                        </TouchableOpacity>
-                      )}
+                      <TouchableOpacity
+                        style={styles.resellButtonCompactPro}
+                        onPress={handleResellButtonPress}
+                        activeOpacity={0.85}
+                      >
+                        <View style={styles.buttonIconContainer}>
+                          <Ionicons name="storefront" size={18} color="#fff" />
+                        </View>
+                        <Text style={styles.resellButtonTextCompactPro}>Resell</Text>
+                      </TouchableOpacity>
                     </View>
 
                     <TouchableOpacity
@@ -3531,13 +3756,16 @@ const ProductDetails = () => {
                       3. Size Replacement Option – If the fitting is not right, you can request a size replacement (subject to availability).
                     </Text>
                     <Text style={styles.replacementPolicyNote}>
-                      Note: Size replacement requests must also be made within 48 hours of receiving the product.
+                      Note: Size replacement requests must also be made within 24 hours of receiving the product.
                     </Text>
                     <Text style={styles.replacementPolicyText}>
-                      4. Report Within 48 Hours – All replacement requests (damaged/defective/size issues) should be raised within 48 hours of delivery through the app.
+                      4. Report Within 24 Hours – All replacement requests (damaged/defective/size issues) should be raised within 24 hours of delivery through the app.
                     </Text>
                     <Text style={styles.replacementPolicyText}>
-                      5. Original Packaging – Keep the dress in its original packaging until replacement is confirmed.
+                      5. Barcode & Label – Do not remove or tamper with the manufacturer barcode or product labels; they must remain intact for us to process the replacement.
+                    </Text>
+                    <Text style={styles.replacementPolicyText}>
+                      6. Original Packaging – Keep the dress in its original packaging until replacement is confirmed.
                     </Text>
 
                     <Text style={styles.replacementPolicySectionTitle}>⚡ How It Works:</Text>
@@ -3815,53 +4043,13 @@ const ProductDetails = () => {
                             </View>
                           </View>
                         </TouchableOpacity>
-                        <TouchableOpacity
-                          style={styles.suggestionAddButton}
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            // Add to cart with default variant
-                            if (firstVariant) {
-                              addToCart({
-                                productId: p.id,
-                                variantId: firstVariant.id,
-                                name: p.name,
-                                price: firstVariant.price || minRspPrice,
-                                image: img,
-                                image_urls: p.image_urls || (img ? [img] : []),
-                                size: firstVariant.size?.name || 'One Size',
-                                color: firstVariant.color?.name || 'Default',
-                                quantity: 1,
-                                stock: firstVariant.quantity || 0,
-                                category: p.category?.name || '',
-                                sku: p.sku || firstVariant.sku || p.id,
-                                isReseller: false,
-                              });
-                              Toast.show({
-                                type: 'success',
-                                text1: 'Added to Cart',
-                                text2: p.name,
-                                position: 'top',
-                              });
-                            } else {
-                              Toast.show({
-                                type: 'error',
-                                text1: 'Error',
-                                text2: 'Product variant not available',
-                                position: 'top',
-                              });
-                            }
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.suggestionAddButtonText}>Add</Text>
-                        </TouchableOpacity>
                       </View>
                     );
                   }}
                 />
                 {/* Arrow controls */}
                 <TouchableOpacity
-                  style={styles.suggestionsLeftArrow}
+                  style={[styles.suggestionsArrowBase, styles.suggestionsArrowLeft]}
                   onPress={() => {
                     try {
                       (suggestionsListRef as any).current?.scrollToOffset?.({
@@ -3873,10 +4061,17 @@ const ProductDetails = () => {
                   }}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="chevron-back" size={20} color="#111" />
+                  <LinearGradient
+                    colors={['#fff', '#ffe6f0']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.suggestionsArrowInner}
+                  >
+                    <Ionicons name="chevron-back" size={18} color="#F53F7A" />
+                  </LinearGradient>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.suggestionsRightArrow}
+                  style={[styles.suggestionsArrowBase, styles.suggestionsArrowRight]}
                   onPress={() => {
                     try {
                       (suggestionsListRef as any).current?.scrollToOffset?.({
@@ -3888,7 +4083,14 @@ const ProductDetails = () => {
                   }}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="chevron-forward" size={20} color="#111" />
+                  <LinearGradient
+                    colors={['#fff', '#ffe6f0']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.suggestionsArrowInner}
+                  >
+                    <Ionicons name="chevron-forward" size={18} color="#F53F7A" />
+                  </LinearGradient>
                 </TouchableOpacity>
               </View>
             </View>
@@ -3980,8 +4182,8 @@ const ProductDetails = () => {
               <Text style={{ color: '#333', marginBottom: 10 }}>1. Unboxing Video Required – Customers must record a clear video while opening the parcel, showing the product from start to finish.</Text>
               <Text style={{ color: '#333', marginBottom: 10 }}>2. Dress Condition – The item must be unused, in good condition, and with the original tag intact.</Text>
               <Text style={{ color: '#333', marginBottom: 10 }}>3. Size Replacement Option – If the fitting is not right, you can request a size replacement (subject to availability).</Text>
-              <Text style={{ color: '#666', fontStyle: 'italic', marginBottom: 10 }}>Note: Size replacement requests must also be made within 48 hours of receiving the product.</Text>
-              <Text style={{ color: '#333', marginBottom: 10 }}>4. Report Within 48 Hours – All replacement requests (damaged/defective/size issues) should be raised within 48 hours of delivery through the app.</Text>
+              <Text style={{ color: '#666', fontStyle: 'italic', marginBottom: 10 }}>Note: Size replacement requests must also be made within 24 hours of receiving the product.</Text>
+              <Text style={{ color: '#333', marginBottom: 10 }}>4. Report Within 24 Hours – All replacement requests (damaged/defective/size issues) should be raised within 24 hours of delivery through the app.</Text>
               <Text style={{ color: '#333', marginBottom: 16 }}>5. Original Packaging – Keep the dress in its original packaging until replacement is confirmed.</Text>
 
               <Text style={{ fontSize: 16, fontWeight: '700', color: '#111', marginBottom: 8 }}>⚡ How It Works:</Text>
@@ -4003,7 +4205,7 @@ const ProductDetails = () => {
         <View style={styles.reportModalOverlay}>
           <View style={styles.reportModalContainer}>
             <View style={styles.reportModalIconContainer}>
-              <Ionicons name="flag" size={40} color="#FF6B6B" />
+              <Ionicons name="flag" size={40} color="#F53F7A" />
             </View>
 
             <Text style={styles.reportModalTitle}>Report Review</Text>
@@ -4079,6 +4281,14 @@ const ProductDetails = () => {
                   Generated previews may be stored to improve my experience
                 </Text>
               </View>
+            </View>
+
+            {/* Disclaimer */}
+            <View style={styles.consentDisclaimer}>
+              <Ionicons name="information-circle" size={18} color="#F59E0B" style={{ marginRight: 8 }} />
+              <Text style={styles.consentDisclaimerText}>
+                Please note: The results are AI-generated and may not be perfect. The preview is for reference purposes only.
+              </Text>
             </View>
 
             {/* Buttons */}
@@ -4216,7 +4426,7 @@ const ProductDetails = () => {
               <Text style={styles.tryOnInfoDesc}>See how this outfit looks on you with AI-powered face swap</Text>
               <View style={styles.tryOnInfoCost}>
                 <Ionicons name="diamond-outline" size={16} color="#F53F7A" />
-                <Text style={styles.tryOnInfoCostText}>25 coins</Text>
+                <Text style={styles.tryOnInfoCostText}>50 coins</Text>
               </View>
             </View>
 
@@ -4406,6 +4616,148 @@ const ProductDetails = () => {
         </View>
       </Modal>
 
+      {/* Coins Info Modal */}
+      <Modal
+        visible={showCoinsModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowCoinsModal(false)}
+        statusBarTranslucent={true}
+      >
+        <View style={styles.coinsModalOverlay}>
+          <View style={styles.coinsModalContainer}>
+            {/* Header */}
+            <View style={styles.coinsModalHeader}>
+              <View style={styles.coinsModalHeaderContent}>
+                <View style={styles.coinsModalIconWrapper}>
+                  <MaterialCommunityIcons name="face-man-shimmer" size={20} color="#F53F7A" />
+                </View>
+                <Text style={styles.coinsModalTitle}>Your Coins</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.coinsModalCloseButton}
+                onPress={() => setShowCoinsModal(false)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={22} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Scrollable Content */}
+            <ScrollView
+              style={styles.coinsModalScrollView}
+              contentContainerStyle={styles.coinsModalScrollContent}
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+            >
+              {/* Current Balance Card */}
+              <View style={styles.coinsBalanceCard}>
+                <Text style={styles.coinsBalanceLabel}>Current Balance</Text>
+                <View style={styles.coinsBalanceRow}>
+                  <Text style={styles.coinsBalanceValue}>{userData?.coin_balance || 0}</Text>
+                  <Text style={styles.coinsBalanceUnit}>coins</Text>
+                </View>
+              </View>
+
+              {/* Redeem Info Card */}
+              <View style={styles.coinsRedeemCard}>
+                <View style={styles.coinsRedeemHeader}>
+                  <Ionicons name="gift" size={14} color="#F53F7A" />
+                  <Text style={styles.coinsRedeemTitle}>Redeem Coins</Text>
+                </View>
+
+                {/* Shopping Redemption */}
+                <View style={styles.coinsRedeemItem}>
+                  <View style={styles.coinsRedeemIconContainer}>
+                    <Ionicons name="bag-check" size={14} color="#10B981" />
+                  </View>
+                  <Text style={styles.coinsRedeemItemText}>
+                    Redeem <Text style={styles.coinsRedeemHighlight}>100 coins</Text> for every ₹1000 worth of products you purchase
+                  </Text>
+                </View>
+
+                {/* Face Swap Redemption */}
+                <View style={styles.coinsRedeemItem}>
+                  <View style={styles.coinsRedeemIconContainer}>
+                    <MaterialCommunityIcons name="face-man-shimmer" size={14} color="#F53F7A" />
+                  </View>
+                  <Text style={styles.coinsRedeemItemText}>
+                    Redeem <Text style={styles.coinsRedeemHighlight}>50 coins</Text> for each face swap
+                  </Text>
+                </View>
+              </View>
+
+              {/* Ways to Earn Section */}
+              <View style={styles.coinsEarnSection}>
+                <Text style={styles.coinsEarnSectionTitle}>Ways to Earn Coins</Text>
+
+                {userData?.id && referralCode ? (
+                  <TouchableOpacity
+                    style={styles.coinsReferFriendsSimple}
+                    onPress={handleShareReferral}
+                    activeOpacity={0.7}
+                  >
+                    <LinearGradient
+                      colors={['#25D366', '#128C7E']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.coinsReferralCard}
+                    >
+                      <View style={styles.coinsReferralIconContainer}>
+                        <Ionicons name="logo-whatsapp" size={32} color="#fff" />
+                      </View>
+                      <View style={styles.coinsReferFriendsTextContainer}>
+                        <Text style={styles.coinsEarn100Title}>🎁 Refer & Earn</Text>
+                        <Text style={styles.coinsEarn100Subtitle}>Share on WhatsApp to earn coins</Text>
+                      </View>
+                      <View style={styles.coinsShareArrow}>
+                        <Ionicons name="arrow-forward-circle" size={32} color="rgba(255,255,255,0.9)" />
+                      </View>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.coinsEarnItem}>
+                    <View style={[styles.coinsEarnIcon, { backgroundColor: '#F3E8FF' }]}>
+                      <Ionicons name="person-add" size={18} color="#8B5CF6" />
+                    </View>
+                    <View style={styles.coinsEarnContent}>
+                      <Text style={styles.coinsEarnItemTitle}>Refer Friends</Text>
+                      <Text style={styles.coinsEarnItemDesc}>
+                        Invite friends and earn 100 coins
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                <View style={styles.coinsEarnItem}>
+                  <View style={[styles.coinsEarnIcon, { backgroundColor: '#ECFDF5' }]}>
+                    <Ionicons name="cart" size={18} color="#10B981" />
+                  </View>
+                  <View style={styles.coinsEarnContent}>
+                    <Text style={styles.coinsEarnItemTitle}>Make a Purchase</Text>
+                    <Text style={styles.coinsEarnItemDesc}>
+                      Get 10% of your order value as coins
+                    </Text>
+                  </View>
+                  <View style={styles.coinsEarnAmountBadge}>
+                    <Text style={styles.coinsEarnAmount}>+10%</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Close Button */}
+              <TouchableOpacity
+                style={styles.coinsModalButton}
+                onPress={() => setShowCoinsModal(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.coinsModalButtonText}>Got it!</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* Saved Popup */}
       {showSavedPopup && (
         <Animated.View
@@ -4444,7 +4796,7 @@ const ProductDetails = () => {
                   useNativeDriver: true,
                 }).start(() => {
                   setShowSavedPopup(false);
-                  (navigation as any).navigate('Home', { screen: 'Wishlist' });
+                  (navigation as any).navigate('TabNavigator', { screen: 'Wishlist' });
                 });
               }}>
               <Text style={styles.savedPopupViewText}>{t('view')}</Text>
@@ -4484,7 +4836,7 @@ const ProductDetails = () => {
                 resizeMode={ResizeMode.CONTAIN}
                 shouldPlay
                 useNativeControls
-                isLooping
+                isMuted={false}
               />
             </View>
 
@@ -4552,7 +4904,7 @@ const ProductDetails = () => {
               </Text>
 
               <View style={styles.marginOptions}>
-                {[10, 15, 20, 25, 30].map((margin) => (
+                {[10, 20, 30].map((margin) => (
                   <TouchableOpacity
                     key={margin}
                     style={[
@@ -4603,6 +4955,67 @@ const ProductDetails = () => {
                 {!!customPriceError && <Text style={styles.customPriceError}>{customPriceError}</Text>}
                 <Text style={styles.customPriceHelp}>Leave empty to use selected margin</Text>
               </View>
+
+              {/* Full Set Option - 15% discount on RSP */}
+              {availableSizes && availableSizes.length > 1 && (
+                <View style={{
+                  marginTop: 16,
+                  padding: 16,
+                  backgroundColor: '#FEF3C7',
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#F59E0B',
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="gift" size={20} color="#D97706" />
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#92400E', marginLeft: 8 }}>
+                      Combo Offer
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 14, color: '#78350F', marginBottom: 8 }}>
+                    Buy all available sizes ({availableSizes.length} sizes: {availableSizes.map(s => s.name).join(', ')}) at 15% discount!
+                  </Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View>
+                      <Text style={{ fontSize: 12, color: '#92400E' }}>Full Set Price:</Text>
+                      <Text style={{ fontSize: 18, fontWeight: '700', color: '#D97706' }}>
+                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length * 0.85)}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#78350F', textDecorationLine: 'line-through' }}>
+                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#D97706',
+                        paddingHorizontal: 16,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                      }}
+                      onPress={() => {
+                        setShowMarginModal(false);
+                        // Navigate to catalog share with full set info
+                        const fullSetPrice = Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length * 0.85);
+                        (navigation as any).navigate('CatalogShare', {
+                          product: {
+                            ...productData,
+                            variants: variants,
+                            product_variants: variants,
+                            availableSizes: availableSizes,
+                            isFullSet: true,
+                            fullSetPrice: fullSetPrice,
+                            resellPrice: fullSetPrice,
+                            margin: 0,
+                            basePrice: (selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length
+                          }
+                        });
+                      }}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Select Full Set</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
 
               <View style={styles.marginSummary}>
                 <Text style={styles.marginSummaryTitle}>Profit Summary</Text>
@@ -4712,7 +5125,11 @@ const ProductDetails = () => {
                 style={styles.tryOnCompleteViewButton}
                 onPress={() => {
                   setShowTryOnCompleteModal(false);
-                  (navigation as any).navigate('Wishlist', { preview: true });
+                  if (completedFaceSwapProduct) {
+                    (navigation as any).navigate('PersonalizedProductResult', {
+                      product: completedFaceSwapProduct,
+                    });
+                  }
                 }}
                 activeOpacity={0.8}
               >
@@ -4720,89 +5137,6 @@ const ProductDetails = () => {
                 <Text style={styles.tryOnCompleteViewText}>View</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Low Coins Modal */}
-      <Modal
-        visible={showLowCoinsModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLowCoinsModal(false)}
-      >
-        <View style={styles.lowCoinsOverlay}>
-          <View style={styles.lowCoinsModal}>
-            {/* Icon */}
-            <View style={styles.lowCoinsIconCircle}>
-              <Ionicons name="diamond-outline" size={48} color="#F53F7A" />
-            </View>
-
-            {/* Title */}
-            <Text style={styles.lowCoinsTitle}>Need More Coins</Text>
-
-            {/* Current Balance */}
-            <View style={styles.lowCoinsBalanceCard}>
-              <Text style={styles.lowCoinsBalanceLabel}>Current Balance</Text>
-              <View style={styles.lowCoinsBalanceRow}>
-                <Ionicons name="diamond" size={20} color="#F53F7A" />
-                <Text style={styles.lowCoinsBalanceValue}>{coinBalance} coins</Text>
-              </View>
-            </View>
-
-            {/* Required */}
-            <Text style={styles.lowCoinsRequired}>Required: 25 coins for Face Swap</Text>
-
-            {/* Ways to Earn */}
-            <View style={styles.lowCoinsEarnSection}>
-              <Text style={styles.lowCoinsEarnTitle}>Ways to Earn Coins:</Text>
-
-              <View style={styles.lowCoinsEarnItem}>
-                <View style={styles.lowCoinsEarnIcon}>
-                  <Ionicons name="share-social" size={20} color="#3B82F6" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.lowCoinsEarnText}>Share products with friends</Text>
-                  <Text style={styles.lowCoinsEarnSubtext}>Earn coins when they view</Text>
-                </View>
-                <Text style={styles.lowCoinsEarnCoins}>+5</Text>
-              </View>
-
-              <View style={styles.lowCoinsEarnItem}>
-                <View style={styles.lowCoinsEarnIcon}>
-                  <Ionicons name="cart" size={20} color="#10B981" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.lowCoinsEarnText}>Complete a purchase</Text>
-                  <Text style={styles.lowCoinsEarnSubtext}>Get 25% of order value as coins</Text>
-                </View>
-                <Text style={styles.lowCoinsEarnCoins}>+25%</Text>
-              </View>
-            </View>
-
-            {/* Buttons */}
-            <TouchableOpacity
-              style={styles.lowCoinsShareButton}
-              onPress={() => {
-                setShowLowCoinsModal(false);
-                // Trigger share functionality
-                setTimeout(() => {
-                  setShareModalVisible(true);
-                }, 300);
-              }}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="share-social" size={18} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={styles.lowCoinsShareButtonText}>Share This Product</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.lowCoinsCloseButton}
-              onPress={() => setShowLowCoinsModal(false)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.lowCoinsCloseText}>Maybe Later</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -5113,7 +5447,7 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
   languageContainer: {
     flexDirection: 'row',
@@ -5129,15 +5463,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    backgroundColor: '#FFF5F7',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
   currencyText: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: '600',
+    fontSize: 13,
+    color: '#F53F7A',
+    fontWeight: '700',
   },
   iconButton: {
     position: 'relative',
-    padding: 2,
+    padding: 4,
+  },
+  profileButton: {
+    backgroundColor: 'lightgray',
+    borderRadius: 20,
+    padding: 7,
+    width: 34,
+    height: 34,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   avatarImage: {
     width: 30,
@@ -5286,12 +5633,18 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 16,
     right: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
   },
   expandHintText: {
     marginLeft: 6,
@@ -5794,16 +6147,16 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#F53F7A',
   },
-  quantityText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#F53F7A',
-  },
   actionButtonsContainer: {
     marginTop: 12,
     marginBottom: 8,
     gap: 12,
     width: '100%',
+  },
+  primaryActionButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
   },
   primaryActionsRow: {
     flexDirection: 'row',
@@ -6062,11 +6415,11 @@ const styles = StyleSheet.create({
   ratingBadgeText: {
     fontSize: 14,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#333',
   },
   ratingCountText: {
     fontSize: 12,
-    color: '#fff',
+    color: '#666',
   },
   productDescription: {
     fontSize: 14,
@@ -6353,7 +6706,7 @@ const styles = StyleSheet.create({
   },
   seeMoreText: {
     fontSize: 14,
-    color: '#007AFF',
+    color: '#F53F7A',
     fontWeight: '500',
   },
   resellTutorialOverlay: {
@@ -6546,11 +6899,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   helpfulButtonActive: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#007AFF',
+    backgroundColor: '#FFF0F5',
+    borderColor: '#F53F7A',
   },
   helpfulButtonTextActive: {
-    color: '#007AFF',
+    color: '#F53F7A',
   },
   // Report Modal Styles
   reportModalOverlay: {
@@ -6571,7 +6924,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#FFF5F5',
+    backgroundColor: '#FFF0F5',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
@@ -6579,7 +6932,7 @@ const styles = StyleSheet.create({
   reportModalTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111',
+    color: '#F53F7A',
     marginBottom: 12,
     textAlign: 'center',
   },
@@ -6615,7 +6968,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 8,
-    backgroundColor: '#FF6B6B',
+    backgroundColor: '#F53F7A',
     alignItems: 'center',
   },
   reportModalConfirmText: {
@@ -7104,43 +7457,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
-  suggestionsLeftArrow: {
+  suggestionsArrowBase: {
     position: 'absolute',
-    left: 0,
     top: '45%',
     transform: [{ translateY: -14 }],
-    backgroundColor: '#FFF',
-    borderRadius: 24,
-    width: 32,
-    height: 32,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
   },
-  suggestionsRightArrow: {
-    position: 'absolute',
-    right: 0,
-    top: '45%',
-    transform: [{ translateY: -14 }],
-    backgroundColor: '#FFF',
-    borderRadius: 24,
-    width: 32,
-    height: 32,
+  suggestionsArrowLeft: {
+    left: -6,
+  },
+  suggestionsArrowRight: {
+    right: -6,
+  },
+  suggestionsArrowInner: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 63, 122, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    shadowColor: '#F53F7A',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
   suggestionCard: {
     width: 160,
@@ -7361,6 +7705,24 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#4B5563',
     lineHeight: 20,
+  },
+  consentDisclaimer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FEF3C7',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 20,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  consentDisclaimerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#92400E',
+    lineHeight: 18,
   },
   consentButtons: {
     flexDirection: 'row',
@@ -7827,8 +8189,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   reportButtonNew: {
-    flex: 1,
-    alignItems: 'flex-end',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
   reportButtonTextNew: {
     fontSize: 14,
@@ -8143,6 +8509,323 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  // Error Screen Styles
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: '#F9FAFB',
+  },
+  errorIconContainer: {
+    marginBottom: 24,
+    padding: 20,
+    borderRadius: 100,
+    backgroundColor: '#FEE2E2',
+  },
+  errorTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  errorMessage: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 32,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F53F7A',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    gap: 8,
+    shadowColor: '#F53F7A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  retryButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  backButton: {
+    padding: 8,
+    marginRight: 12,
+  },
+  // Coins Button Styles
+  floatingTopButtons: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    zIndex: 10,
+  },
+  // Coins Modal Styles
+  coinsModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  coinsModalContainer: {
+    width: '95%',
+    maxWidth: 500,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    maxHeight: Dimensions.get('window').height * 0.95,
+    minHeight: 600,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 25,
+    shadowOffset: { width: 0, height: 15 },
+    elevation: 15,
+  },
+  coinsModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  coinsModalHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  coinsModalIconWrapper: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#FFF5F7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coinsModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  coinsModalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coinsModalScrollView: {
+    flex: 1,
+  },
+  coinsModalScrollContent: {
+    padding: 24,
+    paddingBottom: 28,
+  },
+  coinsBalanceCard: {
+    backgroundColor: '#FFF5F7',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#FEE2E8',
+  },
+  coinsBalanceLabel: {
+    fontSize: 10,
+    color: '#6B7280',
+    marginBottom: 6,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  coinsBalanceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+  },
+  coinsBalanceValue: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#F53F7A',
+    letterSpacing: -1,
+  },
+  coinsBalanceUnit: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#9CA3AF',
+  },
+  coinsRedeemCard: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FEE2E8',
+  },
+  coinsRedeemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  coinsRedeemTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#F53F7A',
+  },
+  coinsRedeemItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 8,
+  },
+  coinsRedeemIconContainer: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  coinsRedeemItemText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  coinsRedeemText: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+  },
+  coinsRedeemHighlight: {
+    fontWeight: '700',
+    color: '#F53F7A',
+  },
+  coinsEarnSection: {
+    marginBottom: 20,
+  },
+  coinsEarnSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 12,
+  },
+  coinsEarnItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  coinsEarnIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  coinsEarnContent: {
+    flex: 1,
+    marginRight: 10,
+  },
+  coinsEarnItemTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1F2937',
+    marginBottom: 4,
+  },
+  coinsEarnItemDesc: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+  },
+  coinsEarnAmountBadge: {
+    backgroundColor: '#FFF5F7',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#FEE2E8',
+  },
+  coinsEarnAmount: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#F53F7A',
+  },
+  coinsReferFriendsSimple: {
+    marginBottom: 12,
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#25D366',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  coinsReferralCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+  },
+  coinsReferralIconContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  coinsReferFriendsTextContainer: {
+    flex: 1,
+  },
+  coinsEarn100Title: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#fff',
+    marginBottom: 4,
+    letterSpacing: 0.3,
+  },
+  coinsEarn100Subtitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  coinsShareArrow: {
+    marginLeft: 12,
+  },
+  coinsModalButton: {
+    backgroundColor: '#F53F7A',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  coinsModalButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
   },
 });
 

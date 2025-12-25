@@ -20,8 +20,11 @@ import { useNavigation } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { submitInfluencerApplication } from '~/services/influencerService';
+import { useUser } from '~/contexts/UserContext';
 
 const JoinInfluencer = () => {
+  const { userData } = useUser();
   const navigation = useNavigation();
   const [fullName, setFullName] = useState('');
   const [instagramUrl, setInstagramUrl] = useState('');
@@ -162,17 +165,18 @@ const JoinInfluencer = () => {
   const carouselRef = useRef<Animated.ScrollView | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
 
-  // Enhanced carousel auto-scroll
+  // Enhanced carousel auto-scroll with proper card width calculation
+  const cardWidth = screenWidth - 48; // Account for container padding
   useEffect(() => {
     const id = setInterval(() => {
       const next = (activeIdx + 1) % benefitCards.length;
       setActiveIdx(next);
       try {
-        carouselRef.current?.scrollTo({ x: next * (screenWidth - 32), animated: true });
+        carouselRef.current?.scrollTo({ x: next * cardWidth, animated: true });
       } catch {}
-    }, 4000);
+    }, 5000);
     return () => clearInterval(id);
-  }, [activeIdx, benefitCards.length, screenWidth]);
+  }, [activeIdx, benefitCards.length, cardWidth]);
 
   // Validation helpers
   const validateName = (name: string) => name.trim().length >= 2;
@@ -226,8 +230,17 @@ const JoinInfluencer = () => {
     try {
       setSubmitting(true);
       
-      // Simulate API call
-      await new Promise(res => setTimeout(res, 1500));
+      // Submit application to database
+      const result = await submitInfluencerApplication({
+        full_name: fullName.trim(),
+        instagram_url: instagramUrl.trim(),
+        user_email: userData?.email || undefined,
+        user_phone: userData?.phone || undefined,
+      });
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to submit application');
+      }
       
       // Success animation
       setShowSuccessAnimation(true);
@@ -245,6 +258,11 @@ const JoinInfluencer = () => {
           text2: 'We\'ll review your profile and get back to you within 24-48 hours',
           visibilityTime: 4000,
         });
+        
+        // Clear form
+        setFullName('');
+        setInstagramUrl('');
+        
         navigation.goBack();
       }, 2000);
       
@@ -344,18 +362,19 @@ const JoinInfluencer = () => {
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 16 }}
+              contentContainerStyle={{ paddingHorizontal: 24 }}
               onScroll={Animated.event(
                 [{ nativeEvent: { contentOffset: { x: scrollX } } }],
                 { useNativeDriver: false }
               )}
               onMomentumScrollEnd={(e) => {
-                const idx = Math.round(e.nativeEvent.contentOffset.x / (screenWidth - 32));
+                const idx = Math.round(e.nativeEvent.contentOffset.x / cardWidth);
                 setActiveIdx(idx);
               }}
+              scrollEventThrottle={16}
             >
               {benefitCards.map((card, i) => (
-                <View key={i} style={{ width: screenWidth - 32, paddingHorizontal: 4 }}>
+                <View key={i} style={{ width: cardWidth, paddingHorizontal: 6 }}>
                   <View style={styles.carouselCard}>
                     <LinearGradient 
                       colors={card.gradient} 
@@ -378,7 +397,7 @@ const JoinInfluencer = () => {
             {/* Enhanced Dots Indicator */}
             <View style={styles.dotsRow}>
               {benefitCards.map((_, i) => {
-                const inputRange = [(i - 1) * (screenWidth - 32), i * (screenWidth - 32), (i + 1) * (screenWidth - 32)];
+                const inputRange = [(i - 1) * cardWidth, i * cardWidth, (i + 1) * cardWidth];
                 const dotOpacity = scrollX.interpolate({ 
                   inputRange, 
                   outputRange: [0.3, 1, 0.3], 
@@ -386,7 +405,12 @@ const JoinInfluencer = () => {
                 });
                 const dotScale = scrollX.interpolate({ 
                   inputRange, 
-                  outputRange: [0.8, 1.2, 0.8], 
+                  outputRange: [0.8, 1.3, 0.8], 
+                  extrapolate: 'clamp' 
+                });
+                const dotWidth = scrollX.interpolate({
+                  inputRange,
+                  outputRange: [8, 24, 8],
                   extrapolate: 'clamp' 
                 });
                 return (
@@ -396,6 +420,7 @@ const JoinInfluencer = () => {
                       styles.dot, 
                       { 
                         opacity: dotOpacity, 
+                        width: dotWidth,
                         transform: [{ scale: dotScale }]
                       }
                     ]} 
@@ -459,17 +484,6 @@ const JoinInfluencer = () => {
               {!!instagramUrl && !validateInstagram(instagramUrl) && (
                 <Text style={styles.errorText}>Please enter a valid Instagram handle or URL</Text>
               )}
-            </View>
-
-            {/* Requirements Card */}
-            <View style={styles.requirementsCard}>
-              <View style={styles.requirementsHeader}>
-                <Ionicons name="information-circle-outline" size={20} color="#3B82F6" />
-                <Text style={styles.requirementsTitle}>Requirements</Text>
-              </View>
-              <Text style={styles.requirementItem}>• Minimum 1,000 Instagram followers</Text>
-              <Text style={styles.requirementItem}>• Active engagement with your audience</Text>
-              <Text style={styles.requirementItem}>• Content aligned with our brand values</Text>
             </View>
 
             {/* Links Row */}
@@ -619,17 +633,17 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   carouselContainer: {
-    marginBottom: 32,
+    marginBottom: 40,
   },
   carouselCard: {
-    borderRadius: 20,
+    borderRadius: 24,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 6,
-    marginHorizontal: 4,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+    backgroundColor: '#fff',
   },
   cardGradient: {
     position: 'absolute',
@@ -639,58 +653,64 @@ const styles = StyleSheet.create({
     bottom: 0,
   },
   cardContent: {
-    padding: 24,
+    padding: 28,
     alignItems: 'flex-start',
-    minHeight: 140,
+    minHeight: 180,
+    justifyContent: 'space-between',
   },
   carouselIconWrap: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.4)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   carouselTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '800',
     color: '#fff',
-    marginBottom: 8,
-    letterSpacing: -0.3,
+    marginBottom: 10,
+    letterSpacing: -0.5,
   },
   carouselDesc: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.9)',
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.95)',
     fontWeight: '500',
-    lineHeight: 20,
+    lineHeight: 22,
   },
   dotsRow: {
     flexDirection: 'row',
     alignSelf: 'center',
-    marginTop: 16,
+    marginTop: 20,
+    height: 12,
+    alignItems: 'center',
   },
   dot: {
-    width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#F43F5E',
-    marginHorizontal: 4,
+    marginHorizontal: 5,
   },
   formSection: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
   },
   formTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
     color: '#1F2937',
-    marginBottom: 20,
-    letterSpacing: -0.3,
+    marginBottom: 24,
+    letterSpacing: -0.5,
   },
   inputGroup: {
-    marginBottom: 20,
+    marginBottom: 24,
   },
   label: {
     fontSize: 16,
@@ -699,17 +719,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   inputWrapper: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#E5E7EB',
     backgroundColor: '#fff',
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: Platform.OS === 'android' ? 8 : 12,
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: Platform.OS === 'android' ? 10 : 14,
     flexDirection: 'row',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   inputIconContainer: {
-    marginRight: 12,
+    marginRight: 14,
   },
   input: {
     flex: 1,
@@ -717,52 +742,29 @@ const styles = StyleSheet.create({
     color: '#1F2937',
     fontWeight: '500',
   },
-  requirementsCard: {
-    backgroundColor: '#EBF8FF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  requirementsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  requirementsTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1E40AF',
-    marginLeft: 8,
-  },
-  requirementItem: {
-    fontSize: 14,
-    color: '#1E40AF',
-    marginBottom: 4,
-    fontWeight: '500',
-  },
   linkRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 24,
+    justifyContent: 'space-around',
+    marginBottom: 32,
+    paddingHorizontal: 20,
   },
   linkText: {
     color: '#F43F5E',
     fontWeight: '700',
     fontSize: 16,
+    textDecorationLine: 'underline',
   },
   submitButton: {
-    borderRadius: 16,
+    borderRadius: 18,
     shadowColor: '#F43F5E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 8,
     overflow: 'hidden',
   },
   buttonGradient: {
-    paddingVertical: 16,
+    paddingVertical: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },

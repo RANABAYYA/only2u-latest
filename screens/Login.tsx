@@ -20,6 +20,20 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '~/utils/supabase';
 import { useAuth } from '~/contexts/useAuth';
 import { Only2ULogo } from '../components/common';
+import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
+
+WebBrowser.maybeCompleteAuthSession();
+
+// Hook to warm up browser for faster load
+const useWarmUpBrowser = () => {
+  useEffect(() => {
+    void WebBrowser.warmUpAsync();
+    return () => {
+      void WebBrowser.coolDownAsync();
+    };
+  }, []);
+};
 
 const Login = () => {
   // Animation values
@@ -27,14 +41,115 @@ const Login = () => {
   const slideAnim = useRef(new Animated.Value(30)).current;
   const scaleAnim = useRef(new Animated.Value(0.95)).current;
 
-  const [phone, setPhone] = useState('');
-  const [countryCode, setCountryCode] = useState('+91');
-  const [otp, setOtp] = useState('');
-  const [isOtpSent, setIsOtpSent] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigation: any = useNavigation();
-  const [resendTimer, setResendTimer] = useState(0);
+
+  useWarmUpBrowser();
+
+  const handleGoogleLogin = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Create a redirect URI that matches your app's scheme (works in Expo Go and Prod)
+      // Using root path '/' is often more reliable for Expo Go redirects
+      const redirectUrl = Linking.createURL('/');
+      console.log('--------------------------------------------------');
+      console.log('ℹ️  OAuth Redirect URL:', redirectUrl);
+      console.log('⚠️  ADD THIS URL TO SUPABASE AUTH SETTINGS');
+      console.log('--------------------------------------------------');
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.url) {
+        const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+
+        if (result.type === 'success' && result.url) {
+          // Check for PKCE Authorization Code first (Supabase V2 default)
+          const codeMatch = result.url.match(/[?&]code=([^&]+)/);
+
+          if (codeMatch && codeMatch[1]) {
+            const code = codeMatch[1];
+            const { error: sessionError } = await supabase.auth.exchangeCodeForSession(code);
+            if (sessionError) throw sessionError;
+
+            Toast.show({
+              type: 'success',
+              text1: 'Google Login Successful',
+              text2: 'Welcome to Only2U!',
+            });
+            return;
+          }
+
+          // Fallback: Implicit Flow (access_token in hash)
+          // Parse tokens from the redirect URL
+          // The URL will look like: only2u://dashboard#access_token=...&refresh_token=...&...
+          // or only2u://dashboard?access_token=... (depending on Supabase config, usually hash for implicit flow)
+
+          // Use Linking.parse to help, but it might put hash vars in key-value pairs if configured
+          // Or we can manually regex it for safety
+
+          const match = result.url.match(/access_token=([^&]+)/);
+          const refreshTokenMatch = result.url.match(/refresh_token=([^&]+)/);
+
+          const accessToken = match ? match[1] : null;
+          const refreshToken = refreshTokenMatch ? refreshTokenMatch[1] : null;
+
+          if (accessToken && refreshToken) {
+            const { error: sessionError } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+
+            if (sessionError) throw sessionError;
+
+            Toast.show({
+              type: 'success',
+              text1: 'Google Login Successful',
+              text2: 'Welcome to Only2U!',
+            });
+          } else {
+            // Fallback: check query params if hash failed
+            const parsed = Linking.parse(result.url);
+            if (parsed.queryParams?.access_token && parsed.queryParams?.refresh_token) {
+              const { error: sessionError } = await supabase.auth.setSession({
+                access_token: parsed.queryParams.access_token as string,
+                refresh_token: parsed.queryParams.refresh_token as string,
+              });
+              if (sessionError) throw sessionError;
+              Toast.show({ type: 'success', text1: 'Login Successful' });
+            } else {
+              throw new Error('Could not retrieve session tokens.');
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error('Google Login Error:', err);
+      // Ignore text dismissal by user
+      if (err.message !== 'User cancelled') {
+        Toast.show({
+          type: 'error',
+          text1: 'Google Login Failed',
+          text2: err.message || 'An unknown error occurred.',
+        });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     Animated.parallel([
@@ -56,82 +171,51 @@ const Login = () => {
     ]).start();
   }, []);
 
-  const handleSendOtp = async () => {
+  const handleLogin = async () => {
     setLoading(true);
     setError(null);
 
-    const trimmedPhone = phone.replace(/\D/g, '');
-    if (!trimmedPhone || trimmedPhone.length < 10) {
-      setError('Please enter a valid 10-digit phone number');
+    if (!email.trim()) {
+      setError('Please enter your email address');
       setLoading(false);
       return;
     }
-    
-    const fullPhone = `${countryCode}${trimmedPhone}`;
-    const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
-    if (error) {
-      setError(error.message);
-      Toast.show({ type: 'error', text1: 'Failed to send OTP', text2: error.message });
-      setLoading(false);
-      return;
-    }
-    
-    setIsOtpSent(true);
-    Toast.show({ 
-      type: 'success', 
-      text1: 'OTP Sent Successfully', 
-      text2: `Verification code sent to ${fullPhone}` 
-    });
-    setResendTimer(30);
-    setLoading(false);
-  };
 
-  const handleVerifyOtp = async () => {
-    setLoading(true);
-    setError(null);
-    
-    if (!otp || otp.trim().length !== 6) {
-      setError('Please enter the complete 6-digit OTP');
+    if (!password.trim()) {
+      setError('Please enter your password');
       setLoading(false);
       return;
     }
-    
-    const trimmedPhone = phone.replace(/\D/g, '');
-    const fullPhone = `${countryCode}${trimmedPhone}`;
-    
-    const { data, error } = await supabase.auth.verifyOtp({
-      phone: fullPhone,
-      token: otp.trim(),
-      type: 'sms',
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      setError('Please enter a valid email address');
+      setLoading(false);
+      return;
+    }
+
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password: password,
     });
-    
-    if (error) {
-      setError(error.message);
-      Toast.show({ type: 'error', text1: 'Verification Failed', text2: error.message });
+
+    if (signInError) {
+      setError(signInError.message);
+      Toast.show({ type: 'error', text1: 'Login Failed', text2: signInError.message });
       setLoading(false);
       return;
     }
-    
-    Toast.show({ 
-      type: 'success', 
-      text1: 'Login Successful', 
-      text2: 'Welcome to Only2U!' 
+
+    Toast.show({
+      type: 'success',
+      text1: 'Login Successful',
+      text2: 'Welcome to Only2U!'
     });
     setLoading(false);
-    
+
     // Auth context will handle user profile creation and navigation automatically
   };
-
-  const handleResendOtp = async () => {
-    if (resendTimer > 0 || loading) return;
-    await handleSendOtp();
-  };
-
-  useEffect(() => {
-    if (!isOtpSent || resendTimer <= 0) return;
-    const id = setInterval(() => setResendTimer((t) => (t > 0 ? t - 1 : 0)), 1000);
-    return () => clearInterval(id);
-  }, [isOtpSent, resendTimer]);
 
   // Navigation is now handled by AuthFlowScreen automatically
 
@@ -144,18 +228,18 @@ const Login = () => {
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.keyboardView}
         >
           <SafeAreaView style={styles.safeArea}>
-            <ScrollView 
+            <ScrollView
               contentContainerStyle={styles.scrollContent}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
               {/* Header Section */}
-              <Animated.View 
+              <Animated.View
                 style={[
                   styles.headerSection,
                   {
@@ -171,17 +255,17 @@ const Login = () => {
                     </Text>
                   </View>
                 </View>
-                
+
                 <View style={styles.headerTextContainer}>
                   <Text style={styles.welcomeTitle}>Welcome Back!</Text>
                   <Text style={styles.welcomeSubtitle}>
-                    Sign in with your phone number to continue
+                    Sign in with your email and password to continue
                   </Text>
                 </View>
               </Animated.View>
 
               {/* Form Section */}
-              <Animated.View 
+              <Animated.View
                 style={[
                   styles.formSection,
                   {
@@ -195,65 +279,50 @@ const Login = () => {
               >
                 <View style={styles.formCard}>
                   <Text style={styles.formTitle}>
-                    {!isOtpSent ? 'Enter Phone Number' : 'Verify OTP'}
+                    Login to Your Account
                   </Text>
-                  
-                  {!isOtpSent ? (
-                    <View style={styles.phoneSection}>
-                      <Text style={styles.inputLabel}>Mobile Number</Text>
-                      <View style={styles.phoneInputContainer}>
-                        <View style={styles.countryCodeContainer}>
-                          <Text style={styles.countryCodeText}>{countryCode}</Text>
-                          <Ionicons name="chevron-down" size={16} color="#666" />
-                        </View>
-                        <View style={styles.phoneDivider} />
-                        <TextInput
-                          style={styles.phoneInput}
-                          placeholder="Enter 10-digit number"
-                          value={phone}
-                          onChangeText={setPhone}
-                          keyboardType="phone-pad"
-                          maxLength={10}
-                          placeholderTextColor="#999"
-                        />
-                      </View>
-                      <Text style={styles.helperText}>
-                        We'll send a 6-digit verification code
-                      </Text>
-                    </View>
-                  ) : (
-                    <View style={styles.otpSection}>
-                      <Text style={styles.inputLabel}>Verification Code</Text>
+
+                  <View style={styles.inputSection}>
+                    <Text style={styles.inputLabel}>Email Address</Text>
+                    <View style={styles.inputContainer}>
+                      <Ionicons name="mail-outline" size={20} color="#666" style={{ marginRight: 12 }} />
                       <TextInput
-                        style={styles.otpInput}
-                        placeholder="Enter 6-digit OTP"
-                        value={otp}
-                        onChangeText={setOtp}
-                        keyboardType="number-pad"
-                        maxLength={6}
+                        style={styles.textInput}
+                        placeholder="Enter your email"
+                        value={email}
+                        onChangeText={setEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
                         placeholderTextColor="#999"
-                        textAlign="center"
+                        editable={!loading}
                       />
-                      <Text style={styles.otpSentText}>
-                        Code sent to {countryCode} {phone}
-                      </Text>
-                      
-                      <View style={styles.resendContainer}>
-                        <Text style={styles.resendText}>Didn't receive code? </Text>
-                        <TouchableOpacity 
-                          onPress={handleResendOtp} 
-                          disabled={resendTimer > 0}
-                        >
-                          <Text style={[
-                            styles.resendButton,
-                            resendTimer > 0 && styles.resendButtonDisabled
-                          ]}>
-                            {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend'}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
                     </View>
-                  )}
+                  </View>
+
+                  <View style={styles.inputSection}>
+                    <Text style={styles.inputLabel}>Password</Text>
+                    <View style={styles.inputContainer}>
+                      <Ionicons name="lock-closed-outline" size={20} color="#666" style={{ marginRight: 12 }} />
+                      <TextInput
+                        style={styles.textInput}
+                        placeholder="Enter your password"
+                        value={password}
+                        onChangeText={setPassword}
+                        secureTextEntry={!showPassword}
+                        autoCapitalize="none"
+                        placeholderTextColor="#999"
+                        editable={!loading}
+                      />
+                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                        <Ionicons
+                          name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                          size={20}
+                          color="#666"
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
 
                   {error && (
                     <View style={styles.errorContainer}>
@@ -264,12 +333,12 @@ const Login = () => {
 
                   {/* Action Button */}
                   <TouchableOpacity
-                    style={[styles.actionButton, loading && styles.actionButtonDisabled]}
-                    onPress={!isOtpSent ? handleSendOtp : handleVerifyOtp}
-                    disabled={loading}
+                    style={[styles.actionButton, (loading || !email.trim() || !password.trim()) && styles.actionButtonDisabled]}
+                    onPress={handleLogin}
+                    disabled={loading || !email.trim() || !password.trim()}
                   >
                     <LinearGradient
-                      colors={!isOtpSent ? ['#FF6EA6', '#F53F7A'] : ['#4FC3F7', '#29B6F6']}
+                      colors={['#FF6EA6', '#F53F7A']}
                       style={styles.buttonGradient}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 0 }}
@@ -279,32 +348,53 @@ const Login = () => {
                       ) : (
                         <View style={styles.buttonContent}>
                           <Text style={styles.buttonText}>
-                            {!isOtpSent ? 'Send OTP' : 'Verify & Continue'}
+                            Login
                           </Text>
-                          <Ionicons 
-                            name={!isOtpSent ? "arrow-forward" : "checkmark-circle"} 
-                            size={20} 
-                            color="#fff" 
+                          <Ionicons
+                            name="arrow-forward"
+                            size={20}
+                            color="#fff"
                           />
                         </View>
                       )}
                     </LinearGradient>
                   </TouchableOpacity>
 
-                  {isOtpSent && (
-                    <TouchableOpacity 
-                      style={styles.backButton}
-                      onPress={() => {
-                        setIsOtpSent(false);
-                        setOtp('');
-                        setError(null);
-                        setResendTimer(0);
-                      }}
-                    >
-                      <Ionicons name="arrow-back" size={18} color="#F53F7A" />
-                      <Text style={styles.backButtonText}>Change Phone Number</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 20 }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: '#E5E5E5' }} />
+                    <Text style={{ marginHorizontal: 10, color: '#666', fontSize: 13, fontWeight: '600' }}>OR</Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: '#E5E5E5' }} />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.actionButton,
+                      {
+                        backgroundColor: '#fff',
+                        borderWidth: 1.5,
+                        borderColor: '#EEE',
+                        elevation: 0,
+                        shadowColor: 'transparent',
+                        marginBottom: 10
+                      }
+                    ]}
+                    onPress={handleGoogleLogin}
+                    disabled={loading}
+                  >
+                    <View style={[styles.buttonContent, { justifyContent: 'center' }]}>
+                      <Ionicons name="logo-google" size={20} color="#000" style={{ marginRight: 10 }} />
+                      <Text style={[styles.buttonText, { color: '#000', fontSize: 16 }]}>
+                        Sign in with Google
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <View style={styles.signupLinkContainer}>
+                    <Text style={styles.signupLinkText}>Don't have an account? </Text>
+                    <TouchableOpacity onPress={() => navigation.navigate('Register' as never)}>
+                      <Text style={styles.signupLink}>Sign Up</Text>
                     </TouchableOpacity>
-                  )}
+                  </View>
                 </View>
 
                 <Text style={styles.termsText}>
@@ -399,7 +489,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 28,
   },
-  phoneSection: {
+  inputSection: {
     marginBottom: 24,
   },
   inputLabel: {
@@ -408,7 +498,7 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 12,
   },
-  phoneInputContainer: {
+  inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F8F9FA',
@@ -418,74 +508,26 @@ const styles = StyleSheet.create({
     height: 56,
     paddingHorizontal: 16,
   },
-  countryCodeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingRight: 12,
-  },
-  countryCodeText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginRight: 4,
-  },
-  phoneDivider: {
-    width: 1,
-    height: '60%',
-    backgroundColor: '#E9ECEF',
-    marginRight: 12,
-  },
-  phoneInput: {
+  textInput: {
     flex: 1,
     fontSize: 16,
     color: '#333',
     paddingVertical: 0,
   },
-  helperText: {
-    fontSize: 14,
-    color: '#6C757D',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  otpSection: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  otpInput: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E9ECEF',
-    height: 56,
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#333',
-    letterSpacing: 8,
-    paddingHorizontal: 20,
-    width: '100%',
-  },
-  otpSentText: {
-    fontSize: 14,
-    color: '#6C757D',
-    marginTop: 12,
-    textAlign: 'center',
-  },
-  resendContainer: {
+  signupLinkContainer: {
     flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
     marginTop: 16,
   },
-  resendText: {
+  signupLinkText: {
     fontSize: 14,
     color: '#6C757D',
   },
-  resendButton: {
+  signupLink: {
     fontSize: 14,
     fontWeight: '600',
     color: '#F53F7A',
-  },
-  resendButtonDisabled: {
-    color: '#999',
   },
   errorContainer: {
     flexDirection: 'row',

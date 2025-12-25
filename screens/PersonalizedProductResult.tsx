@@ -429,35 +429,26 @@ const PersonalizedProductResult = () => {
 
     // Prepare personalized media to show first in the product gallery
     const originalImageUrls = getProductImages(originalProduct);
-    const originalVideoUrls = originalProduct.video_urls || [];
+    const variantVideoUrls =
+      originalProduct.variants
+        ?.flatMap((variant) => variant.video_urls || [])
+        .filter((url): url is string => typeof url === 'string' && url.trim().length > 0) || [];
+
+    const combinedOriginalVideos = [
+      ...(originalProduct.video_urls || []),
+      ...variantVideoUrls,
+    ];
+    const uniqueOriginalVideos = Array.from(new Set(combinedOriginalVideos));
     
     let finalImageUrls = [...originalImageUrls];
-    let finalVideoUrls = [...originalVideoUrls];
+    let finalVideoUrls = [...uniqueOriginalVideos];
     let primaryImage = getFirstSafeProductImage(originalProduct);
 
     // If we have personalized results, put them first
-    if (hasVideos && resultVideos.length > 0 && resultVideos[safeSelectedIndex]) {
-      // 🎬 For video previews: Put personalized video FIRST in image_urls with video detection markers
-      // Add video detection hints to ensure ProductDetailsBottomSheet detects it as video
-      const personalizedVideoUrl = resultVideos[safeSelectedIndex];
-      console.log('🎬 [Shop Now] Adding personalized video first:', personalizedVideoUrl);
-      
-      // Ensure video URL has video markers for detection
-      let enhancedVideoUrl = personalizedVideoUrl;
-      if (!enhancedVideoUrl.includes('.mp4') && !enhancedVideoUrl.includes('video')) {
-        // Add video detection marker if not present
-        enhancedVideoUrl = personalizedVideoUrl + (personalizedVideoUrl.includes('?') ? '&' : '?') + 'video=mp4';
-      }
-      
-      finalImageUrls = [enhancedVideoUrl, ...originalImageUrls]; // Personalized video FIRST in images array
-      finalVideoUrls = [...originalVideoUrls]; // Keep original videos separate
-      
-      // Keep original product image as fallback for thumbnail
-      primaryImage = product?.originalProductImage || getFirstSafeProductImage(originalProduct);
-    } else if (resultImages.length > 0 && resultImages[safeSelectedIndex]) {
-      // For image previews, add personalized image first
+    if (resultImages.length > 0 && resultImages[safeSelectedIndex]) {
+      // Surface personalized image first so users see their preview,
+      // but keep product videos untouched (only official product videos).
       finalImageUrls = [resultImages[safeSelectedIndex], ...originalImageUrls];
-      // Use personalized image as primary
       primaryImage = resultImages[safeSelectedIndex];
     }
 
@@ -470,8 +461,8 @@ const PersonalizedProductResult = () => {
       rating: originalProduct.rating || 0,
       reviews: originalProduct.reviews || 0,
       image: primaryImage, // 🎯 Personalized image/video thumbnail as primary image
-      image_urls: finalImageUrls, // 🎯 Personalized media FIRST, then original images
-      video_urls: finalVideoUrls, // 🎯 Original videos  
+      image_urls: finalImageUrls, // 🎯 Personalized image (if available) then originals
+      video_urls: finalVideoUrls, // 🎯 Only actual product videos
       description: originalProduct.description, // 🎯 Clean description without mentions
       featured: originalProduct.featured_type !== null,
       images: finalImageUrls.length,
@@ -480,9 +471,8 @@ const PersonalizedProductResult = () => {
       vendor_name: originalProduct.vendor_name || '',
       alias_vendor: originalProduct.alias_vendor || '',
       return_policy: originalProduct.return_policy || '',
-      // 🎬 Special flag to help ProductDetailsBottomSheet identify personalized video
-      hasPersonalizedVideo: hasVideos,
-      personalizedVideoUrl: hasVideos ? resultVideos[safeSelectedIndex] : undefined,
+      hasPersonalizedVideo: false,
+      personalizedVideoUrl: undefined,
     };
 
     console.log('🛒 [Shop Now] Product data for bottom sheet:', {
@@ -631,20 +621,22 @@ const PersonalizedProductResult = () => {
             </TouchableOpacity>
           </Animated.View>
         )}
-        
-        {/* Image counter (always visible for images) */}
-        {!hasVideos && (
-          <View style={styles.imageCounter}>
-            <Text style={styles.imageCounterText}>
-              {safeSelectedIndex + 1} / {resultImages.length}
-            </Text>
-          </View>
-        )}
       </View>
 
 
       {/* Action Buttons */}
       <View style={styles.actionButtons}>
+        <TouchableOpacity 
+          style={[styles.actionButton, styles.shareButton]}
+          onPress={() => {
+            const mediaUrl = hasVideos ? resultVideos[safeSelectedIndex] : resultImages[safeSelectedIndex];
+            if (mediaUrl) handleShareMedia(mediaUrl);
+          }}
+        >
+          <Ionicons name="share-outline" size={20} color="#F53F7A" />
+          <Text style={styles.actionButtonText}>{t('share') || 'Share'}</Text>
+        </TouchableOpacity>
+
         {originalProduct && (
           <TouchableOpacity 
             style={[styles.actionButton, styles.shopNowButton]}
@@ -656,17 +648,6 @@ const PersonalizedProductResult = () => {
             </Text>
           </TouchableOpacity>
         )}
-        
-        <TouchableOpacity 
-          style={[styles.actionButton, styles.shareButton]}
-          onPress={() => {
-            const mediaUrl = hasVideos ? resultVideos[safeSelectedIndex] : resultImages[safeSelectedIndex];
-            if (mediaUrl) handleShareMedia(mediaUrl);
-          }}
-        >
-          <Ionicons name="share-outline" size={20} color="#F53F7A" />
-          <Text style={styles.actionButtonText}>{t('share') || 'Share'}</Text>
-        </TouchableOpacity>
       </View>
     </View>
     </ScrollView>

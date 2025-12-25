@@ -320,3 +320,212 @@ LEFT JOIN vendor_posts vp ON v.id = vp.vendor_id
 GROUP BY v.id, v.business_name, v.description, v.profile_image_url, v.cover_image_url, 
          v.website_url, v.instagram_handle, v.tiktok_handle, v.location, v.is_verified,
          v.follower_count, v.following_count, v.product_count, v.created_at;
+
+-- =====================================================
+-- ROW LEVEL SECURITY (RLS) POLICIES
+-- =====================================================
+
+-- Enable RLS on all tables
+ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_follows ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_post_likes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_post_comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_stories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_story_views ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_highlights ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_highlight_stories ENABLE ROW LEVEL SECURITY;
+
+-- =====================================================
+-- VENDORS TABLE POLICIES
+-- =====================================================
+
+-- Policy: Anyone can view all vendors
+CREATE POLICY "Anyone can view vendors" ON vendors
+  FOR SELECT
+  USING (true);
+
+-- Policy: Vendors can update their own profile
+CREATE POLICY "Vendors can update own profile" ON vendors
+  FOR UPDATE
+  USING (auth.uid() = user_id);
+
+-- Policy: Vendors can insert their own profile
+CREATE POLICY "Vendors can insert own profile" ON vendors
+  FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+-- Policy: Admins can manage all vendors
+CREATE POLICY "Admins can manage vendors" ON vendors
+  FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM users
+      WHERE id = auth.uid() AND user_type = 'admin'
+    )
+  );
+
+-- =====================================================
+-- VENDOR FOLLOWS POLICIES
+-- =====================================================
+
+-- Policy: Anyone can view follows
+CREATE POLICY "Anyone can view follows" ON vendor_follows
+  FOR SELECT
+  USING (true);
+
+-- Policy: Users can manage their own follows
+CREATE POLICY "Users can manage own follows" ON vendor_follows
+  FOR ALL
+  USING (auth.uid() = follower_id);
+
+-- =====================================================
+-- VENDOR POSTS POLICIES
+-- =====================================================
+
+-- Policy: Anyone can view posts
+CREATE POLICY "Anyone can view posts" ON vendor_posts
+  FOR SELECT
+  USING (true);
+
+-- Policy: Vendors can manage their own posts
+CREATE POLICY "Vendors can manage own posts" ON vendor_posts
+  FOR ALL
+  USING (
+    vendor_id IN (
+      SELECT id FROM vendors WHERE user_id = auth.uid()
+    )
+  );
+
+-- =====================================================
+-- VENDOR POST LIKES POLICIES
+-- =====================================================
+
+-- Policy: Anyone can view likes
+CREATE POLICY "Anyone can view likes" ON vendor_post_likes
+  FOR SELECT
+  USING (true);
+
+-- Policy: Users can manage their own likes
+CREATE POLICY "Users can manage own likes" ON vendor_post_likes
+  FOR ALL
+  USING (auth.uid() = user_id);
+
+-- =====================================================
+-- VENDOR POST COMMENTS POLICIES
+-- =====================================================
+
+-- Policy: Anyone can view comments
+CREATE POLICY "Anyone can view comments" ON vendor_post_comments
+  FOR SELECT
+  USING (true);
+
+-- Policy: Users can manage their own comments
+CREATE POLICY "Users can manage own comments" ON vendor_post_comments
+  FOR ALL
+  USING (auth.uid() = user_id);
+
+-- =====================================================
+-- VENDOR STORIES POLICIES
+-- =====================================================
+
+-- Policy: Anyone can view active stories
+CREATE POLICY "Anyone can view active stories" ON vendor_stories
+  FOR SELECT
+  USING (is_active = true AND expires_at > NOW());
+
+-- Policy: Vendors can manage their own stories
+CREATE POLICY "Vendors can manage own stories" ON vendor_stories
+  FOR ALL
+  USING (
+    vendor_id IN (
+      SELECT id FROM vendors WHERE user_id = auth.uid()
+    )
+  );
+
+-- =====================================================
+-- VENDOR STORY VIEWS POLICIES
+-- =====================================================
+
+-- Policy: Anyone can view story views
+CREATE POLICY "Anyone can view story views" ON vendor_story_views
+  FOR SELECT
+  USING (true);
+
+-- Policy: Users can manage their own story views
+CREATE POLICY "Users can manage own story views" ON vendor_story_views
+  FOR ALL
+  USING (auth.uid() = user_id);
+
+-- =====================================================
+-- VENDOR HIGHLIGHTS POLICIES
+-- =====================================================
+
+-- Policy: Anyone can view highlights
+CREATE POLICY "Anyone can view highlights" ON vendor_highlights
+  FOR SELECT
+  USING (true);
+
+-- Policy: Vendors can manage their own highlights
+CREATE POLICY "Vendors can manage own highlights" ON vendor_highlights
+  FOR ALL
+  USING (
+    vendor_id IN (
+      SELECT id FROM vendors WHERE user_id = auth.uid()
+    )
+  );
+
+-- =====================================================
+-- VENDOR HIGHLIGHT STORIES POLICIES
+-- =====================================================
+
+-- Policy: Anyone can view highlight stories
+CREATE POLICY "Anyone can view highlight stories" ON vendor_highlight_stories
+  FOR SELECT
+  USING (true);
+
+-- Policy: Vendors can manage their own highlight stories
+CREATE POLICY "Vendors can manage own highlight stories" ON vendor_highlight_stories
+  FOR ALL
+  USING (
+    highlight_id IN (
+      SELECT id FROM vendor_highlights vh
+      JOIN vendors v ON vh.vendor_id = v.id
+      WHERE v.user_id = auth.uid()
+    )
+  );
+
+-- =====================================================
+-- GRANT PERMISSIONS
+-- =====================================================
+
+-- Grant usage on schema
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+
+-- Grant access to tables
+GRANT SELECT ON vendors TO anon, authenticated;
+GRANT ALL ON vendors TO authenticated;
+GRANT SELECT ON vendor_follows TO anon, authenticated;
+GRANT ALL ON vendor_follows TO authenticated;
+GRANT SELECT ON vendor_posts TO anon, authenticated;
+GRANT ALL ON vendor_posts TO authenticated;
+GRANT SELECT ON vendor_post_likes TO anon, authenticated;
+GRANT ALL ON vendor_post_likes TO authenticated;
+GRANT SELECT ON vendor_post_comments TO anon, authenticated;
+GRANT ALL ON vendor_post_comments TO authenticated;
+GRANT SELECT ON vendor_stories TO anon, authenticated;
+GRANT ALL ON vendor_stories TO authenticated;
+GRANT SELECT ON vendor_story_views TO anon, authenticated;
+GRANT ALL ON vendor_story_views TO authenticated;
+GRANT SELECT ON vendor_highlights TO anon, authenticated;
+GRANT ALL ON vendor_highlights TO authenticated;
+GRANT SELECT ON vendor_highlight_stories TO anon, authenticated;
+GRANT ALL ON vendor_highlight_stories TO authenticated;
+
+-- Grant access to views
+GRANT SELECT ON vendor_feed TO anon, authenticated;
+GRANT SELECT ON vendor_profile_stats TO anon, authenticated;
+
+-- =====================================================
+-- END OF SCHEMA
+-- =====================================================

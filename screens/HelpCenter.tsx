@@ -270,7 +270,7 @@ const HelpCenter = () => {
     },
     {
       question: 'What is your return policy?',
-      answer: 'We accept returns within 30 days of delivery. Items must be in original condition with tags attached.',
+      answer: 'We accept returns within 7 days of delivery. Items must be in original condition with tags attached.',
     },
     {
       question: 'How do I change my delivery address?',

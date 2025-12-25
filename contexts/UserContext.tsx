@@ -54,11 +54,37 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loadUserData = async () => {
     try {
       setIsLoading(true);
-      const storedData = await AsyncStorage.getItem('userData');
-      if (storedData) {
-        setUserData(JSON.parse(storedData));
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (session?.user) {
+        // If we have a session, fetch fresh data from Supabase
+        const { data: freshUserData, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        if (freshUserData && !error) {
+          const mappedUser = {
+            ...freshUserData,
+            profilePhoto: freshUserData.profilePhoto,
+            phone: freshUserData.phone || freshUserData.phoneNumber,
+            updatedAt: new Date().toISOString(),
+          } as UserData;
+          setUserData(mappedUser);
+          await AsyncStorage.setItem('userData', JSON.stringify(mappedUser));
+        } else {
+          // Fallback to local storage if network fails but we are technically logged in
+          const storedData = await AsyncStorage.getItem('userData');
+          if (storedData) {
+            setUserData(JSON.parse(storedData));
+          }
+        }
       } else {
-        await AsyncStorage.setItem('userData', JSON.stringify(null));
+        // No session, check if we have local data (maybe expired?)
+        // Ideally if no session, we clear user data
+        setUserData(null);
+        await AsyncStorage.removeItem('userData');
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -67,6 +93,44 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    // Initial load
+    loadUserData();
+
+    // Listen for auth changes (LOGIN, LOGOUT, etc.)
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log(`[UserContext] Auth State Change: ${event}`);
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (session?.user) {
+          // refresh user data on sign in
+          const { data: freshUserData, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          if (freshUserData && !error) {
+            const mappedUser = {
+              ...freshUserData,
+              profilePhoto: freshUserData.profilePhoto,
+              phone: freshUserData.phone || freshUserData.phoneNumber,
+              updatedAt: new Date().toISOString(),
+            } as UserData;
+            setUserData(mappedUser);
+            await AsyncStorage.setItem('userData', JSON.stringify(mappedUser));
+          }
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setUserData(null);
+        await AsyncStorage.removeItem('userData');
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   const updateUserData = async (newData: Partial<UserData>, syncToSupabase: boolean = true) => {
     try {
@@ -191,7 +255,16 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshUserData = async () => {
-    if (!userData || !userData.id || userData.id === 'mock-user-id') {
+    let targetUserId = userData?.id;
+
+    if (!targetUserId || targetUserId === 'mock-user-id') {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.id) {
+        targetUserId = session.user.id;
+      }
+    }
+
+    if (!targetUserId || targetUserId === 'mock-user-id') {
       return;
     }
 
@@ -199,7 +272,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data: freshUserData, error } = await supabase
         .from('users')
         .select('*')
-        .eq('id', userData.id)
+        .eq('id', targetUserId)
         .single();
 
       if (error) {
@@ -249,7 +322,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Try to call the edge function to delete user from authentication
       if (userData && userData.id && userData.id !== 'mock-user-id') {
         console.log('[USER_CONTEXT] 🔄 Attempting to delete user from authentication via edge function...');
-        
+
         try {
           const { data: session } = await supabase.auth.getSession();
           console.log('[USER_CONTEXT] 📝 Session data:', session ? {
@@ -306,7 +379,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .from('users')
           .delete()
           .eq('id', userData.id);
-        
+
         if (userDeleteError) {
           console.error('[USER_CONTEXT] ❌ Error deleting user data:', userDeleteError);
           // Continue anyway - we'll still sign out and clear local data
@@ -330,7 +403,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUserData(null);
       await AsyncStorage.removeItem('userData');
       console.log('[USER_CONTEXT] ✅ Local data cleared');
-      
+
       console.log('[USER_CONTEXT] ✅ User profile cleanup completed successfully');
     } catch (error) {
       console.error('[USER_CONTEXT] ❌ Error during cleanup:', error);
@@ -350,9 +423,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  useEffect(() => {
-    loadUserData();
-  }, []);
+
 
   // Set up real-time subscription when userData changes
   useEffect(() => {

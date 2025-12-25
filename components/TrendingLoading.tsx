@@ -12,6 +12,8 @@ interface TrendingLoadingProps {
 export const TrendingLoading = ({ visible }: TrendingLoadingProps) => {
     const fadeAnim = useRef(new Animated.Value(1)).current;
     const scaleAnim = useRef(new Animated.Value(1)).current;
+    const hasShownRef = useRef(false);
+    const isAnimatingRef = useRef(false);
 
     // Multiple dots for the loader
     const dot1 = useRef(new Animated.Value(0)).current;
@@ -20,56 +22,67 @@ export const TrendingLoading = ({ visible }: TrendingLoadingProps) => {
 
     useEffect(() => {
         if (!visible) {
-            Animated.timing(fadeAnim, {
-                toValue: 0,
-                duration: 500,
-                useNativeDriver: true,
-            }).start();
+            // Only fade out if we've shown the animation before and it's currently visible
+            if (hasShownRef.current && fadeAnim._value > 0) {
+                Animated.timing(fadeAnim, {
+                    toValue: 0,
+                    duration: 500,
+                    useNativeDriver: true,
+                }).start();
+            }
         } else {
-            fadeAnim.setValue(1);
+            // Only start animation once - if we've already shown it, don't restart
+            if (!hasShownRef.current) {
+                hasShownRef.current = true;
+                fadeAnim.setValue(1);
 
-            // Breathing animation for the main icon
-            Animated.loop(
-                Animated.sequence([
-                    Animated.timing(scaleAnim, {
-                        toValue: 1.1,
-                        duration: 1500,
-                        easing: Easing.inOut(Easing.ease),
-                        useNativeDriver: true,
-                    }),
-                    Animated.timing(scaleAnim, {
-                        toValue: 1,
-                        duration: 1500,
-                        easing: Easing.inOut(Easing.ease),
-                        useNativeDriver: true,
-                    }),
-                ])
-            ).start();
-
-            // Bouncing dots animation
-            const animateDot = (anim: Animated.Value, delay: number) => {
+                // Breathing animation for the main icon
                 Animated.loop(
                     Animated.sequence([
-                        Animated.timing(anim, {
-                            toValue: -10,
-                            duration: 500,
-                            delay: delay,
+                        Animated.timing(scaleAnim, {
+                            toValue: 1.1,
+                            duration: 1500,
                             easing: Easing.inOut(Easing.ease),
                             useNativeDriver: true,
                         }),
-                        Animated.timing(anim, {
-                            toValue: 0,
-                            duration: 500,
+                        Animated.timing(scaleAnim, {
+                            toValue: 1,
+                            duration: 1500,
                             easing: Easing.inOut(Easing.ease),
                             useNativeDriver: true,
                         }),
                     ])
                 ).start();
-            };
 
-            animateDot(dot1, 0);
-            animateDot(dot2, 200);
-            animateDot(dot3, 400);
+                // Bouncing dots animation
+                const animateDot = (anim: Animated.Value, delay: number) => {
+                    Animated.loop(
+                        Animated.sequence([
+                            Animated.timing(anim, {
+                                toValue: -10,
+                                duration: 500,
+                                delay: delay,
+                                easing: Easing.inOut(Easing.ease),
+                                useNativeDriver: true,
+                            }),
+                            Animated.timing(anim, {
+                                toValue: 0,
+                                duration: 500,
+                                easing: Easing.inOut(Easing.ease),
+                                useNativeDriver: true,
+                            }),
+                        ])
+                    ).start();
+                };
+
+                animateDot(dot1, 0);
+                animateDot(dot2, 200);
+                animateDot(dot3, 400);
+            } else {
+                // If already shown, just ensure opacity is 1 if visible becomes true again
+                // (though this shouldn't happen with our new logic)
+                fadeAnim.setValue(1);
+            }
         }
     }, [visible]);
 

@@ -46,7 +46,7 @@ const RefundPolicy = () => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>2. Return Window</Text>
           <Text style={styles.text}>
-            We accept returns within 30 days of the original purchase date. To be eligible for a return, 
+            We accept returns within 7 days of the original purchase date. To be eligible for a return, 
             your item must be:
           </Text>
           <Text style={styles.bulletPoint}>• Unused and in the same condition as received</Text>
@@ -56,7 +56,32 @@ const RefundPolicy = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>3. Non-Returnable Items</Text>
+          <Text style={styles.sectionTitle}>3. Unboxing Video Requirement</Text>
+          <Text style={styles.text}>
+            To ensure the integrity of returns and protect both customers and the business, we require 
+            an unboxing video for all return and refund requests. This policy helps us verify the 
+            condition of products upon delivery and prevents fraudulent claims.
+          </Text>
+          <Text style={styles.text}>
+            <Text style={{ fontWeight: '600' }}>Important:</Text> An unboxing video of the original 
+            order while opening the package is mandatory for processing any refund or return request.
+          </Text>
+          <Text style={styles.text}>
+            Your unboxing video must include:
+          </Text>
+          <Text style={styles.bulletPoint}>• Continuous recording from the moment you receive the sealed package</Text>
+          <Text style={styles.bulletPoint}>• Clear visibility of the shipping label and order number</Text>
+          <Text style={styles.bulletPoint}>• Opening of the sealed package without any cuts or edits</Text>
+          <Text style={styles.bulletPoint}>• Clear view of all contents inside the package</Text>
+          <Text style={styles.bulletPoint}>• Any visible damages or defects on the product</Text>
+          <Text style={styles.text}>
+            <Text style={{ fontWeight: '600' }}>Note:</Text> Returns without a proper unboxing video 
+            will not be processed. Please ensure you record the unboxing before opening your package.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>4. Non-Returnable Items</Text>
           <Text style={styles.text}>
             The following items are not eligible for returns:
           </Text>
@@ -70,11 +95,11 @@ const RefundPolicy = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>4. Return Process</Text>
+          <Text style={styles.sectionTitle}>5. Return Process</Text>
           <Text style={styles.text}>
             To initiate a return, please follow these steps:
           </Text>
-          <Text style={styles.bulletPoint}>1. Contact our customer service within 30 days of purchase</Text>
+          <Text style={styles.bulletPoint}>1. Contact our customer service within 7 days of purchase</Text>
           <Text style={styles.bulletPoint}>2. Provide your order number and reason for return</Text>
           <Text style={styles.bulletPoint}>3. Receive return authorization and shipping label</Text>
           <Text style={styles.bulletPoint}>4. Package the item securely with all original materials</Text>
@@ -82,7 +107,7 @@ const RefundPolicy = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>5. Refund Processing</Text>
+          <Text style={styles.sectionTitle}>6. Refund Processing</Text>
           <Text style={styles.text}>
             Once we receive and inspect your return:
           </Text>
@@ -93,7 +118,7 @@ const RefundPolicy = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>6. Defective Products</Text>
+          <Text style={styles.sectionTitle}>7. Defective Products</Text>
           <Text style={styles.text}>
             If you receive a defective product:
           </Text>
@@ -105,7 +130,7 @@ const RefundPolicy = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>7. AI and Digital Services</Text>
+          <Text style={styles.sectionTitle}>8. AI and Digital Services</Text>
           <Text style={styles.text}>
             For AI-powered features and digital services:
           </Text>
@@ -117,7 +142,7 @@ const RefundPolicy = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>8. Exchanges</Text>
+          <Text style={styles.sectionTitle}>9. Exchanges</Text>
           <Text style={styles.text}>
             We offer exchanges for:
           </Text>
@@ -125,13 +150,13 @@ const RefundPolicy = () => {
           <Text style={styles.bulletPoint}>• Different colors (subject to availability)</Text>
           <Text style={styles.bulletPoint}>• Different styles (subject to availability)</Text>
           <Text style={styles.text}>
-            Exchange requests must be made within 30 days of purchase. Shipping costs for exchanges 
+            Exchange requests must be made within 7 days of purchase. Shipping costs for exchanges 
             are the responsibility of the customer unless the original item was defective.
           </Text>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>9. Cancellations</Text>
+          <Text style={styles.sectionTitle}>10. Cancellations</Text>
           <Text style={styles.text}>
             Order cancellations are accepted if:
           </Text>
@@ -141,7 +166,7 @@ const RefundPolicy = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>10. International Returns</Text>
+          <Text style={styles.sectionTitle}>11. International Returns</Text>
           <Text style={styles.text}>
             For international orders:
           </Text>
@@ -151,17 +176,17 @@ const RefundPolicy = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>11. Contact Information</Text>
+          <Text style={styles.sectionTitle}>12. Contact Information</Text>
           <Text style={styles.text}>
             For questions about returns, refunds, or exchanges, please contact us:
           </Text>
           <Text style={styles.contactInfo}>Email: support@only2u.com</Text>
-          <Text style={styles.contactInfo}>Phone: +91 98111 50757</Text>
+          <Text style={styles.contactInfo}>Phone: +91 7013580331</Text>
           <Text style={styles.contactInfo}>Hours: Monday - Friday, 9 AM - 6 PM IST</Text>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>12. Policy Updates</Text>
+          <Text style={styles.sectionTitle}>13. Policy Updates</Text>
           <Text style={styles.text}>
             We reserve the right to modify this refund policy at any time. Changes will be effective 
             immediately upon posting. Continued use of our services constitutes acceptance of any 
@@ -233,7 +258,7 @@ const styles = StyleSheet.create({
   },
   contactInfo: {
     fontSize: 15,
-    color: '#F53F7A',
+    color: '#444',
     fontWeight: '500',
     marginTop: 5,
   },

@@ -4,6 +4,7 @@
 import * as FileSystem from 'expo-file-system';
 import { supabase } from './supabase';
 import Toast from 'react-native-toast-message';
+import { compressImageForProfilePhoto } from './imageCompression';
 
 export interface UploadResult {
   success: boolean;
@@ -32,16 +33,22 @@ export class ProfilePhotoUploadService {
         };
       }
 
-      // Check file size
-      if (fileInfo.size && fileInfo.size > this.MAX_FILE_SIZE) {
+      // Compress and resize image to 1080p before upload
+      console.log('[ProfilePhotoUpload] Compressing image...');
+      const compressedImageUri = await compressImageForProfilePhoto(imageUri);
+      console.log('[ProfilePhotoUpload] Image compressed:', compressedImageUri);
+
+      // Check compressed file size
+      const compressedFileInfo = await FileSystem.getInfoAsync(compressedImageUri);
+      if (compressedFileInfo.size && compressedFileInfo.size > this.MAX_FILE_SIZE) {
         return {
           success: false,
-          error: 'Image file is too large. Maximum size is 5MB.'
+          error: 'Image file is too large even after compression. Maximum size is 5MB.'
         };
       }
 
-      // Read the image file
-      const base64 = await FileSystem.readAsStringAsync(imageUri, {
+      // Read the compressed image file
+      const base64 = await FileSystem.readAsStringAsync(compressedImageUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
@@ -132,53 +139,34 @@ export class ProfilePhotoUploadService {
     }
   }
 
+  private static bucketCheckCompleted = false;
+
   /**
    * Ensure the storage bucket exists and is properly configured
    */
   private static async ensureBucketExists(): Promise<void> {
+    if (this.bucketCheckCompleted) return;
+    this.bucketCheckCompleted = true;
+
     try {
-      // Check if bucket exists
+      // Check if bucket exists (client-side verification only)
       const { data: buckets, error: listError } = await supabase.storage.listBuckets();
       
       if (listError) {
         console.error('[ProfilePhotoUpload] Error listing buckets:', listError);
-        // Don't throw here, just log the error and continue
         return;
       }
 
       const bucketExists = buckets?.some(bucket => bucket.name === this.BUCKET_NAME);
       
       if (!bucketExists) {
-        console.log('[ProfilePhotoUpload] Creating bucket:', this.BUCKET_NAME);
-        
-        try {
-          // Create the bucket
-          const { data, error } = await supabase.storage.createBucket(this.BUCKET_NAME, {
-            public: true,
-            allowedMimeTypes: this.ALLOWED_TYPES,
-            fileSizeLimit: this.MAX_FILE_SIZE,
-          });
-
-          if (error) {
-            console.error('[ProfilePhotoUpload] Error creating bucket:', error);
-            // Don't throw here, just log the error
-            console.log('[ProfilePhotoUpload] Bucket creation failed, but continuing with upload attempt');
-            return;
-          }
-
-          console.log('[ProfilePhotoUpload] Bucket created successfully');
-        } catch (createError) {
-          console.error('[ProfilePhotoUpload] Exception during bucket creation:', createError);
-          // Don't throw here, just log the error
-          console.log('[ProfilePhotoUpload] Bucket creation failed, but continuing with upload attempt');
-        }
-      } else {
-        console.log('[ProfilePhotoUpload] Bucket already exists');
+        console.warn(
+          `[ProfilePhotoUpload] Storage bucket "${this.BUCKET_NAME}" not found. ` +
+          'Please run sql/setup_storage_bucket.sql with service-role privileges to create it.'
+        );
       }
     } catch (error) {
       console.error('[ProfilePhotoUpload] Error ensuring bucket exists:', error);
-      // Don't throw here, just log the error and continue
-      console.log('[ProfilePhotoUpload] Bucket check failed, but continuing with upload attempt');
     }
   }
 

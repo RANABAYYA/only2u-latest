@@ -14,10 +14,12 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useVendor, Vendor, VendorPost } from '~/contexts/VendorContext';
 import { useAuth } from '~/contexts/useAuth';
 import { piAPIVirtualTryOnService } from '~/services/piapiVirtualTryOn';
@@ -46,24 +48,17 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
   const [formData, setFormData] = useState({
     businessName: '',
     contactName: '',
-    email: '',
     phone: '',
-    businessType: '',
-    businessAddress: '',
     city: '',
     state: '',
     pincode: '',
     gstNumber: '',
-    businessDescription: '',
-    experience: '',
-    productCategories: '',
-    expectedMonthlySales: '',
-    website: '',
     socialMedia: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<{[key: string]: string}>({});
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   const validateStep = (step: number) => {
     const newErrors: {[key: string]: string} = {};
@@ -71,29 +66,19 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
     if (step === 1) {
       if (!formData.businessName.trim()) newErrors.businessName = 'Business name is required';
       if (!formData.contactName.trim()) newErrors.contactName = 'Contact name is required';
-      if (!formData.email.trim()) newErrors.email = 'Email is required';
-      else if (!/\S+@\S+\.\S+/.test(formData.email)) newErrors.email = 'Email is invalid';
       if (!formData.phone.trim()) newErrors.phone = 'Phone number is required';
       else if (!/^\d{10}$/.test(formData.phone.replace(/\D/g, ''))) newErrors.phone = 'Phone number must be 10 digits';
     }
     
     if (step === 2) {
-      if (!formData.businessType.trim()) newErrors.businessType = 'Business type is required';
-      if (!formData.businessAddress.trim()) newErrors.businessAddress = 'Business address is required';
       if (!formData.city.trim()) newErrors.city = 'City is required';
       if (!formData.state.trim()) newErrors.state = 'State is required';
       if (!formData.pincode.trim()) newErrors.pincode = 'Pincode is required';
       else if (!/^\d{6}$/.test(formData.pincode)) newErrors.pincode = 'Pincode must be 6 digits';
-      if (!formData.gstNumber.trim()) newErrors.gstNumber = 'GST number is required';
-      else if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(formData.gstNumber.toUpperCase())) {
+      // GST number is optional, but if provided, must be valid
+      if (formData.gstNumber.trim() && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(formData.gstNumber.toUpperCase())) {
         newErrors.gstNumber = 'GST number must be 15 characters (e.g., 27ABCDE1234F1Z5)';
       }
-    }
-    
-    if (step === 3) {
-      if (!formData.businessDescription.trim()) newErrors.businessDescription = 'Business description is required';
-      if (!formData.experience.trim()) newErrors.experience = 'Experience is required';
-      if (!formData.productCategories.trim()) newErrors.productCategories = 'Product categories are required';
     }
     
     setErrors(newErrors);
@@ -139,20 +124,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
           console.error('Error storing application locally:', storageError);
         }
         
-        Alert.alert(
-          'Application Received',
-          'Thank you for your interest in becoming a seller! Your application has been received. Our team will review your information and contact you within 2-3 business days.\n\nFor now, please note down your application details:\n\n' +
-          `Business: ${formData.businessName}\n` +
-          `Contact: ${formData.contactName}\n` +
-          `Email: ${formData.email}\n` +
-          `Phone: ${formData.phone}`,
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.goBack()
-            }
-          ]
-        );
+        setShowSuccessModal(true);
         return;
       }
       
@@ -162,19 +134,11 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         .insert([{
           business_name: formData.businessName,
           contact_name: formData.contactName,
-          email: formData.email,
           phone: formData.phone,
-          business_type: formData.businessType,
-          business_address: formData.businessAddress,
           city: formData.city,
           state: formData.state,
           pincode: formData.pincode,
           gst_number: formData.gstNumber || null,
-          business_description: formData.businessDescription,
-          experience: formData.experience,
-          product_categories: formData.productCategories,
-          expected_monthly_sales: formData.expectedMonthlySales || null,
-          website: formData.website || null,
           social_media: formData.socialMedia || null,
           status: 'pending',
         }])
@@ -205,20 +169,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
             console.error('Error storing application locally:', storageError);
           }
           
-          Alert.alert(
-            'Application Received',
-            'Thank you for your interest in becoming a seller! Your application has been received. Our team will review your information and contact you within 2-3 business days.\n\nFor now, please note down your application details:\n\n' +
-            `Business: ${formData.businessName}\n` +
-            `Contact: ${formData.contactName}\n` +
-            `Email: ${formData.email}\n` +
-            `Phone: ${formData.phone}`,
-            [
-              {
-                text: 'OK',
-                onPress: () => navigation.goBack()
-              }
-            ]
-          );
+          setShowSuccessModal(true);
           return;
         }
         
@@ -229,16 +180,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         throw new Error('No data returned from database');
       }
 
-      Alert.alert(
-        'Application Submitted!',
-        'Your seller application has been submitted successfully. Our team will review your application and get back to you within 2-3 business days. You will receive an email update once your application is approved.',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack()
-          }
-        ]
-      );
+      setShowSuccessModal(true);
     } catch (error: any) {
       console.error('Error submitting application:', error);
       const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
@@ -278,19 +220,6 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
       </View>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Email Address *</Text>
-        <TextInput
-          style={[styles.textInput, errors.email && styles.inputError]}
-          value={formData.email}
-          onChangeText={(text) => setFormData({...formData, email: text})}
-          placeholder="your@email.com"
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
-        {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
-      </View>
-
-      <View style={styles.inputGroup}>
         <Text style={styles.inputLabel}>Phone Number *</Text>
         <TextInput
           style={[styles.textInput, errors.phone && styles.inputError]}
@@ -302,37 +231,23 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         />
         {errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
       </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Social Media (Optional)</Text>
+        <TextInput
+          style={styles.textInput}
+          value={formData.socialMedia}
+          onChangeText={(text) => setFormData({...formData, socialMedia: text})}
+          placeholder="Instagram, Facebook handles"
+        />
+      </View>
     </View>
   );
 
   const renderStep2 = () => (
     <View style={styles.formStep}>
-      <Text style={styles.stepTitle}>Business Details</Text>
+      <Text style={styles.stepTitle}>Business Location</Text>
       
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Business Type *</Text>
-        <TextInput
-          style={[styles.textInput, errors.businessType && styles.inputError]}
-          value={formData.businessType}
-          onChangeText={(text) => setFormData({...formData, businessType: text})}
-          placeholder="e.g., Retail, Wholesale, Manufacturer"
-        />
-        {errors.businessType && <Text style={styles.errorText}>{errors.businessType}</Text>}
-      </View>
-
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Business Address *</Text>
-        <TextInput
-          style={[styles.textInput, styles.textArea, errors.businessAddress && styles.inputError]}
-          value={formData.businessAddress}
-          onChangeText={(text) => setFormData({...formData, businessAddress: text})}
-          placeholder="Complete business address"
-          multiline
-          numberOfLines={3}
-        />
-        {errors.businessAddress && <Text style={styles.errorText}>{errors.businessAddress}</Text>}
-      </View>
-
       <View style={styles.row}>
         <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
           <Text style={styles.inputLabel}>City *</Text>
@@ -372,7 +287,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         </View>
 
         <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
-          <Text style={styles.inputLabel}>GST Number *</Text>
+          <Text style={styles.inputLabel}>GST Number (Optional)</Text>
           <TextInput
             style={[styles.textInput, errors.gstNumber && styles.inputError]}
             value={formData.gstNumber}
@@ -383,79 +298,6 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
           />
           {errors.gstNumber && <Text style={styles.errorText}>{errors.gstNumber}</Text>}
         </View>
-      </View>
-    </View>
-  );
-
-  const renderStep3 = () => (
-    <View style={styles.formStep}>
-      <Text style={styles.stepTitle}>Additional Information</Text>
-      
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Business Description *</Text>
-        <TextInput
-          style={[styles.textInput, styles.textArea, errors.businessDescription && styles.inputError]}
-          value={formData.businessDescription}
-          onChangeText={(text) => setFormData({...formData, businessDescription: text})}
-          placeholder="Describe your business, products, and services"
-          multiline
-          numberOfLines={4}
-        />
-        {errors.businessDescription && <Text style={styles.errorText}>{errors.businessDescription}</Text>}
-      </View>
-
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Business Experience *</Text>
-        <TextInput
-          style={[styles.textInput, errors.experience && styles.inputError]}
-          value={formData.experience}
-          onChangeText={(text) => setFormData({...formData, experience: text})}
-          placeholder="e.g., 2 years in retail"
-        />
-        {errors.experience && <Text style={styles.errorText}>{errors.experience}</Text>}
-      </View>
-
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Product Categories *</Text>
-        <TextInput
-          style={[styles.textInput, errors.productCategories && styles.inputError]}
-          value={formData.productCategories}
-          onChangeText={(text) => setFormData({...formData, productCategories: text})}
-          placeholder="e.g., Fashion, Electronics, Home & Garden"
-        />
-        {errors.productCategories && <Text style={styles.errorText}>{errors.productCategories}</Text>}
-      </View>
-
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Expected Monthly Sales</Text>
-        <TextInput
-          style={styles.textInput}
-          value={formData.expectedMonthlySales}
-          onChangeText={(text) => setFormData({...formData, expectedMonthlySales: text})}
-          placeholder="e.g., ₹50,000 - ₹1,00,000"
-        />
-      </View>
-
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Website</Text>
-        <TextInput
-          style={styles.textInput}
-          value={formData.website}
-          onChangeText={(text) => setFormData({...formData, website: text})}
-          placeholder="https://yourwebsite.com"
-          keyboardType="url"
-          autoCapitalize="none"
-        />
-      </View>
-
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Social Media</Text>
-        <TextInput
-          style={styles.textInput}
-          value={formData.socialMedia}
-          onChangeText={(text) => setFormData({...formData, socialMedia: text})}
-          placeholder="Instagram, Facebook handles"
-        />
       </View>
     </View>
   );
@@ -478,14 +320,13 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
           <View style={styles.formContainer}>
             <View style={styles.progressContainer}>
               <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: `${(currentStep / 3) * 100}%` }]} />
+                <View style={[styles.progressFill, { width: `${(currentStep / 2) * 100}%` }]} />
               </View>
-              <Text style={styles.progressText}>Step {currentStep} of 3</Text>
+              <Text style={styles.progressText}>Step {currentStep} of 2</Text>
             </View>
 
             {currentStep === 1 && renderStep1()}
             {currentStep === 2 && renderStep2()}
-            {currentStep === 3 && renderStep3()}
 
             <View style={styles.buttonContainer}>
               {currentStep > 1 && (
@@ -494,7 +335,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
                 </TouchableOpacity>
               )}
               
-              {currentStep < 3 ? (
+              {currentStep < 2 ? (
                 <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
                   <Text style={styles.nextButtonText}>Next</Text>
                 </TouchableOpacity>
@@ -515,6 +356,76 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Success Modal */}
+      <Modal
+        visible={showSuccessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowSuccessModal(false);
+          navigation.goBack();
+        }}
+      >
+        <View style={styles.successOverlay}>
+          <View style={styles.successModalCard}>
+            {/* Success Icon */}
+            <View style={styles.successIconContainer}>
+              <LinearGradient
+                colors={['#10B981', '#059669']}
+                style={styles.successIconGradient}
+              >
+                <Ionicons name="checkmark-circle" size={60} color="#fff" />
+              </LinearGradient>
+            </View>
+
+            {/* Title */}
+            <Text style={styles.successModalTitle}>Application Submitted! 🎉</Text>
+            
+            {/* Message */}
+            <Text style={styles.successModalMessage}>
+              Thank you for your interest in becoming a seller! Your application has been received successfully.
+            </Text>
+
+            {/* Application Details Card */}
+            <View style={styles.successDetailsCard}>
+              <Text style={styles.successDetailsTitle}>Application Details</Text>
+              <View style={styles.successDetailRow}>
+                <Ionicons name="business-outline" size={16} color="#6B7280" />
+                <Text style={styles.successDetailText}>{formData.businessName}</Text>
+              </View>
+              <View style={styles.successDetailRow}>
+                <Ionicons name="person-outline" size={16} color="#6B7280" />
+                <Text style={styles.successDetailText}>{formData.contactName}</Text>
+              </View>
+              <View style={styles.successDetailRow}>
+                <Ionicons name="call-outline" size={16} color="#6B7280" />
+                <Text style={styles.successDetailText}>{formData.phone}</Text>
+              </View>
+            </View>
+
+            {/* Timeline Info */}
+            <View style={styles.successTimelineCard}>
+              <Ionicons name="time-outline" size={20} color="#F59E0B" />
+              <Text style={styles.successTimelineText}>
+                Our team will review your application and contact you within <Text style={styles.successTimelineBold}>2-3 business days</Text>
+              </Text>
+            </View>
+
+            {/* Close Button */}
+            <TouchableOpacity
+              style={styles.successModalButton}
+              onPress={() => {
+                setShowSuccessModal(false);
+                navigation.goBack();
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.successModalButtonText}>Got it!</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -545,9 +456,8 @@ const VendorProfile: React.FC = () => {
   const [vendor, setVendor] = useState<Vendor | null>(initialVendor || null);
   const [vendorPosts, setVendorPosts] = useState<VendorPost[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'posts' | 'products' | 'tagged' | 'collaborations'>('products');
+  const [activeTab, setActiveTab] = useState<'posts' | 'products'>('products');
   const [vendorProducts, setVendorProducts] = useState<any[]>([]);
-  const [collaborations, setCollaborations] = useState<any[]>([]);
   const scrollRef = useRef<ScrollView | null>(null);
   const [productsY, setProductsY] = useState(0);
   const [productRatings, setProductRatings] = useState<{ [productId: string]: { rating: number; reviews: number } }>({});
@@ -1304,36 +1214,6 @@ const VendorProfile: React.FC = () => {
               </Text>
               {activeTab === 'products' && <View style={styles.tabIndicator} />}
             </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.tabItem, activeTab === 'tagged' && styles.activeTabItem]}
-              onPress={() => setActiveTab('tagged')}
-            >
-              <Ionicons 
-                name="pricetag" 
-                size={20} 
-                color={activeTab === 'tagged' ? '#000' : '#999'} 
-              />
-              <Text style={[styles.tabText, activeTab === 'tagged' && styles.activeTabText]}>
-                TAGGED
-              </Text>
-              {activeTab === 'tagged' && <View style={styles.tabIndicator} />}
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.tabItem, activeTab === 'collaborations' && styles.activeTabItem]}
-              onPress={() => setActiveTab('collaborations')}
-            >
-              <Ionicons 
-                name="people" 
-                size={20} 
-                color={activeTab === 'collaborations' ? '#000' : '#999'} 
-              />
-              <Text style={[styles.tabText, activeTab === 'collaborations' && styles.activeTabText]}>
-                COLLABS
-              </Text>
-              {activeTab === 'collaborations' && <View style={styles.tabIndicator} />}
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -1441,28 +1321,6 @@ const VendorProfile: React.FC = () => {
                 </>
               )}
             </ScrollView>
-          )}
-
-          {/* Tagged Tab */}
-          {activeTab === 'tagged' && (
-            <View style={styles.taggedGrid}>
-              <View style={styles.emptyTabState}>
-                <Ionicons name="pricetag-outline" size={64} color="#ddd" />
-                <Text style={styles.emptyTabTitle}>No Tagged Posts</Text>
-                <Text style={styles.emptyTabSubtitle}>Photos and videos where {vendor.business_name} is tagged will appear here</Text>
-              </View>
-            </View>
-          )}
-
-          {/* Collaborations Tab */}
-          {activeTab === 'collaborations' && (
-            <View style={styles.collaborationsGrid}>
-              <View style={styles.emptyTabState}>
-                <Ionicons name="people-outline" size={64} color="#ddd" />
-                <Text style={styles.emptyTabTitle}>No Collaborations Yet</Text>
-                <Text style={styles.emptyTabSubtitle}>Collaborative projects and partnerships will appear here</Text>
-              </View>
-            </View>
           )}
         </View>
       </ScrollView>
@@ -2514,6 +2372,125 @@ const styles = StyleSheet.create({
   ugcActionSubtitle: {
     fontSize: 14,
     color: '#666',
+  },
+  // Success Modal Styles
+  successOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  successModalCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 28,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 15,
+  },
+  successIconContainer: {
+    marginBottom: 24,
+  },
+  successIconGradient: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  successModalTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#1F2937',
+    marginBottom: 12,
+    textAlign: 'center',
+    letterSpacing: -0.5,
+  },
+  successModalMessage: {
+    fontSize: 15,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  successDetailsCard: {
+    width: '100%',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  successDetailsTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9CA3AF',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 16,
+  },
+  successDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 12,
+  },
+  successDetailText: {
+    fontSize: 15,
+    color: '#374151',
+    fontWeight: '500',
+    flex: 1,
+  },
+  successTimelineCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  successTimelineText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#92400E',
+    lineHeight: 20,
+  },
+  successTimelineBold: {
+    fontWeight: '700',
+    color: '#78350F',
+  },
+  successModalButton: {
+    width: '100%',
+    backgroundColor: '#F53F7A',
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+    shadowColor: '#F53F7A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  successModalButtonText: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: 0.3,
   },
 });
 

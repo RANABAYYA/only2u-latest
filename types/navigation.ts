@@ -17,6 +17,8 @@ export type RootStackParamList = {
       images?: number;
     };
     productId?: string; // Alternative: fetch product by ID
+    // When true, ProductDetails will scroll to the reviews section on mount
+    scrollToReviews?: boolean;
   };
   Products: {
     category: {

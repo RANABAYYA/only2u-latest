@@ -216,8 +216,8 @@ const EditProfile = () => {
     try {
       setIsSaving(true);
       // Validate required fields
-      if (!name?.trim() || !email?.trim()) {
-        Alert.alert(t('error'), t('fill_required_fields'));
+      if (!name?.trim()) {
+        Alert.alert(t('error'), 'Please enter your name');
         return;
       }
 
@@ -347,7 +347,7 @@ const EditProfile = () => {
 
           {/* Email Address */}
           <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>{t('email_address')} *</Text>
+            <Text style={styles.fieldLabel}>{t('email_address')} (Optional)</Text>
             <TextInput
               style={styles.textInput}
               value={email}

@@ -601,6 +601,10 @@ const Wishlist = () => {
                     numColumns={2}
                     scrollEnabled={false}
                     contentContainerStyle={styles.collectionsList}
+                    removeClippedSubviews={true}
+                    maxToRenderPerBatch={5}
+                    windowSize={5}
+                    initialNumToRender={5}
                   />
                   {regularWishlistItems.length > 0 && (
                     <View style={styles.allItemsHeader}>
@@ -614,6 +618,11 @@ const Wishlist = () => {
             contentContainerStyle={styles.productList}
             numColumns={2}
             showsVerticalScrollIndicator={false}
+            removeClippedSubviews={true}
+            maxToRenderPerBatch={10}
+            windowSize={10}
+            initialNumToRender={10}
+            updateCellsBatchingPeriod={50}
             key="wishlist-grid"
           />
         );
@@ -626,6 +635,11 @@ const Wishlist = () => {
             contentContainerStyle={styles.notificationList}
             numColumns={1}
             showsVerticalScrollIndicator={false}
+            removeClippedSubviews={true}
+            maxToRenderPerBatch={10}
+            windowSize={10}
+            initialNumToRender={10}
+            updateCellsBatchingPeriod={50}
             key="notifications-list"
           />
         );

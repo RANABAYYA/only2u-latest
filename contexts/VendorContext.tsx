@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
 import { supabase } from '~/utils/supabase';
 import { useAuth } from './useAuth';
 
@@ -69,27 +69,27 @@ interface VendorContextType {
   followedVendors: string[];
   loading: boolean;
   error: string | null;
-  
+
   // Vendor actions
   fetchVendors: () => Promise<void>;
   fetchVendorById: (vendorId: string) => Promise<Vendor | null>;
   fetchVendorPosts: (vendorId?: string) => Promise<void>;
   fetchVendorStories: (vendorId?: string) => Promise<void>;
   fetchFollowedVendors: () => Promise<void>;
-  
+
   // Follow actions
   followVendor: (vendorId: string) => Promise<boolean>;
   unfollowVendor: (vendorId: string) => Promise<boolean>;
   isFollowingVendor: (vendorId: string) => boolean;
-  
+
   // Post actions
   likePost: (postId: string) => Promise<boolean>;
   unlikePost: (postId: string) => Promise<boolean>;
   sharePost: (postId: string) => Promise<boolean>;
-  
+
   // Story actions
   viewStory: (storyId: string) => Promise<boolean>;
-  
+
   // Utility functions
   getVendorByProductId: (productId: string) => Promise<Vendor | null>;
   refreshVendorData: () => Promise<void>;
@@ -119,11 +119,11 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
   const [error, setError] = useState<string | null>(null);
 
   // Fetch all vendors
-  const fetchVendors = async () => {
+  const fetchVendors = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const { data, error } = await supabase
         .from('vendors')
         .select('*')
@@ -137,10 +137,10 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Fetch vendor by ID
-  const fetchVendorById = async (vendorId: string): Promise<Vendor | null> => {
+  const fetchVendorById = useCallback(async (vendorId: string): Promise<Vendor | null> => {
     try {
       const { data, error } = await supabase
         .from('vendors')
@@ -154,14 +154,14 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
       console.error('Error fetching vendor:', err);
       return null;
     }
-  };
+  }, []);
 
   // Fetch vendor posts (feed or specific vendor)
-  const fetchVendorPosts = async (vendorId?: string) => {
+  const fetchVendorPosts = useCallback(async (vendorId?: string) => {
     try {
       setLoading(true);
       setError(null);
-      
+
       let query = supabase
         .from('vendor_feed')
         .select('*')
@@ -179,7 +179,7 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
       const postsWithLikes = await Promise.all(
         (data || []).map(async (post) => {
           if (!user) return { ...post, is_liked: false };
-          
+
           const { data: likeData } = await supabase
             .from('vendor_post_likes')
             .select('id')
@@ -198,14 +198,14 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   // Fetch vendor stories
-  const fetchVendorStories = async (vendorId?: string) => {
+  const fetchVendorStories = useCallback(async (vendorId?: string) => {
     try {
       setLoading(true);
       setError(null);
-      
+
       let query = supabase
         .from('vendor_stories')
         .select('*')
@@ -225,7 +225,7 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
       const storiesWithViews = await Promise.all(
         (data || []).map(async (story) => {
           if (!user) return { ...story, is_viewed: false };
-          
+
           const { data: viewData } = await supabase
             .from('vendor_story_views')
             .select('id')
@@ -244,12 +244,12 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   // Fetch followed vendors
-  const fetchFollowedVendors = async () => {
+  const fetchFollowedVendors = useCallback(async () => {
     if (!user) return;
-    
+
     try {
       const { data, error } = await supabase
         .from('vendor_follows')
@@ -261,13 +261,17 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
     } catch (err) {
       console.error('Error fetching followed vendors:', err);
     }
-  };
+  }, [user]);
 
   // Follow vendor
-  const followVendor = async (vendorId: string): Promise<boolean> => {
-    if (!user) return false;
-    
+  const followVendor = useCallback(async (vendorId: string): Promise<boolean> => {
+    if (!user) {
+      console.log('FollowVendor: No user found');
+      return false;
+    }
+
     try {
+      console.log('FollowVendor: Attempting to follow', vendorId);
       const { error } = await supabase
         .from('vendor_follows')
         .insert({
@@ -276,20 +280,25 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
         });
 
       if (error) throw error;
-      
+
       setFollowedVendors(prev => [...prev, vendorId]);
+      console.log('FollowVendor: Successfully followed', vendorId);
       return true;
     } catch (err) {
       console.error('Error following vendor:', err);
       return false;
     }
-  };
+  }, [user]);
 
   // Unfollow vendor
-  const unfollowVendor = async (vendorId: string): Promise<boolean> => {
-    if (!user) return false;
-    
+  const unfollowVendor = useCallback(async (vendorId: string): Promise<boolean> => {
+    if (!user) {
+      console.log('UnfollowVendor: No user found');
+      return false;
+    }
+
     try {
+      console.log('UnfollowVendor: Attempting to unfollow', vendorId);
       const { error } = await supabase
         .from('vendor_follows')
         .delete()
@@ -297,24 +306,25 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
         .eq('vendor_id', vendorId);
 
       if (error) throw error;
-      
+
       setFollowedVendors(prev => prev.filter(id => id !== vendorId));
+      console.log('UnfollowVendor: Successfully unfollowed', vendorId);
       return true;
     } catch (err) {
       console.error('Error unfollowing vendor:', err);
       return false;
     }
-  };
+  }, [user]);
 
   // Check if following vendor
-  const isFollowingVendor = (vendorId: string): boolean => {
+  const isFollowingVendor = useCallback((vendorId: string): boolean => {
     return followedVendors.includes(vendorId);
-  };
+  }, [followedVendors]);
 
   // Like post
-  const likePost = async (postId: string): Promise<boolean> => {
+  const likePost = useCallback(async (postId: string): Promise<boolean> => {
     if (!user) return false;
-    
+
     try {
       const { error } = await supabase
         .from('vendor_post_likes')
@@ -324,25 +334,25 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
         });
 
       if (error) throw error;
-      
+
       // Update local state
-      setVendorPosts(prev => prev.map(post => 
-        post.id === postId 
+      setVendorPosts(prev => prev.map(post =>
+        post.id === postId
           ? { ...post, likes_count: post.likes_count + 1, is_liked: true }
           : post
       ));
-      
+
       return true;
     } catch (err) {
       console.error('Error liking post:', err);
       return false;
     }
-  };
+  }, [user]);
 
   // Unlike post
-  const unlikePost = async (postId: string): Promise<boolean> => {
+  const unlikePost = useCallback(async (postId: string): Promise<boolean> => {
     if (!user) return false;
-    
+
     try {
       const { error } = await supabase
         .from('vendor_post_likes')
@@ -351,23 +361,23 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
         .eq('post_id', postId);
 
       if (error) throw error;
-      
+
       // Update local state
-      setVendorPosts(prev => prev.map(post => 
-        post.id === postId 
+      setVendorPosts(prev => prev.map(post =>
+        post.id === postId
           ? { ...post, likes_count: post.likes_count - 1, is_liked: false }
           : post
       ));
-      
+
       return true;
     } catch (err) {
       console.error('Error unliking post:', err);
       return false;
     }
-  };
+  }, [user]);
 
   // Share post
-  const sharePost = async (postId: string): Promise<boolean> => {
+  const sharePost = useCallback(async (postId: string): Promise<boolean> => {
     try {
       const { error } = await supabase
         .from('vendor_posts')
@@ -375,25 +385,25 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
         .eq('id', postId);
 
       if (error) throw error;
-      
+
       // Update local state
-      setVendorPosts(prev => prev.map(post => 
-        post.id === postId 
+      setVendorPosts(prev => prev.map(post =>
+        post.id === postId
           ? { ...post, shares_count: post.shares_count + 1 }
           : post
       ));
-      
+
       return true;
     } catch (err) {
       console.error('Error sharing post:', err);
       return false;
     }
-  };
+  }, []);
 
   // View story
-  const viewStory = async (storyId: string): Promise<boolean> => {
+  const viewStory = useCallback(async (storyId: string): Promise<boolean> => {
     if (!user) return false;
-    
+
     try {
       const { error } = await supabase
         .from('vendor_story_views')
@@ -403,23 +413,23 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
         });
 
       if (error) throw error;
-      
+
       // Update local state
-      setVendorStories(prev => prev.map(story => 
-        story.id === storyId 
+      setVendorStories(prev => prev.map(story =>
+        story.id === storyId
           ? { ...story, views_count: story.views_count + 1, is_viewed: true }
           : story
       ));
-      
+
       return true;
     } catch (err) {
       console.error('Error viewing story:', err);
       return false;
     }
-  };
+  }, [user]);
 
   // Get vendor by product ID
-  const getVendorByProductId = async (productId: string): Promise<Vendor | null> => {
+  const getVendorByProductId = useCallback(async (productId: string): Promise<Vendor | null> => {
     try {
       const { data, error } = await supabase
         .from('products')
@@ -434,17 +444,17 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
       console.error('Error getting vendor by product ID:', err);
       return null;
     }
-  };
+  }, [fetchVendorById]);
 
   // Refresh all vendor data
-  const refreshVendorData = async () => {
+  const refreshVendorData = useCallback(async () => {
     await Promise.all([
       fetchVendors(),
       fetchVendorPosts(),
       fetchVendorStories(),
       fetchFollowedVendors()
     ]);
-  };
+  }, [fetchVendors, fetchVendorPosts, fetchVendorStories, fetchFollowedVendors]);
 
   // Initialize data when user changes
   useEffect(() => {
@@ -453,16 +463,16 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
     } else {
       setFollowedVendors([]);
     }
-  }, [user]);
+  }, [user, fetchFollowedVendors]);
 
   // Initial data fetch
   useEffect(() => {
     fetchVendors();
     fetchVendorPosts();
     fetchVendorStories();
-  }, []);
+  }, [fetchVendors, fetchVendorPosts, fetchVendorStories]);
 
-  const value: VendorContextType = {
+  const value: VendorContextType = useMemo(() => ({
     vendors,
     vendorPosts,
     vendorStories,
@@ -483,7 +493,28 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
     viewStory,
     getVendorByProductId,
     refreshVendorData
-  };
+  }), [
+    vendors,
+    vendorPosts,
+    vendorStories,
+    followedVendors,
+    loading,
+    error,
+    fetchVendors,
+    fetchVendorById,
+    fetchVendorPosts,
+    fetchVendorStories,
+    fetchFollowedVendors,
+    followVendor,
+    unfollowVendor,
+    isFollowingVendor,
+    likePost,
+    unlikePost,
+    sharePost,
+    viewStory,
+    getVendorByProductId,
+    refreshVendorData
+  ]);
 
   return (
     <VendorContext.Provider value={value}>

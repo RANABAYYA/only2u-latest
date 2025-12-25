@@ -45,6 +45,9 @@ import {
   isCloudinaryUrl,
 } from '../utils/cloudinaryVideoOptimization';
 import { getPlayableVideoUrl, isVideoUrl, isHlsUrl, getFallbackVideoUrl } from '../utils/videoUrlHelpers';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const FILTER_TUTORIAL_KEY = 'has_seen_filter_tutorial_v3';
 
 
 const { width, height } = Dimensions.get('window');
@@ -257,6 +260,57 @@ const TrendingScreen = () => {
   const [hasError, setHasError] = useState(false);
   const pagerRef = useRef<PagerView>(null);
   const insets = useSafeAreaInsets();
+
+  // Tutorial state
+  const [showFilterTutorial, setShowFilterTutorial] = useState(false);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
+  const filterTutorialPulse = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const checkTutorial = async () => {
+      try {
+        const hasSeen = await AsyncStorage.getItem(FILTER_TUTORIAL_KEY);
+        if (!hasSeen) {
+          // Small delay to ensure UI is ready
+          setTimeout(() => {
+            setShowFilterTutorial(true);
+            startFilterTutorialAnimation();
+          }, 1000);
+        }
+      } catch (error) {
+        console.error('Error checking tutorial status:', error);
+      }
+    };
+    checkTutorial();
+  }, []);
+
+  const startFilterTutorialAnimation = () => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(filterTutorialPulse, {
+          toValue: 1.2,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(filterTutorialPulse, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  };
+
+  const handleTutorialDismiss = async () => {
+    setShowFilterTutorial(false);
+    if (dontShowAgain) {
+      try {
+        await AsyncStorage.setItem(FILTER_TUTORIAL_KEY, 'true');
+      } catch (error) {
+        console.error('Error saving tutorial status:', error);
+      }
+    }
+  };
   const [selectedVideoIndexes, setSelectedVideoIndexes] = useState<{ [id: string]: number }>({});
   const [videoStates, setVideoStates] = useState<{ [id: string]: { isPlaying: boolean; isMuted: boolean } }>({});
   const [videoLoadingStates, setVideoLoadingStates] = useState<{ [id: string]: boolean }>({});
@@ -268,17 +322,17 @@ const TrendingScreen = () => {
   const [coinBalance, setCoinBalance] = useState(0);
   const [showProfilePhotoModal, setShowProfilePhotoModal] = useState(false);
   const [profilePhotoModalContext, setProfilePhotoModalContext] = useState<'virtual_try_on' | 'video_face_swap'>('virtual_try_on');
-const [tryOnProduct, setTryOnProduct] = useState<Product | null>(null);
-const [showConsentModal, setShowConsentModal] = useState(false);
-const [showSizeSelectionModal, setShowSizeSelectionModal] = useState(false);
-const [sizeSelectionDraft, setSizeSelectionDraft] = useState<string | null>(null);
-const [sizeSelectionError, setSizeSelectionError] = useState('');
-const [selectedTryOnSize, setSelectedTryOnSize] = useState<string | null>(null);
-const selectedTryOnSizeName = useMemo(() => {
-  if (!selectedTryOnSize || !tryOnProduct?.variants) return null;
-  const variant = tryOnProduct.variants.find((v) => v.size_id === selectedTryOnSize);
-  return variant?.size?.name || null;
-}, [selectedTryOnSize, tryOnProduct]);
+  const [tryOnProduct, setTryOnProduct] = useState<Product | null>(null);
+  const [showConsentModal, setShowConsentModal] = useState(false);
+  const [showSizeSelectionModal, setShowSizeSelectionModal] = useState(false);
+  const [sizeSelectionDraft, setSizeSelectionDraft] = useState<string | null>(null);
+  const [sizeSelectionError, setSizeSelectionError] = useState('');
+  const [selectedTryOnSize, setSelectedTryOnSize] = useState<string | null>(null);
+  const selectedTryOnSizeName = useMemo(() => {
+    if (!selectedTryOnSize || !tryOnProduct?.variants) return null;
+    const variant = tryOnProduct.variants.find((v) => v.size_id === selectedTryOnSize);
+    return variant?.size?.name || null;
+  }, [selectedTryOnSize, tryOnProduct]);
   const { showLoginSheet } = useLoginSheet();
 
   const promptLoginForTryOn = useCallback(() => {
@@ -387,10 +441,10 @@ const selectedTryOnSizeName = useMemo(() => {
   const [filteredVendors, setFilteredVendors] = useState<any[]>([]);
   const [filteredCategories, setFilteredCategories] = useState<any[]>([]);
   const [filteredSizes, setFilteredSizes] = useState<any[]>([]);
-  
+
   // Size interest UI state
   const [showSizeInterestModal, setShowSizeInterestModal] = useState(false);
-  
+
   // Product counts for filters
   const [vendorProductCounts, setVendorProductCounts] = useState<{ [vendorId: string]: number }>({});
   const [categoryProductCounts, setCategoryProductCounts] = useState<{ [categoryId: string]: number }>({});
@@ -832,7 +886,7 @@ const selectedTryOnSizeName = useMemo(() => {
           alias_vendor,
           vendor_id,
           category:categories(name),
-          product_variants(
+          product_variants!inner(
             id,
             product_id,
             color_id,
@@ -853,6 +907,9 @@ const selectedTryOnSizeName = useMemo(() => {
         `)
         // .eq('featured_type', 'trending') // Show all videos instead of just trending
         .eq('is_active', true)
+        // Filter products that have at least one variant with videos
+        .neq('product_variants.video_urls', '{}')
+        .not('product_variants.video_urls', 'is', null)
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -956,7 +1013,7 @@ const selectedTryOnSizeName = useMemo(() => {
 
       if (productsWithVendors) {
         const vendorIds = [...new Set(productsWithVendors.map((p: any) => p.vendor_id).filter(Boolean))];
-        
+
         if (vendorIds.length > 0) {
           const { data: vendorsData, error: vendorsError } = await supabase
             .from('vendors')
@@ -1566,16 +1623,16 @@ const selectedTryOnSizeName = useMemo(() => {
       return;
     }
 
-    if (coinBalance < 25) {
-      Alert.alert('Insufficient Coins', 'You need at least 25 coins for Face Swap. Please purchase more coins.');
+    if (coinBalance < 50) {
+      Alert.alert('Insufficient Coins', 'You need at least 50 coins for Face Swap. Please purchase more coins.');
       return;
     }
 
     const productId = product.id;
     const sizedVariant = sizeId
       ? product.variants?.find(
-          (v) => v.size_id === sizeId && v.image_urls && v.image_urls.length > 0
-        )
+        (v) => v.size_id === sizeId && v.image_urls && v.image_urls.length > 0
+      )
       : undefined;
     const firstVariantWithImage = product.variants?.find((v) => v.image_urls && v.image_urls.length > 0);
     const productImageUrl =
@@ -1599,18 +1656,18 @@ const selectedTryOnSizeName = useMemo(() => {
     setShowTryOnModal(false);
 
     try {
-      // Update coin balance (deduct 25 coins for face swap)
-      setCoinBalance(prev => prev - 25);
+      // Update coin balance (deduct 50 coins for face swap)
+      setCoinBalance(prev => prev - 50);
 
       // Also update user context
       if (userData) {
-        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 25 });
+        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 50 });
       }
 
       // Deduct coins from database
       await supabase
         .from('users')
-        .update({ coin_balance: (userData?.coin_balance || 0) - 25 })
+        .update({ coin_balance: (userData?.coin_balance || 0) - 50 })
         .eq('id', userData?.id);
 
       // Initiate face swap with PiAPI
@@ -1633,13 +1690,13 @@ const selectedTryOnSizeName = useMemo(() => {
         });
       } else {
         // Refund coins on failure
-        setCoinBalance(prev => prev + 25);
+        setCoinBalance(prev => prev + 50);
         if (userData) {
-          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 25 });
+          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
         }
         await supabase
           .from('users')
-          .update({ coin_balance: (userData?.coin_balance || 0) + 25 })
+          .update({ coin_balance: (userData?.coin_balance || 0) + 50 })
           .eq('id', userData?.id);
 
         Alert.alert('Error', response.error || 'Failed to start face swap');
@@ -2417,9 +2474,9 @@ const selectedTryOnSizeName = useMemo(() => {
             [productId]: Math.max(
               0,
               (prev[productId] || 0) +
-                (payload.eventType === 'INSERT'
-                  ? 1
-                  : payload.eventType === 'DELETE'
+              (payload.eventType === 'INSERT'
+                ? 1
+                : payload.eventType === 'DELETE'
                   ? -1
                   : 0)
             ),
@@ -2542,7 +2599,7 @@ const selectedTryOnSizeName = useMemo(() => {
   if (products.length === 0 && !loading) {
     // Check if size filter is applied and show size interest UI
     const hasSizeFilter = selectedSizes.length > 0;
-    
+
     if (hasSizeFilter) {
       // Show size interest modal instead of empty state
       return (
@@ -2564,7 +2621,7 @@ const selectedTryOnSizeName = useMemo(() => {
 
               {/* Title */}
               <Text style={styles.sizeInterestTitle}>Size Not Available, Coming Soon!</Text>
-              
+
               {/* Description */}
               <Text style={styles.sizeInterestDescription}>
                 We couldn't find any products in size <Text style={styles.sizeInterestHighlight}>{selectedSizes.join(', ')}</Text> right now.
@@ -2575,7 +2632,7 @@ const selectedTryOnSizeName = useMemo(() => {
                 <Text style={styles.sizeInterestPollQuestion}>
                   Are you interested in this size?
                 </Text>
-                
+
                 <View style={styles.sizeInterestPollButtons}>
                   <TouchableOpacity
                     style={[styles.sizeInterestPollButton, styles.sizeInterestPollButtonInterested]}
@@ -2628,7 +2685,7 @@ const selectedTryOnSizeName = useMemo(() => {
         </SafeAreaView>
       );
     }
-    
+
     // Regular empty state for other cases
     return (
       <SafeAreaView style={styles.container}>
@@ -2744,7 +2801,7 @@ const selectedTryOnSizeName = useMemo(() => {
                 )}
                 <View style={styles.tryOnInfoCost}>
                   <Ionicons name="diamond-outline" size={16} color="#F53F7A" />
-                  <Text style={styles.tryOnInfoCostText}>25 coins</Text>
+                  <Text style={styles.tryOnInfoCostText}>50 coins</Text>
                 </View>
               </View>
 
@@ -2917,7 +2974,7 @@ const selectedTryOnSizeName = useMemo(() => {
                                 reason: 'inappropriate',
                               });
                               Toast.show({ type: 'success', text1: 'Reported', text2: 'Thanks for keeping Only2U safe.' });
-                            } catch {}
+                            } catch { }
                           }}
                         >
                           <Ionicons name="flag-outline" size={16} color="#999" />
@@ -2930,7 +2987,7 @@ const selectedTryOnSizeName = useMemo(() => {
                               setBlockedUserIds((prev) => [...prev, item.user_id]);
                               setComments((prev) => prev.filter((c) => c.user_id !== item.user_id));
                               Toast.show({ type: 'success', text1: 'User blocked' });
-                            } catch {}
+                            } catch { }
                           }}
                         >
                           <Ionicons name="ban-outline" size={16} color="#999" />
@@ -3597,6 +3654,101 @@ const selectedTryOnSizeName = useMemo(() => {
             </View>
           </View>
         </BottomSheetModal>
+
+        {/* Filter Tutorial Overlay */}
+        {showFilterTutorial && (
+          <TouchableOpacity
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }}
+            activeOpacity={1}
+            onPress={() => setShowFilterTutorial(false)}
+          >
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' }}>
+              <Animated.View
+                style={{
+                  position: 'absolute',
+                  top: insets.top - 4, // Adjusted to center 50px pulse over 42px button
+                  right: 8, // Adjusted to center 50px pulse over 42px button
+                  width: 50,
+                  height: 50,
+                  borderRadius: 25,
+                  borderWidth: 3,
+                  borderColor: '#fff',
+                  transform: [{ scale: filterTutorialPulse }],
+                  zIndex: 2000,
+                  shadowColor: '#fff',
+                  shadowOffset: { width: 0, height: 0 },
+                  shadowOpacity: 0.8,
+                  shadowRadius: 10,
+                  elevation: 10,
+                }}
+              />
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={(e) => e.stopPropagation()}
+                style={{
+                  position: 'absolute',
+                  top: insets.top + 54, // Positioned below the pulse
+                  right: 20,
+                  backgroundColor: '#fff',
+                  padding: 16,
+                  borderRadius: 12,
+                  width: 260,
+                  zIndex: 2000,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                  elevation: 8,
+                }}
+              >
+                {/* Arrow triangle */}
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: -10,
+                    right: 20,
+                    width: 0,
+                    height: 0,
+                    backgroundColor: 'transparent',
+                    borderStyle: 'solid',
+                    borderLeftWidth: 10,
+                    borderRightWidth: 10,
+                    borderBottomWidth: 10,
+                    borderLeftColor: 'transparent',
+                    borderRightColor: 'transparent',
+                    borderBottomColor: '#fff',
+                  }}
+                />
+                <Text style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 8, color: '#333' }}>
+                  Filter Videos
+                </Text>
+                <Text style={{ fontSize: 14, color: '#666', lineHeight: 20, marginBottom: 16 }}>
+                  Filter by Brand, Category, Size & Price to find exactly what fits you.
+                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                    onPress={() => setDontShowAgain(!dontShowAgain)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={dontShowAgain ? 'checkbox' : 'square-outline'}
+                      size={20}
+                      color={dontShowAgain ? '#F53F7A' : '#999'}
+                    />
+                    <Text style={{ color: '#666', fontSize: 13 }}>Don't show again</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleTutorialDismiss}
+                    style={{ backgroundColor: '#F53F7A', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>GOT IT</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        )}
       </View>
     </BottomSheetModalProvider>
   );

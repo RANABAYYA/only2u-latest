@@ -160,7 +160,14 @@ const TermsAndConditions = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>11. Disclaimers</Text>
+          <Text style={styles.sectionTitle}>11. Business Information</Text>
+          <Text style={styles.text}>
+            This business is operated by Only2U Fashion Private Limited.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>12. Disclaimers</Text>
           <Text style={styles.text}>
             The app is provided on an "as is" and "as available" basis. We make no warranties,
             expressed or implied, and hereby disclaim all warranties, including without limitation
@@ -169,7 +176,7 @@ const TermsAndConditions = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>12. Limitation of Liability</Text>
+          <Text style={styles.sectionTitle}>13. Limitation of Liability</Text>
           <Text style={styles.text}>
             In no event shall Only2U be liable for any damages arising out of the use or inability
             to use the app, even if we have been notified orally or in writing of the possibility of
@@ -178,7 +185,7 @@ const TermsAndConditions = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>13. Modifications</Text>
+          <Text style={styles.sectionTitle}>14. Modifications</Text>
           <Text style={styles.text}>
             We reserve the right to modify or discontinue the app at any time without notice. We
             shall not be liable to you or any third party for any modification, suspension, or
@@ -187,7 +194,7 @@ const TermsAndConditions = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>14. Governing Law</Text>
+          <Text style={styles.sectionTitle}>15. Governing Law</Text>
           <Text style={styles.text}>
             These terms shall be governed by and construed in accordance with the laws of the
             jurisdiction in which Only2U operates, without regard to its conflict of law provisions.
@@ -195,15 +202,12 @@ const TermsAndConditions = () => {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>15. Contact Information</Text>
+          <Text style={styles.sectionTitle}>16. Contact Information</Text>
           <Text style={styles.text}>
             If you have any questions about these Terms and Conditions, please contact us at:
           </Text>
-          <Text style={styles.sectionTitle}>
-            16. This business is a a unit of subhamsthu shopping mall pvt Ltd
-          </Text>
           <Text style={styles.contactInfo}>Email: legal@only2u.com</Text>
-          <Text style={styles.contactInfo}>Phone: +91 98111 50757</Text>
+          <Text style={styles.contactInfo}>Phone: +91 7013580331</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -270,7 +274,7 @@ const styles = StyleSheet.create({
   },
   contactInfo: {
     fontSize: 15,
-    color: '#F53F7A',
+    color: '#444',
     fontWeight: '500',
     marginTop: 5,
   },

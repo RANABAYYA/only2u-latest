@@ -22,6 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useCart } from '~/contexts/CartContext';
 import { useUser } from '~/contexts/UserContext';
+import { useWishlist } from '~/contexts/WishlistContext';
 import { SaveToCollectionSheet } from '~/components/common';
 import Toast from 'react-native-toast-message';
 import OrderSuccessAnimation from '~/components/OrderSuccessAnimation';
@@ -87,15 +88,12 @@ const Cart = () => {
   const navigation = useNavigation();
   const { cartItems, removeFromCart, updateQuantity, addToCart, toggleReseller, updateResellerPrice } = useCart();
   const { userData, setUserData } = useUser();
+  const { addToWishlist } = useWishlist();
   
   // Reseller modal state
   const [showResellerModal, setShowResellerModal] = useState(false);
   const [selectedItemForResell, setSelectedItemForResell] = useState<any>(null);
   const [resellerPriceInput, setResellerPriceInput] = useState('');
-  
-  // Price breakdown modal state
-  const [showPriceBreakdown, setShowPriceBreakdown] = useState(false);
-  
   // Size selection modal state
   const [showSizeModal, setShowSizeModal] = useState(false);
   const [selectedItemForSize, setSelectedItemForSize] = useState<any>(null);
@@ -109,6 +107,17 @@ const Cart = () => {
   // Remove item modal state
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [itemToRemove, setItemToRemove] = useState<any>(null);
+  
+  // Save for later loading state
+  const [savingToWishlist, setSavingToWishlist] = useState<string | null>(null);
+
+  // Payment error modal state
+  const [showPaymentErrorModal, setShowPaymentErrorModal] = useState(false);
+  const [paymentErrorDetails, setPaymentErrorDetails] = useState<{
+    title: string;
+    message: string;
+    type: 'error' | 'config';
+  }>({ title: '', message: '', type: 'error' });
 
   // Address state
   const [defaultAddress, setDefaultAddress] = useState<any | null>(null);
@@ -175,6 +184,8 @@ const Cart = () => {
   // Payment & order state
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
   const [placingOrder, setPlacingOrder] = useState(false);
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const [showPriceBreakdownSheet, setShowPriceBreakdownSheet] = useState(false);
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [successOrderNumber, setSuccessOrderNumber] = useState('');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -190,31 +201,31 @@ const Cart = () => {
       },
       {
         key: 'upi',
-        title: 'UPI (Coming soon)',
+        title: 'UPI',
         subtitle: 'Google Pay, PhonePe, Paytm',
         icon: 'phone-portrait-outline',
-        available: false,
+        available: true,
       },
       {
         key: 'card',
-        title: 'Cards (Coming soon)',
+        title: 'Cards',
         subtitle: 'Credit / Debit cards',
         icon: 'card-outline',
-        available: false,
+        available: true,
       },
       {
         key: 'wallet',
-        title: 'Wallets (Coming soon)',
+        title: 'Wallets',
         subtitle: 'Paytm, Amazon Pay',
         icon: 'wallet-outline',
-        available: false,
+        available: true,
       },
       {
         key: 'paylater',
-        title: 'Pay Later (Coming soon)',
+        title: 'Pay Later',
         subtitle: 'Get now, pay later',
         icon: 'time-outline',
-        available: false,
+        available: true,
       },
     ],
     []
@@ -989,45 +1000,26 @@ const Cart = () => {
       
       // Check if it's a setup/configuration error
       if (errorMessage.includes('not available') || errorMessage.includes('not installed') || errorMessage.includes('not configured')) {
-        Alert.alert(
-          'Razorpay Not Configured',
-          errorMessage + '\n\nPlease check the setup instructions in RAZORPAY_SETUP.md',
-          [
-            { text: 'OK', style: 'default' },
-            { 
-              text: 'Use COD Instead', 
-              onPress: () => {
-                setPaymentMethod('cod');
-                // Retry with COD
-                setTimeout(() => handlePlaceOrder(), 100);
-              },
-              style: 'default'
-            }
-          ]
-        );
-      } else if (errorMessage.includes('cancelled') || errorMessage.includes('cancel')) {
-        Toast.show({
-          type: 'info',
-          text1: 'Payment Cancelled',
-          text2: 'You can try again or select a different payment method.',
+        setPaymentErrorDetails({
+          title: 'Razorpay Not Configured',
+          message: errorMessage + '\n\nPlease check the setup instructions in RAZORPAY_SETUP.md',
+          type: 'config'
         });
+        setShowPaymentErrorModal(true);
+      } else if (errorMessage.includes('cancelled') || errorMessage.includes('cancel')) {
+        setPaymentErrorDetails({
+          title: 'Payment Cancelled',
+          message: 'You can try again or select a different payment method.',
+          type: 'error'
+        });
+        setShowPaymentErrorModal(true);
       } else {
-        Alert.alert(
-          'Payment Failed', 
-          errorMessage,
-          [
-            { text: 'OK', style: 'default' },
-            { 
-              text: 'Try COD', 
-              onPress: () => {
-                setPaymentMethod('cod');
-                // Retry with COD
-                setTimeout(() => handlePlaceOrder(), 100);
-              },
-              style: 'default'
-            }
-          ]
-        );
+        setPaymentErrorDetails({
+          title: 'Payment Failed',
+          message: errorMessage,
+          type: 'error'
+        });
+        setShowPaymentErrorModal(true);
       }
       
       throw error;
@@ -1120,16 +1112,22 @@ const Cart = () => {
         return;
       }
 
-      // Handle Razorpay payment
-      if (paymentMethod === 'razorpay') {
-        await processRazorpayOrder(inStockItems);
-      } else {
-        // Handle COD or other payment methods
+      // Handle payment
+      if (paymentMethod === 'cod') {
+        // Handle COD payment
         await processRegularOrder(inStockItems);
+      } else {
+        // All other payment methods go through Razorpay
+        await processRazorpayOrder(inStockItems);
       }
     } catch (error: any) {
       console.error('Checkout error:', error);
-      Alert.alert('Order Failed', error.message || 'Something went wrong. Please try again.');
+      setPaymentErrorDetails({
+        title: 'Order Failed',
+        message: 'Something went wrong. Please try again.',
+        type: 'error'
+      });
+      setShowPaymentErrorModal(true);
     } finally {
       setPlacingOrder(false);
     }
@@ -1680,6 +1678,121 @@ const Cart = () => {
     setShowRemoveModal(true);
   };
 
+  const handleMoveToWishlist = async (item: any) => {
+    // Prevent multiple clicks
+    if (savingToWishlist === item.id) return;
+    
+    try {
+      // Set loading state
+      setSavingToWishlist(item.id);
+      
+      if (!userData?.id) {
+        throw new Error('User not logged in');
+      }
+
+      // Get or create "Saved for later" collection
+      let savedForLaterCollectionId: string | null = null;
+      
+      // Check if "Saved for later" collection exists
+      const { data: existingCollection, error: fetchError } = await supabase
+        .from('collections')
+        .select('id')
+        .eq('user_id', userData.id)
+        .eq('name', 'Saved for later')
+        .maybeSingle();
+
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        console.error('Error fetching Saved for later collection:', fetchError);
+        throw fetchError;
+      }
+
+      if (existingCollection) {
+        savedForLaterCollectionId = existingCollection.id;
+      } else {
+        // Create "Saved for later" collection
+        const { data: newCollection, error: createError } = await supabase
+          .from('collections')
+          .insert({
+            user_id: userData.id,
+            name: 'Saved for later',
+            is_private: true,
+          })
+          .select()
+          .single();
+
+        if (createError) {
+          console.error('Error creating Saved for later collection:', createError);
+          throw createError;
+        }
+        savedForLaterCollectionId = newCollection.id;
+      }
+
+      // Get the actual product ID (could be from item.productId or item.id)
+      const productId = item.productId || item.id;
+
+      // Check if product already exists in "Saved for later" collection
+      const { data: existingProduct } = await supabase
+        .from('collection_products')
+        .select('id')
+        .eq('product_id', productId)
+        .eq('collection_id', savedForLaterCollectionId)
+        .maybeSingle();
+
+      if (!existingProduct) {
+        // Add product to "Saved for later" collection
+        const { error: insertError } = await supabase
+          .from('collection_products')
+          .insert({
+            product_id: productId,
+            collection_id: savedForLaterCollectionId,
+          });
+
+        if (insertError) {
+          console.error('Error adding to Saved for later collection:', insertError);
+          throw insertError;
+        }
+      }
+
+      // Add to wishlist (this also adds to "All" collection)
+      await addToWishlist({
+        id: productId,
+        name: item.name,
+        price: item.price,
+        image: item.image,
+        image_urls: item.image_urls || [item.image],
+        vendor_name: item.vendor_name,
+        category: item.category,
+        variants: item.variants || [],
+      });
+      
+      // Show success toast
+      Toast.show({
+        type: 'success',
+        text1: 'Saved for Later',
+        text2: `${item.name} has been moved to your Saved for later folder`,
+        position: 'top',
+      });
+      
+      // Add artificial delay for smooth transition (500ms)
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Remove from cart after delay
+      removeFromCart(item.id);
+      
+      // Clear loading state
+      setSavingToWishlist(null);
+    } catch (error) {
+      console.error('Error moving to wishlist:', error);
+      setSavingToWishlist(null);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to save item for later. Please try again.',
+        position: 'top',
+      });
+    }
+  };
+
   const handleUpdateQuantity = async (id: string, newQuantity: number, currentItem: any) => {
     // If increasing quantity, show size selection modal
     if (newQuantity > currentItem.quantity) {
@@ -1771,7 +1884,11 @@ const Cart = () => {
     setSelectedNewSize('');
     setAvailableSizes([]);
 
-    Alert.alert('Added', `Added 1 more item with size ${selectedNewSize}`);
+    Toast.show({
+      type: 'success',
+      text1: 'Added to Cart 🎉',
+      text2: `1 more item added in size ${selectedNewSize}`,
+    });
   };
 
   // Cache variant pricing fetched from DB by SKU
@@ -1846,25 +1963,32 @@ const Cart = () => {
     loadMissingVariantPricing();
   }, [cartItems]);
 
-  // Calculate totals based on variant RSP/MRP
-  const subtotalMrp = cartItems.reduce((sum, item) => {
+  // Calculate totals based on variant RSP/MRP - memoized for performance
+  const subtotalMrp = useMemo(() => {
+    return cartItems.reduce((sum, item) => {
     const { mrp } = getItemPricing(item);
     return sum + (mrp * (item.quantity || 1));
   }, 0);
+  }, [cartItems, variantPricingBySku]);
 
-  const subtotalRspBase = cartItems.reduce((sum, item) => {
+  const subtotalRspBase = useMemo(() => {
+    return cartItems.reduce((sum, item) => {
     const { rsp } = getItemPricing(item);
     return sum + (rsp * (item.quantity || 1));
   }, 0);
+  }, [cartItems, variantPricingBySku]);
 
   // Include reseller override if set
-  const subtotalWithReseller = cartItems.reduce((sum, item) => {
+  const subtotalWithReseller = useMemo(() => {
+    return cartItems.reduce((sum, item) => {
     if (item.isReseller && item.resellerPrice) return sum + item.resellerPrice;
     const { rsp } = getItemPricing(item);
     return sum + (rsp * (item.quantity || 1));
   }, 0);
+  }, [cartItems, variantPricingBySku]);
 
-  const totalResellerProfit = cartItems.reduce((sum, item) => {
+  const totalResellerProfit = useMemo(() => {
+    return cartItems.reduce((sum, item) => {
     if (item.isReseller && item.resellerPrice) {
       const { rsp } = getItemPricing(item);
       const originalPrice = rsp * (item.quantity || 1);
@@ -1872,8 +1996,11 @@ const Cart = () => {
     }
     return sum;
   }, 0);
+  }, [cartItems, variantPricingBySku]);
   
-  const resellerItemsCount = cartItems.filter(item => item.isReseller).length;
+  const resellerItemsCount = useMemo(() => {
+    return cartItems.filter(item => item.isReseller).length;
+  }, [cartItems]);
 
   const subtotal = subtotalWithReseller;
   const savings = Math.max(0, subtotalMrp - subtotalRspBase);
@@ -2099,14 +2226,6 @@ const Cart = () => {
   }, [eligibleCoinDiscount]);
 
   const handleSelectPaymentOption = useCallback((option: PaymentOption) => {
-    if (!option.available) {
-      Toast.show({
-        type: 'info',
-        text1: 'Coming soon',
-        text2: `${option.title} will be available shortly.`,
-      });
-      return;
-    }
     setPaymentMethod(option.key);
     setShowPaymentModal(false);
   }, []);
@@ -2135,8 +2254,7 @@ const Cart = () => {
       id: item.id,
       name: item.name,
       price: item.price,
-      image: item.image,
-      image_urls: item.image_urls || (item.image ? [item.image] : []),
+      image_urls: item.image_urls || [],
       video_urls: item.video_urls || [],
       description: item.description || '',
       stock: item.stock?.toString() || '0',
@@ -2152,34 +2270,55 @@ const Cart = () => {
     return (
     <View key={item.id} style={styles.cartItem}>
         <View style={styles.cartItemContent}>
+          <View style={styles.itemImageColumn}>
       <TouchableOpacity
         onPress={() => {
           (navigation as any).navigate('ProductDetails', {
             productId: item.sku || item.id,
-            product: productForDetails
+                  product: productForDetails,
           });
         }}
         activeOpacity={0.9}
         style={styles.itemImageContainer}
       >
         <Image source={{ uri: item.image }} style={styles.itemImage} />
-        {item.quantity > 1 && (
-          <View style={styles.quantityBadge}>
-            <Text style={styles.quantityBadgeText}>{item.quantity}</Text>
-          </View>
-        )}
       </TouchableOpacity>
+
+            <View style={styles.imageQuantityWrapper}>
+              <View style={styles.quantityContainer}>
+                <TouchableOpacity
+                  onPress={() => handleUpdateQuantity(item.id, Math.max(1, item.quantity - 1), item)}
+                  disabled={item.quantity <= 1}
+                  style={[styles.quantityButton, item.quantity <= 1 && styles.quantityButtonDisabled]}
+                >
+                  <Ionicons name="remove" size={18} color={item.quantity <= 1 ? '#D1D5DB' : '#F53F7A'} />
+                </TouchableOpacity>
+                <Text style={styles.quantityText}>{item.quantity}</Text>
+                <TouchableOpacity
+                  onPress={() => handleUpdateQuantity(item.id, Math.min(item.stock || 10, item.quantity + 1), item)}
+                  disabled={item.quantity >= (item.stock || 10)}
+                  style={[styles.quantityButton, item.quantity >= (item.stock || 10) && styles.quantityButtonDisabled]}
+                >
+                  <Ionicons name="add" size={18} color={item.quantity >= (item.stock || 10) ? '#D1D5DB' : '#F53F7A'} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
 
       <View style={styles.itemDetails}>
         <View style={styles.itemHeader}>
-          <View style={styles.itemNameContainer}>
+          <TouchableOpacity
+            style={styles.itemNameContainer}
+            onPress={() => {
+              (navigation as any).navigate('ProductDetails', {
+                productId: item.sku || item.id,
+                product: productForDetails,
+              });
+            }}
+            activeOpacity={0.7}
+          >
             <View style={styles.itemNameRow}>
               <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-              {discountPct > 0 && (
-                <View style={styles.discountBadge}>
-                  <Text style={styles.discountBadgeText}>{discountPct}% OFF</Text>
-                </View>
-              )}
             </View>
             <View style={styles.itemAttributes}>
               {item.size && (
@@ -2187,19 +2326,12 @@ const Cart = () => {
                   <Text style={styles.attributeText}>Size: {item.size}</Text>
                 </View>
               )}
-              {item.color && (
+              {/* {item.color && (
                 <View style={styles.attributeChip}>
                   <Text style={styles.attributeText}>{item.color}</Text>
                 </View>
-              )}
+              )} */}
             </View>
-          </View>
-          <TouchableOpacity 
-            onPress={() => handleRemoveItem(item.id)} 
-            style={styles.removeButton}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Ionicons name="trash-outline" size={22} color="#F53F7A" />
           </TouchableOpacity>
         </View>
 
@@ -2209,52 +2341,53 @@ const Cart = () => {
               <Text style={styles.itemMrpStriked}>₹{totalMrp.toFixed(2)}</Text>
             )}
             <Text style={styles.itemPrice}>₹{displayLineTotal.toFixed(2)}</Text>
-            {saveAmount > 0 && (
-              <Text style={styles.itemSavingsText}>You save ₹{saveAmount.toFixed(0)} ({discountPct}% OFF)</Text>
-            )}
-          </View>
-
-          <View style={styles.quantityContainer}>
-            <TouchableOpacity 
-              onPress={() => handleUpdateQuantity(item.id, Math.max(1, item.quantity - 1), item)}
-              disabled={item.quantity <= 1}
-              style={[styles.quantityButton, item.quantity <= 1 && styles.quantityButtonDisabled]}
-            >
-              <Ionicons name="remove" size={18} color={item.quantity <= 1 ? "#D1D5DB" : "#F53F7A"} />
-            </TouchableOpacity>
-            <Text style={styles.quantityText}>{item.quantity}</Text>
-            <TouchableOpacity 
-              onPress={() => handleUpdateQuantity(item.id, Math.min(item.stock || 10, item.quantity + 1), item)}
-              disabled={item.quantity >= (item.stock || 10)}
-              style={[styles.quantityButton, item.quantity >= (item.stock || 10) && styles.quantityButtonDisabled]}
-            >
-              <Ionicons name="add" size={18} color={item.quantity >= (item.stock || 10) ? "#D1D5DB" : "#F53F7A"} />
-            </TouchableOpacity>
           </View>
         </View>
 
-        {item.stock && item.stock <= 5 && (
+          {saveAmount > 0 && (
+            <Text style={styles.itemSavingsTextFull}>
+              You save ₹{saveAmount.toFixed(0)} ({discountPct}% OFF)
+            </Text>
+          )}
+
+          {/* {item.stock && item.stock <= 5 && (
           <View style={styles.stockWarning}>
             <Ionicons name="alert-circle" size={14} color="#F59E0B" />
             <Text style={styles.stockWarningText}>Only {item.stock} left in stock</Text>
           </View>
-        )}
+          )} */}
+
+        {/* Action Buttons Section - Right aligned */}
+        <View style={styles.actionButtonsSection}>
+          {/* Save for Later Button */}
+          <TouchableOpacity 
+            style={[styles.saveForLaterButton, savingToWishlist === item.id && styles.saveForLaterButtonLoading]}
+            onPress={() => handleMoveToWishlist(item)}
+            activeOpacity={0.7}
+            disabled={savingToWishlist === item.id}
+          >
+            {savingToWishlist === item.id ? (
+              <ActivityIndicator size="small" color="#F53F7A" />
+            ) : (
+              <Ionicons name="bookmark-outline" size={14} color="#F53F7A" />
+            )}
+            <Text style={[styles.saveForLaterText, savingToWishlist === item.id && styles.saveForLaterTextLoading]}>
+              {savingToWishlist === item.id ? 'Saving...' : 'Save for later'}
+            </Text>
+          </TouchableOpacity>
 
         {/* Reseller Section - Only show checkbox if NOT yet set */}
         {!item.isReseller && (
-          <View style={styles.resellerSection}>
             <TouchableOpacity 
-              style={styles.resellerCheckbox}
+              style={styles.resellerButton}
               onPress={() => handleResellerToggle(item)}
-              activeOpacity={0.7}>
-              <View style={[styles.checkbox, item.isReseller && styles.checkboxActive]}>
-                {item.isReseller && <Ionicons name="checkmark" size={14} color="#fff" />}
-      </View>
-              <Ionicons name="trending-up" size={16} color="#10B981" style={{ marginLeft: 8 }} />
-              <Text style={styles.resellerLabel}>Reselling this item</Text>
+              activeOpacity={0.7}
+            >
+              <Ionicons name="trending-up" size={14} color="#10B981" />
+              <Text style={styles.resellerButtonText}>Reselling this item</Text>
             </TouchableOpacity>
-          </View>
         )}
+        </View>
       </View>
     </View>
 
@@ -2414,6 +2547,7 @@ const Cart = () => {
         // Cart with Items
         <>
           <ScrollView 
+            ref={scrollViewRef}
             style={styles.contentScroll} 
             showsVerticalScrollIndicator={false}
             contentContainerStyle={[
@@ -2436,7 +2570,7 @@ const Cart = () => {
                   </Text>
                 ) : (
                   <Text style={styles.deliveryBannerText}>
-                    Add items worth ₹{Math.max(0, 500 - subtotalRspBase)} more for <Text style={styles.deliveryBannerHighlight}>FREE delivery</Text>
+                    Add Items Worth <Text style={styles.deliveryBannerHighlight}>₹{Math.max(0, 500 - subtotal)}</Text> more for <Text style={styles.deliveryBannerHighlight}>FREE delivery</Text>
                   </Text>
                 )}
               </View>
@@ -2652,139 +2786,25 @@ const Cart = () => {
           )}
             </View>
 
-            {/* Price Details */}
-            <View style={styles.checkoutCard}>
-              <View style={styles.checkoutCardHeader}>
-                <View style={styles.checkoutCardHeaderLeft}>
-                  <View style={styles.checkoutIconBadge}>
-                    <Ionicons name="receipt" size={18} color="#F53F7A" />
-                  </View>
-                  <View>
-                    <Text style={styles.checkoutCardTitle}>Price Details</Text>
-                    <Text style={styles.checkoutCardSubtitle}>Bill summary</Text>
-                  </View>
-                </View>
-              </View>
-
-              <View style={styles.priceRows}>
-                <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>
-                    Price ({cartItems.length} item{cartItems.length !== 1 ? 's' : null})
-                  </Text>
-                  <Text style={styles.priceValue}>₹{subtotal.toFixed(2)}</Text>
-                </View>
-
-                {couponDiscountAmount > 0 && (
-                  <View style={styles.priceRow}>
-                    <Text style={styles.priceLabel}>Coupon Discount</Text>
-                    <Text style={styles.priceDiscount}>-₹{couponDiscountAmount.toFixed(2)}</Text>
-                  </View>
-                )}
-
-                {coinDiscountAmount > 0 && (
-                  <View style={styles.priceRow}>
-                    <Text style={styles.priceLabel}>Coin Discount</Text>
-                    <View style={styles.coinDiscountValue}>
-                      <Text style={styles.priceDiscount}>-₹{coinDiscountAmount.toFixed(2)}</Text>
-                      <TouchableOpacity onPress={handleRemoveCoinDiscount}>
-                        <Text style={styles.removeCoinText}>Remove</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-
-                <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>Delivery Charges</Text>
-                  {deliveryCharge === 0 ? (
-                    <View style={styles.freeTag}>
-                      <Text style={styles.freeTagText}>FREE</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.priceValue}>₹{deliveryCharge.toFixed(2)}</Text>
-                  )}
-                </View>
-
-                <View style={styles.priceDivider} />
-
-                {/* <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>Total Payable</Text>
-                  <Text style={styles.totalValue}>₹{finalTotal.toFixed(2)}</Text>
-                </View> */}
-
-                <View style={styles.coinsRow}>
-                  <Ionicons name="trophy" size={16} color="#FFB800" />
-                  <Text style={styles.coinsText}>
-                    You'll earn {coinsEarned} coins with this order
-                  </Text>
-                </View>
-
-                {hasResellerItems && totalResellerProfit > 0 && (
-                  <View style={styles.resellerMarginRow}>
-                    <View style={styles.resellerMarginLabelContainer}>
-                      <Ionicons name="trending-up" size={16} color="#10B981" />
-                      <Text style={styles.resellerMarginLabel}>Your Reseller Profit</Text>
-                    </View>
-                    <Text style={styles.resellerMarginValue}>+₹{totalResellerProfit.toFixed(2)}</Text>
-                  </View>
-                )}
-              </View>
-              </View>
-              
-            {/* Compact Price Summary */}
-            <View style={styles.compactPriceSummary}>
-              <View style={styles.compactPriceRow}>
-                <Text style={styles.compactTotalLabel}>Total Amount</Text>
-                <Text style={styles.compactTotalValue}>₹{finalTotal.toFixed(2)}</Text>
-              </View>
-
-              {combinedSavings > 0 && (
-                <View style={styles.savingsTagCompact}>
-                  <Ionicons name="happy-outline" size={14} color="#10B981" />
-                  <Text style={styles.savingsTextCompact}>
-                    You will save ₹{combinedSavings.toFixed(0)} on this order
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            {/* Trust Badges */}
-            <View style={styles.trustBadges}>
-              <View style={styles.trustBadge}>
-                <View style={styles.trustBadgeIcon}>
-                  <Ionicons name="shield-checkmark" size={20} color="#10B981" />
-                </View>
-                <Text style={styles.trustBadgeText}>100% Secure Payments</Text>
-              </View>
-              <View style={styles.trustBadge}>
-                <View style={styles.trustBadgeIcon}>
-                  <Ionicons name="sync" size={20} color="#3B82F6" />
-                </View>
-                <Text style={styles.trustBadgeText}>Easy Returns & Refunds</Text>
-              </View>
-              <View style={styles.trustBadge}>
-                <View style={styles.trustBadgeIcon}>
-                  <Ionicons name="star" size={20} color="#F59E0B" />
-                </View>
-                <Text style={styles.trustBadgeText}>Quality Guaranteed</Text>
-              </View>
-            </View>
-
-            <View style={styles.bottomSpacer} />
           </ScrollView>
 
           {/* Sticky Checkout Footer */}
           <View style={[styles.checkoutFooter, { paddingBottom: footerBottomPadding }]}>
-            <TouchableOpacity 
-              style={styles.footerPriceInfo}
-              onPress={() => setShowPriceBreakdown(true)}
-              activeOpacity={0.7}
-            >
+            <View style={styles.footerPriceInfo}>
               <View style={styles.totalPriceLabelRow}>
                 <Text style={styles.footerPriceLabel}>Total Price</Text>
-                <Ionicons name="chevron-down" size={16} color="#666" style={{ marginLeft: 4 }} />
             </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Text style={styles.footerPriceValue}>₹{finalTotal.toFixed(2)}</Text>
+                <TouchableOpacity
+                  onPress={() => setShowPriceBreakdownSheet(true)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="chevron-down" size={18} color="#6B7280" />
             </TouchableOpacity>
+              </View>
+            </View>
             
             <View style={styles.footerButtonsRow}>
             <TouchableOpacity 
@@ -2884,6 +2904,123 @@ const Cart = () => {
                 </TouchableOpacity>
               );
             })}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Price Breakdown Bottom Sheet */}
+      <Modal
+        visible={showPriceBreakdownSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPriceBreakdownSheet(false)}
+      >
+        <View style={styles.priceBreakdownSheetOverlay}>
+          <View style={styles.priceBreakdownSheetContent}>
+            <View style={styles.priceBreakdownSheetHeader}>
+              <Text style={styles.priceBreakdownSheetTitle}>Price Breakdown</Text>
+              <TouchableOpacity onPress={() => setShowPriceBreakdownSheet(false)}>
+                <Ionicons name="close" size={22} color="#111827" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.priceBreakdownSheetScroll} showsVerticalScrollIndicator={false}>
+              <View style={styles.breakdownItem}>
+                <Text style={styles.breakdownLabel}>MRP Total ({cartItems.length} items)</Text>
+                <Text style={styles.breakdownValue}>₹{subtotalMrp.toFixed(2)}</Text>
+              </View>
+
+              {savings > 0 && (
+                <View style={[styles.breakdownItem, styles.breakdownItemSavings]}>
+                  <Text style={styles.breakdownLabel}>Discount</Text>
+                  <Text style={styles.breakdownValueSavings}>-₹{savings.toFixed(2)}</Text>
+                </View>
+              )}
+
+              <View style={styles.breakdownItem}>
+                <Text style={styles.breakdownLabel}>Delivery Charges</Text>
+                {deliveryCharge === 0 ? (
+                  <View style={styles.breakdownFreeTag}>
+                    <Text style={styles.breakdownFreeText}>FREE</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.breakdownValue}>₹{deliveryCharge.toFixed(2)}</Text>
+                )}
+              </View>
+
+              {couponDiscountAmount > 0 && (
+                <View style={styles.breakdownItem}>
+                  <View style={styles.breakdownLabelWithIcon}>
+                    <Ionicons name="pricetag" size={16} color="#666" />
+                    <Text style={styles.breakdownLabel}>Coupon Discount</Text>
+                  </View>
+                  <Text style={styles.breakdownValueSavings}>-₹{couponDiscountAmount.toFixed(2)}</Text>
+                </View>
+              )}
+
+              {coinDiscountAmount > 0 && (
+                <View style={styles.breakdownItem}>
+                  <View style={styles.breakdownLabelWithIcon}>
+                    <Ionicons name="wallet" size={16} color="#666" />
+                    <Text style={styles.breakdownLabel}>Coin Discount</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={styles.breakdownValueSavings}>-₹{coinDiscountAmount.toFixed(2)}</Text>
+                    <TouchableOpacity onPress={handleRemoveCoinDiscount}>
+                      <Text style={styles.removeCoinText}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              <View style={styles.breakdownDivider} />
+
+              <View style={styles.breakdownItem}>
+                <Text style={styles.breakdownLabel}>Order Total</Text>
+                <Text style={styles.breakdownValue}>
+                  ₹{(subtotalRspBase + (subtotalRspBase > 500 ? 0 : 40) - couponDiscountAmount - coinDiscountAmount).toFixed(2)}
+                </Text>
+              </View>
+
+              {totalResellerProfit > 0 && (
+                <View style={[styles.breakdownItem, styles.breakdownItemGreen]}>
+                  <View style={styles.breakdownLabelWithIcon}>
+                    <Text style={styles.breakdownLabelGreen}>Reseller Margin ({resellerItemsCount} items)</Text>
+                  </View>
+                  <Text style={styles.breakdownValueGreen}>+₹{totalResellerProfit.toFixed(2)}</Text>
+                </View>
+              )}
+
+              <View style={styles.breakdownDivider} />
+
+              <View style={styles.breakdownItem}>
+                <Text style={styles.breakdownLabel}>Total Price</Text>
+                <Text style={styles.breakdownValue}>₹{finalTotal.toFixed(2)}</Text>
+              </View>
+
+              <View style={styles.breakdownTaxNote}>
+                <Text style={styles.breakdownTaxNoteText}>
+                  (Inclusive of all taxes)
+                </Text>
+              </View>
+
+              {savings > 0 && (
+                <View style={styles.breakdownSavingsHighlight}>
+                  <Ionicons name="happy-outline" size={18} color="#666" />
+                  <Text style={styles.breakdownSavingsText}>
+                    You will save ₹{savings.toFixed(2)} on this order
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.breakdownItem}>
+                <View style={styles.breakdownLabelWithIcon}>
+                  <Ionicons name="trophy" size={16} color="#FFB800" />
+                  <Text style={styles.breakdownLabel}>Coins Earned</Text>
+                </View>
+                <Text style={styles.breakdownValue}>{coinsEarned} coins</Text>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -3038,7 +3175,7 @@ const Cart = () => {
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={styles.modalConfirmButton}
+                style={[styles.modalConfirmButton, styles.sizeModalConfirmButton]}
                 onPress={handleConfirmSizeSelection}>
                 <Text style={styles.modalConfirmText}>Add to Cart</Text>
               </TouchableOpacity>
@@ -3047,118 +3184,6 @@ const Cart = () => {
         </View>
       </Modal>
 
-      {/* Price Breakdown Modal */}
-      <Modal
-        visible={showPriceBreakdown}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowPriceBreakdown(false)}>
-        <View style={styles.breakdownModalOverlay}>
-          <View style={styles.breakdownModalContent}>
-            {/* Header */}
-            <View style={styles.breakdownHeader}>
-              <Text style={styles.breakdownTitle}>Price Breakdown</Text>
-              <TouchableOpacity 
-                onPress={() => setShowPriceBreakdown(false)}
-                style={styles.breakdownCloseButton}
-              >
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Breakdown Items */}
-            <ScrollView style={styles.breakdownScroll} showsVerticalScrollIndicator={false}>
-              <View style={styles.breakdownItem}>
-                <Text style={styles.breakdownLabel}>MRP Total ({cartItems.length} items)</Text>
-                <Text style={styles.breakdownValue}>₹{subtotalMrp.toFixed(2)}</Text>
-              </View>
-              <View style={styles.breakdownItem}>
-                <Text style={styles.breakdownLabel}>RSP Total</Text>
-                <Text style={styles.breakdownValue}>₹{subtotalRspBase.toFixed(2)}</Text>
-              </View>
-
-              {totalResellerProfit > 0 && (
-                <View style={[styles.breakdownItem, styles.breakdownItemGreen]}>
-                  <View style={styles.breakdownLabelWithIcon}>
-                    <Ionicons name="trending-up" size={16} color="#666" />
-                    <Text style={styles.breakdownLabelGreen}>Reseller Margin ({resellerItemsCount} items)</Text>
-                  </View>
-                  <Text style={styles.breakdownValueGreen}>+₹{totalResellerProfit.toFixed(2)}</Text>
-                          </View>
-                        )}
-              
-              <View style={styles.breakdownItem}>
-                <Text style={styles.breakdownLabel}>Delivery Charges</Text>
-                {deliveryCharge === 0 ? (
-                  <View style={styles.breakdownFreeTag}>
-                    <Text style={styles.breakdownFreeText}>FREE</Text>
-                          </View>
-                ) : (
-                  <Text style={styles.breakdownValue}>₹{deliveryCharge.toFixed(2)}</Text>
-                        )}
-                      </View>
-
-              {savings > 0 && (
-                <View style={[styles.breakdownItem, styles.breakdownItemSavings]}>
-                  <Text style={styles.breakdownLabel}>Discount</Text>
-                  <Text style={styles.breakdownValueSavings}>-₹{savings.toFixed(2)}</Text>
-                    </View>
-              )}
-
-              {couponDiscountAmount > 0 && (
-                <View style={styles.breakdownItem}>
-                  <View style={styles.breakdownLabelWithIcon}>
-                    <Ionicons name="pricetag" size={16} color="#666" />
-                    <Text style={styles.breakdownLabel}>Coupon Discount</Text>
-                  </View>
-                  <Text style={styles.breakdownValueSavings}>-₹{couponDiscountAmount.toFixed(2)}</Text>
-                </View>
-              )}
-
-              {coinDiscountAmount > 0 && (
-                <View style={styles.breakdownItem}>
-                  <View style={styles.breakdownLabelWithIcon}>
-                    <Ionicons name="wallet" size={16} color="#666" />
-                    <Text style={styles.breakdownLabel}>Coin Discount</Text>
-                  </View>
-                  <Text style={styles.breakdownValueSavings}>-₹{coinDiscountAmount.toFixed(2)}</Text>
-                    </View>
-              )}
-
-              <View style={styles.breakdownDivider} />
-
-              <View style={[styles.breakdownItem, styles.breakdownTotal]}>
-                <Text style={styles.breakdownTotalLabel}>Total Amount</Text>
-                <Text style={styles.breakdownTotalValue}>₹{finalTotal.toFixed(2)}</Text>
-                  </View>
-
-              <View style={styles.breakdownTaxNote}>
-                <Text style={styles.breakdownTaxNoteText}>
-                  (Inclusive of all taxes)
-                </Text>
-                </View>
-
-              {savings > 0 && (
-                <View style={styles.breakdownSavingsHighlight}>
-                  <Ionicons name="happy-outline" size={18} color="#666" />
-                  <Text style={styles.breakdownSavingsText}>
-                    You will save ₹{savings.toFixed(2)} on this order
-                  </Text>
-                  </View>
-                )}
-            </ScrollView>
-
-            {/* Close Button */}
-            <TouchableOpacity 
-              style={styles.breakdownDoneButton}
-              onPress={() => setShowPriceBreakdown(false)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.breakdownDoneButtonText}>Done</Text>
-            </TouchableOpacity>
-        </View>
-    </View>
-      </Modal>
 
       {/* SaveToCollectionSheet */}
       <SaveToCollectionSheet
@@ -3228,6 +3253,61 @@ const Cart = () => {
               >
                 <Text style={styles.removeKeepEmoji}>😊</Text>
                 <Text style={styles.removeKeepText}>No</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Payment Error Modal */}
+      <Modal
+        visible={showPaymentErrorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPaymentErrorModal(false)}
+      >
+        <View style={styles.paymentErrorOverlay}>
+          <View style={styles.paymentErrorContent}>
+            {/* Icon */}
+            <View style={styles.paymentErrorIconContainer}>
+              <View style={styles.paymentErrorIconBg}>
+                <Ionicons 
+                  name={paymentErrorDetails.title.includes('Cancelled') ? 'close-circle' : 'alert-circle'} 
+                  size={48} 
+                  color={paymentErrorDetails.title.includes('Cancelled') ? '#F59E0B' : '#EF4444'} 
+                />
+              </View>
+            </View>
+
+            {/* Title */}
+            <Text style={styles.paymentErrorTitle}>{paymentErrorDetails.title}</Text>
+            
+            {/* Message */}
+            <Text style={styles.paymentErrorMessage}>{paymentErrorDetails.message}</Text>
+
+            {/* Buttons */}
+            <View style={styles.paymentErrorButtons}>
+              <TouchableOpacity
+                style={styles.paymentErrorPrimaryButton}
+                onPress={() => {
+                  setShowPaymentErrorModal(false);
+                  setPaymentMethod('cod');
+                  setTimeout(() => handlePlaceOrder(), 300);
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="cash" size={20} color="#FFF" />
+                <Text style={styles.paymentErrorPrimaryButtonText}>
+                  {paymentErrorDetails.type === 'config' ? 'Use COD Instead' : 'Try COD'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.paymentErrorSecondaryButton}
+                onPress={() => setShowPaymentErrorModal(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.paymentErrorSecondaryButtonText}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -3875,6 +3955,37 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#E5E7EB',
   },
+  priceBreakdownSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  priceBreakdownSheetContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+  },
+  priceBreakdownSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  priceBreakdownSheetTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  priceBreakdownSheetScroll: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+  },
   priceRows: {
     gap: 10,
   },
@@ -3932,53 +4043,50 @@ const styles = StyleSheet.create({
   cartItem: {
     backgroundColor: '#fff',
     marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 12,
+    marginBottom: 16,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: '#E5E7EB',
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   cartItemContent: {
     flexDirection: 'row',
-    padding: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     alignItems: 'flex-start',
   },
   itemImageContainer: {
     position: 'relative',
-    marginRight: 12,
-    marginTop: 4,
+    marginRight: 14,
+    marginTop: 2,
   },
   itemImage: {
-    width: 90,
-    height: 110,
-    borderRadius: 8,
-    backgroundColor: '#F9FAFB',
-  },
-  quantityBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#F53F7A',
-    width: 24,
-    height: 24,
+    width: 75,
+    height: 96,
     borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  quantityBadgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
+    backgroundColor: '#F9FAFB',
   },
   itemDetails: {
     flex: 1,
   },
+  itemImageColumn: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  imageQuantityWrapper: {
+    marginTop: 8,
+    width: '100%',
+    alignItems: 'flex-start',
+  },
   itemHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   itemNameContainer: {
     flex: 1,
@@ -3986,28 +4094,16 @@ const styles = StyleSheet.create({
   },
   itemNameRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    alignItems: 'flex-start',
+    gap: 6,
   },
   itemName: {
-    fontSize: 15,
+    flex: 1,
+    fontSize: 16,
     fontWeight: '600',
     color: '#111827',
-    lineHeight: 20,
-    marginBottom: 6,
-  },
-  discountBadge: {
-    backgroundColor: '#FFF0F5',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FBCFE8',
-  },
-  discountBadgeText: {
-    color: '#F53F7A',
-    fontWeight: '700',
-    fontSize: 11,
+    lineHeight: 22,
+    marginBottom: 4,
   },
   itemAttributes: {
     flexDirection: 'row',
@@ -4015,15 +4111,17 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   attributeChip: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#FFF0F5',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#F53F7A',
   },
   attributeText: {
     fontSize: 11,
-    color: '#6B7280',
-    fontWeight: '500',
+    color: '#F53F7A',
+    fontWeight: '600',
   },
   removeButton: {
     padding: 4,
@@ -4031,16 +4129,18 @@ const styles = StyleSheet.create({
   itemFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 'auto',
+    alignItems: 'flex-end',
+    marginTop: 10,
   },
   priceContainer: {
     flex: 1,
+    paddingRight: 8,
   },
   itemMrpStriked: {
     fontSize: 12,
     color: '#9CA3AF',
     textDecorationLine: 'line-through',
+    marginBottom: 2,
   },
   itemPrice: {
     fontSize: 18,
@@ -4058,30 +4158,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
   },
+  itemSavingsTextFull: {
+    marginTop: 6,
+    marginRight: 16,
+    marginBottom: 8,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#10B981',
+  },
   quantityContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    overflow: 'hidden',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 999,
+    paddingHorizontal: 2,
+    paddingVertical: 1,
   },
   quantityButton: {
-    width: 32,
-    height: 32,
+    width: 26,
+    height: 26,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 999,
     backgroundColor: '#fff',
   },
   quantityButtonDisabled: {
     backgroundColor: '#F9FAFB',
   },
   quantityText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: '#111827',
-    paddingHorizontal: 16,
+    paddingHorizontal: 6,
   },
   stockWarning: {
     flexDirection: 'row',
@@ -4257,6 +4365,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  priceBreakdownSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    backgroundColor: '#fff',
+    marginTop: 16,
+    borderRadius: 16,
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
+  breakdownHeaderInline: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
@@ -4563,7 +4689,50 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  // Reseller Styles
+  // Action Buttons Section
+  actionButtonsSection: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  saveForLaterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    minWidth: 120,
+    justifyContent: 'center',
+  },
+  saveForLaterButtonLoading: {
+    opacity: 0.7,
+  },
+  saveForLaterText: {
+    fontSize: 13,
+    color: '#F53F7A',
+    fontWeight: '600',
+  },
+  saveForLaterTextLoading: {
+    opacity: 0.8,
+  },
+  resellerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  resellerButtonText: {
+    fontSize: 13,
+    color: '#10B981',
+    fontWeight: '600',
+  },
+  // Reseller Styles (kept for backward compatibility)
   resellerSection: {
     marginTop: 12,
     paddingTop: 12,
@@ -4935,6 +5104,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
+  sizeModalConfirmButton: {
+    backgroundColor: '#F53F7A',
+    shadowColor: '#F53F7A',
+  },
   // Remove Modal Styles - Simple & Compact
   removeModalOverlay: {
     flex: 1,
@@ -5020,6 +5193,87 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#fff',
+  },
+  // Payment Error Modal Styles
+  paymentErrorOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  paymentErrorContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 28,
+    width: '90%',
+    maxWidth: 380,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  paymentErrorIconContainer: {
+    marginBottom: 20,
+  },
+  paymentErrorIconBg: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#FEF2F2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  paymentErrorTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  paymentErrorMessage: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 28,
+  },
+  paymentErrorButtons: {
+    width: '100%',
+    gap: 12,
+  },
+  paymentErrorPrimaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F53F7A',
+    paddingVertical: 16,
+    borderRadius: 14,
+    gap: 8,
+    shadowColor: '#F53F7A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  paymentErrorPrimaryButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  paymentErrorSecondaryButton: {
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paymentErrorSecondaryButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#6B7280',
   },
 });
 

@@ -1,16 +1,18 @@
 import 'react-native-reanimated';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LogBox, ActivityIndicator, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import { Provider as AuthProvider } from './contexts/useAuth';
 import { UserProvider } from './contexts/UserContext';
 import { CartProvider } from './contexts/CartContext';
 import { WishlistProvider } from './contexts/WishlistContext';
 import { PreviewProvider } from './contexts/PreviewContext';
 import { NotificationsProvider } from './contexts/NotificationsContext';
 import { VendorProvider } from './contexts/VendorContext';
+import { InfluencerProvider } from './contexts/InfluencerContext';
 import { LoginSheetProvider } from './contexts/LoginSheetContext';
 import { ChatProvider } from './contexts/ChatContext';
 import RootStack from './navigation';
@@ -43,8 +45,16 @@ export default function App() {
   React.useEffect(() => {
     if (fontsLoaded || fontError) {
       SplashScreen.hideAsync();
+
+      // Preload trending media after a short delay to not block startup
+      setTimeout(() => {
+        import('./utils/mediaCache').then(({ preloadTrendingMedia }) => {
+          preloadTrendingMedia();
+        });
+      }, 2000);
     }
   }, [fontsLoaded, fontError]);
+
 
   if (!fontsLoaded && !fontError) {
     return null; // Let splash screen show while loading
@@ -59,22 +69,28 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <MaintenanceMode>
-          <LoginSheetProvider>
-            <UserProvider>
-              <ChatProvider>
-              <CartProvider>
-                <WishlistProvider>
-                  <NotificationsProvider>
-                    <PreviewProvider>
-                      <RootStack />
-                      <Toast config={toastConfig} />
-                    </PreviewProvider>
-                  </NotificationsProvider>
-                </WishlistProvider>
-              </CartProvider>
-              </ChatProvider>
-            </UserProvider>
-          </LoginSheetProvider>
+          <AuthProvider>
+            <LoginSheetProvider>
+              <UserProvider>
+                <ChatProvider>
+                  <CartProvider>
+                    <WishlistProvider>
+                      <NotificationsProvider>
+                        <VendorProvider>
+                          <InfluencerProvider>
+                            <PreviewProvider>
+                              <RootStack />
+                              <Toast config={toastConfig} />
+                            </PreviewProvider>
+                          </InfluencerProvider>
+                        </VendorProvider>
+                      </NotificationsProvider>
+                    </WishlistProvider>
+                  </CartProvider>
+                </ChatProvider>
+              </UserProvider>
+            </LoginSheetProvider>
+          </AuthProvider>
         </MaintenanceMode>
       </SafeAreaProvider>
     </GestureHandlerRootView>

@@ -134,11 +134,21 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateQuantity = (id: string, quantity: number) => {
     setCartItems(prevItems => 
-      prevItems.map(item => 
-        item.id === id 
-          ? { ...item, quantity: Math.min(quantity, item.stock) }
-          : item
-      )
+      prevItems.map(item => {
+        if (item.id === id) {
+          const newQuantity = Math.min(quantity, item.stock);
+          // If it's a reseller item with a resellerPrice, adjust the price based on quantity
+          if (item.isReseller && item.resellerPrice && item.resellerPrice > 0 && item.quantity > 0 && newQuantity > 0) {
+            // Calculate unit reseller price from current total
+            const unitResellerPrice = item.resellerPrice / item.quantity;
+            // Calculate new total reseller price based on new quantity
+            const newResellerPrice = unitResellerPrice * newQuantity;
+            return { ...item, quantity: newQuantity, resellerPrice: newResellerPrice };
+          }
+          return { ...item, quantity: newQuantity };
+        }
+        return item;
+      })
     );
   };
 

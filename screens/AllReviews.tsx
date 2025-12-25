@@ -268,47 +268,6 @@ const AllReviews = () => {
           </View>
         )}
 
-        {/* Helpfulness Indicator */}
-        <Text style={styles.helpfulText}>
-          {Math.floor(Math.random() * 20) + 1} people found this helpful
-        </Text>
-
-        {/* Review Actions */}
-        <View style={styles.reviewActions}>
-          <TouchableOpacity 
-            style={[
-              styles.helpfulButton,
-              helpfulVotes[review.id] && styles.helpfulButtonActive
-            ]}
-            onPress={() => handleHelpfulVote(review.id)}
-          >
-            <Ionicons 
-              name={helpfulVotes[review.id] ? "thumbs-up" : "thumbs-up-outline"} 
-              size={16} 
-              color={helpfulVotes[review.id] ? "#007AFF" : "#333"} 
-            />
-            <Text style={[
-              styles.helpfulButtonText,
-              helpfulVotes[review.id] && styles.helpfulButtonTextActive
-            ]}>
-              Helpful
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.shareButton}
-            onPress={() => handleShareReview(review)}
-          >
-            <Ionicons name="share-outline" size={16} color="#333" />
-            <Text style={styles.shareButtonText}>Share</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.reportButton}
-            onPress={() => handleReportReview(review.id)}
-          >
-            <Text style={styles.reportButtonText}>Report</Text>
-          </TouchableOpacity>
-        </View>
-
         {/* Review Images and Videos */}
         {((review.review_images && review.review_images.length > 0) || (review.review_videos && review.review_videos.length > 0)) && (
           <ScrollView 
@@ -380,6 +339,42 @@ const AllReviews = () => {
             })}
           </ScrollView>
         )}
+
+        {/* Review Actions */}
+        <View style={styles.reviewActions}>
+          <TouchableOpacity 
+            style={[
+              styles.helpfulButton,
+              helpfulVotes[review.id] && styles.helpfulButtonActive
+            ]}
+            onPress={() => handleHelpfulVote(review.id)}
+          >
+            <Ionicons 
+              name={helpfulVotes[review.id] ? "thumbs-up" : "thumbs-up-outline"} 
+              size={16} 
+              color={helpfulVotes[review.id] ? "#F53F7A" : "#333"} 
+            />
+            <Text style={[
+              styles.helpfulButtonText,
+              helpfulVotes[review.id] && styles.helpfulButtonTextActive
+            ]}>
+              Helpful
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.shareButton}
+            onPress={() => handleShareReview(review)}
+          >
+            <Ionicons name="share-outline" size={16} color="#333" />
+            <Text style={styles.shareButtonText}>Share</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.reportButton}
+            onPress={() => handleReportReview(review.id)}
+          >
+            <Text style={styles.reportButtonText}>Report</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -544,7 +539,7 @@ const AllReviews = () => {
         <View style={styles.reportModalOverlay}>
           <View style={styles.reportModalContainer}>
             <View style={styles.reportModalIconContainer}>
-              <Ionicons name="flag" size={40} color="#FF6B6B" />
+              <Ionicons name="flag" size={40} color="#F53F7A" />
             </View>
             
             <Text style={styles.reportModalTitle}>Report Review</Text>
@@ -848,6 +843,9 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   helpfulButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderWidth: 1,
@@ -879,11 +877,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   helpfulButtonActive: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#007AFF',
+    backgroundColor: '#FFF0F5',
+    borderColor: '#F53F7A',
   },
   helpfulButtonTextActive: {
-    color: '#007AFF',
+    color: '#F53F7A',
   },
   // Report Modal Styles
   reportModalOverlay: {
@@ -904,7 +902,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#FFF5F5',
+    backgroundColor: '#FFF0F5',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
@@ -912,7 +910,7 @@ const styles = StyleSheet.create({
   reportModalTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111',
+    color: '#F53F7A',
     marginBottom: 12,
     textAlign: 'center',
   },
@@ -948,7 +946,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 8,
-    backgroundColor: '#FF6B6B',
+    backgroundColor: '#F53F7A',
     alignItems: 'center',
   },
   reportModalConfirmText: {

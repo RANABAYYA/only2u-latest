@@ -18,8 +18,7 @@ import {
   Animated,
   TextInput,
 } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { AntDesign } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons, AntDesign } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
 import { useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
@@ -100,6 +99,7 @@ interface ProductVariant {
 interface Product {
   id: string;
   name: string;
+  sku?: string;
   description: string;
   image_urls?: string[];
   video_urls?: string[];
@@ -124,6 +124,7 @@ interface ProductDetailsBottomSheetProps {
   product: Product | null;
   onClose: () => void;
   onShowCollectionSheet?: (product: any) => void;
+  onScrollToReviews?: () => void;
 }
 
 const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
@@ -131,6 +132,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
   product,
   onClose,
   onShowCollectionSheet,
+  onScrollToReviews,
 }) => {
   const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
   const { userData, setUserData, refreshUserData } = useUser();
@@ -143,7 +145,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
   // State for collection sheet
   const [showCollectionSheet, setShowCollectionSheet] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
-  
+
   // Try on modal state
   const [showTryOnModal, setShowTryOnModal] = useState(false);
   const [showProfilePhotoModal, setShowProfilePhotoModal] = useState(false);
@@ -162,7 +164,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
     });
     showLoginSheet();
   }, [showLoginSheet]);
-  
+
   // Vendor info from product data
   const vendorName = (product as any)?.vendor_name || 'Unknown Vendor';
   const vendorAlias = (product as any)?.alias_vendor;
@@ -172,6 +174,10 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [availableColors, setAvailableColors] = useState<{ id: string; name: string; hex_code: string }[]>([]);
   const [availableSizes, setAvailableSizes] = useState<{ id: string; name: string }[]>([]);
+  const [selectedSize, setSelectedSize] = useState('');
+  const [selectedColor, setSelectedColor] = useState('');
+  const [activeTab, setActiveTab] = useState('details');
+  const [addToCartLoading, setAddToCartLoading] = useState(false);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -183,16 +189,17 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
   const [customPriceError, setCustomPriceError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<any[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
-  
-  // More Like This suggestions
-  const [suggestedProducts, setSuggestedProducts] = useState<any[]>([]);
-  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
-  
-  // Video state
-  const [videoStates, setVideoStates] = useState<{ [key: number]: { isPlaying: boolean; isMuted: boolean } }>({});
-  const videoRefs = useRef<{ [key: number]: any }>({});
+
+  const [videoStates, setVideoStates] = useState<{ [key: number]: { isPlaying: boolean } }>({});
+  const videoRefs = useRef<{ [key: number]: Video | null }>({});
+  const faceSwapPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef(true);
   const mediaListRef = useRef<FlatList<MediaItem>>(null);
-  
+  const scrollViewRef = useRef<any>(null);
+  const reviewsSectionRef = useRef<View>(null);
+  const tabsContainerRef = useRef<View>(null);
+  const [reviewsSectionY, setReviewsSectionY] = useState(0);
+
   // Unified media interface
   interface MediaItem {
     type: 'image' | 'video';
@@ -244,9 +251,74 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
     }
   }, [visible, resetFullScreenZoom]);
 
+  const stopAllVideos = useCallback(() => {
+    Object.values(videoRefs.current).forEach((ref) => {
+      ref?.pauseAsync?.().catch(() => { });
+    });
+    setVideoStates((prev) => {
+      const reset: { [key: number]: { isPlaying: boolean } } = {};
+      Object.keys(prev).forEach((key) => {
+        reset[Number(key)] = { isPlaying: false };
+      });
+      return reset;
+    });
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // Cleanup polling interval
+      if (faceSwapPollingIntervalRef.current) {
+        clearInterval(faceSwapPollingIntervalRef.current);
+        faceSwapPollingIntervalRef.current = null;
+      }
+      // Cleanup videos
+      stopAllVideos();
+    };
+  }, [stopAllVideos]);
+
+  useEffect(() => {
+    if (!visible) {
+      stopAllVideos();
+    }
+  }, [visible, stopAllVideos]);
+
   useEffect(() => {
     resetFullScreenZoom();
   }, [imageViewerIndex, resetFullScreenZoom]);
+
+  const toggleVideoPlayback = useCallback(
+    (index: number) => {
+      setVideoStates((prev) => {
+        const shouldPlay = !prev[index]?.isPlaying;
+        const updated: { [key: number]: { isPlaying: boolean } } = {};
+        mediaItems.forEach((item, idx) => {
+          if (item.type === 'video') {
+            updated[idx] = { isPlaying: false };
+          }
+        });
+
+        updated[index] = { isPlaying: shouldPlay };
+
+        Object.entries(videoRefs.current).forEach(([key, ref]) => {
+          if (!ref) return;
+          if (Number(key) === index) {
+            if (shouldPlay) {
+              ref.playAsync?.().catch(() => { });
+            } else {
+              ref.pauseAsync?.().catch(() => { });
+            }
+          } else {
+            ref.pauseAsync?.().catch(() => { });
+          }
+        });
+
+        return updated;
+      });
+    },
+    [mediaItems]
+  );
 
   const onPinchEvent = Animated.event([{ nativeEvent: { scale: pinchScale } }], {
     useNativeDriver: true,
@@ -386,18 +458,13 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
     resetFullScreenZoom();
     setCurrentZoom(1);
   }, [resetFullScreenZoom]);
-  
+
   // Cache for processed image URLs to avoid repeated conversions
   const processedImageCache = useRef<{ [key: string]: string[] }>({});
-  
+
   // Image loading states
   const [imageLoadingStates, setImageLoadingStates] = useState<{ [key: string]: boolean }>({});
 
-  // Selection state
-  const [selectedSize, setSelectedSize] = useState('');
-  const [selectedColor, setSelectedColor] = useState('');
-  const [activeTab, setActiveTab] = useState('details');
-  const [addToCartLoading, setAddToCartLoading] = useState(false);
   const [replacementPolicyVisible, setReplacementPolicyVisible] = useState(false);
 
   const bottomSheetRef = useRef<BottomSheet>(null);
@@ -472,7 +539,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
           console.error('Error adding to All collection:', insertError);
         } else {
           console.log('Successfully added to All collection');
-          
+
           // Add to wishlist context with complete product object
           const wishlistProduct = {
             id: product.id,
@@ -487,9 +554,9 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
             stock_quantity: product.stock_quantity || 0,
             variants: product.variants || [],
           };
-          
+
           await addToWishlist(wishlistProduct);
-          
+
           // Toast already shown at the beginning
         }
       } else {
@@ -502,14 +569,14 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
 
   const getUserPrice = useCallback((product: Product) => {
     console.log('💰 getUserPrice called - variants:', variants.length, 'product.variants:', product.variants?.length);
-    
+
     // First check if we have variants from the database
     if (variants && variants.length > 0) {
       console.log('📊 Database variants found:', variants.map(v => ({ id: v.id, price: v.price, size: v.size?.name })));
-      
+
       // If user has selected size and color, get that variant's price
       if (selectedSize && selectedColor) {
-        const selectedVariant = variants.find(v => 
+        const selectedVariant = variants.find(v =>
           v.size_id === selectedSize && v.color_id === selectedColor
         );
         if (selectedVariant?.price) {
@@ -517,10 +584,10 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
           return selectedVariant.price;
         }
       }
-      
+
       // If user has a size preference, try to find that size
       if (userData?.size) {
-        const userSizeVariant = variants.find(v => 
+        const userSizeVariant = variants.find(v =>
           v.size?.name === userData.size
         );
         if (userSizeVariant?.price) {
@@ -528,7 +595,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
           return userSizeVariant.price;
         }
       }
-      
+
       // Return the first available variant price
       const firstVariant = variants.find(v => v.price);
       if (firstVariant?.price) {
@@ -536,13 +603,13 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
         return firstVariant.price;
       }
     }
-    
+
     // Fallback to product.variants (from the original product data)
     if (product.variants && product.variants.length > 0) {
       console.log('📦 Product variants found:', product.variants.map(v => ({ price: v.price, size: v.size?.name })));
-      
+
       if (userData?.size) {
-        const userSizeVariant = product.variants.find(v => 
+        const userSizeVariant = product.variants.find(v =>
           v.size?.name === userData.size
         );
         if (userSizeVariant) {
@@ -556,7 +623,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       console.log('🥇 Lowest product variant price:', lowestPrice);
       return lowestPrice;
     }
-    
+
     console.log('❌ No price found, returning 0');
     return 0;
   }, [variants, selectedSize, selectedColor, userData?.size]);
@@ -587,14 +654,14 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
 
   const availableQuantity = useMemo(() => {
     if (!selectedSize) return 0;
-    
+
     // If color is selected, find variant with both size and color
     if (selectedColor) {
       const variant = variants.find(v => v.size_id === selectedSize && v.color_id === selectedColor);
       console.log('🎨 Color selected - variant found:', variant?.quantity || 0);
       return variant?.quantity || 0;
     }
-    
+
     // If no color selected, sum all quantities for the selected size
     const sizeVariants = variants.filter(v => v.size_id === selectedSize);
     const totalQuantity = sizeVariants.reduce((sum, variant) => sum + variant.quantity, 0);
@@ -619,7 +686,6 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       fetchProductVariants();
       fetchReviews();
       processProductImages();
-      fetchSuggestedProducts();
     } else {
       console.log('📱 Closing ProductDetailsBottomSheet');
       bottomSheetRef.current?.close();
@@ -657,49 +723,6 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
     }
   };
 
-  // Fetch suggested products based on current product
-  const fetchSuggestedProducts = async () => {
-    if (!product?.id) return;
-    
-    try {
-      setSuggestionsLoading(true);
-      
-      // Fetch all products from the database (not filtered by category)
-      const { data, error } = await supabase
-        .from('products')
-        .select(`
-          id,
-          name,
-          image_urls,
-          vendor_name,
-          product_variants(
-            id, 
-            price, 
-            mrp_price, 
-            rsp_price, 
-            discount_percentage, 
-            image_urls
-          )
-        `)
-        .neq('id', product.id)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(50); // Fetch 50 products to ensure variety
-
-      if (error) {
-        console.error('Error fetching suggested products:', error);
-        return;
-      }
-
-      console.log('📦 BottomSheet - Fetched suggested products:', data?.length || 0, 'products');
-
-      setSuggestedProducts(data || []);
-    } catch (error) {
-      console.error('Error fetching suggested products:', error);
-    } finally {
-      setSuggestionsLoading(false);
-    }
-  };
 
   // Process images when selected variant changes
   useEffect(() => {
@@ -744,29 +767,29 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       const isVideoUrl = (url: string) => {
         if (!url) return false;
         const lowerUrl = url.toLowerCase();
-        
+
         // Explicitly exclude Google Drive thumbnail URLs (these are always images)
         if (lowerUrl.includes('drive.google.com/thumbnail')) {
           return false;
         }
-        
+
         // More precise video detection - only if it explicitly has video markers
         const hasVideoExtension = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'].some(ext => lowerUrl.endsWith(ext));
         const hasExplicitVideoMarkers = lowerUrl.includes('/video/') || url.includes('video=mp4');
-        
+
         // Special case for known video service domains with explicit video extensions  
         const isKnownVideoService = (
-          (lowerUrl.includes('theapi.app') || lowerUrl.includes('piapi.ai')) && 
+          (lowerUrl.includes('theapi.app') || lowerUrl.includes('piapi.ai')) &&
           hasVideoExtension
         );
-        
+
         // Google Drive video URLs (not thumbnails)
-        const isGoogleDriveVideo = lowerUrl.includes('drive.google.com') && 
-                                  !lowerUrl.includes('thumbnail') && 
-                                  (lowerUrl.includes('export=download') || hasVideoExtension);
-        
+        const isGoogleDriveVideo = lowerUrl.includes('drive.google.com') &&
+          !lowerUrl.includes('thumbnail') &&
+          (lowerUrl.includes('export=download') || hasVideoExtension);
+
         const isVideo = hasVideoExtension || hasExplicitVideoMarkers || isKnownVideoService || isGoogleDriveVideo;
-        
+
         console.log('🎬 [BottomSheet] Video detection for URL:', url.substring(0, 60) + '...', '→', isVideo, {
           hasVideoExtension,
           hasExplicitVideoMarkers,
@@ -780,25 +803,25 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       // Helper function to convert Google Drive URLs to direct video URLs
       const convertGoogleDriveVideoUrl = (url: string): string => {
         if (!url || typeof url !== 'string') return url;
-        
+
         // Check if it's a Google Drive URL
         if (!url.includes('drive.google.com')) return url;
-        
+
         try {
           // Extract file ID from Google Drive URL
           let fileId: string | null = null;
-          
+
           // Format: https://drive.google.com/file/d/{fileId}/view?usp=sharing
           const fileMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
           if (fileMatch) {
             fileId = fileMatch[1];
           }
-          
+
           if (fileId) {
             // Convert to direct video URL for Google Drive
             return `https://drive.google.com/uc?export=download&id=${fileId}`;
           }
-          
+
           return url;
         } catch (error) {
           console.error('Error converting Google Drive video URL:', error);
@@ -811,26 +834,26 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       // Priority 1: Check for images from selected variant
       if (selectedVariant && selectedVariant.image_urls && selectedVariant.image_urls.length > 0) {
         const cacheKey = `variant_${selectedVariant.id}`;
-                if (processedImageCache.current[cacheKey]) {
-            const cachedImages = processedImageCache.current[cacheKey];
-            unifiedMediaItems = cachedImages.map(url => {
-              const isVideo = isVideoUrl(url);
-              console.log('🔍 [BottomSheet] Processing cached variant URL:', url.substring(0, 60) + '... →', isVideo ? 'VIDEO' : 'IMAGE');
-              return { 
-                type: isVideo ? 'video' as const : 'image' as const, 
-                url 
-              };
-            });
-            console.log('✅ BottomSheet - Using cached images from selected variant:', cachedImages);
+        if (processedImageCache.current[cacheKey]) {
+          const cachedImages = processedImageCache.current[cacheKey];
+          unifiedMediaItems = cachedImages.map(url => {
+            const isVideo = isVideoUrl(url);
+            console.log('🔍 [BottomSheet] Processing cached variant URL:', url.substring(0, 60) + '... →', isVideo ? 'VIDEO' : 'IMAGE');
+            return {
+              type: isVideo ? 'video' as const : 'image' as const,
+              url
+            };
+          });
+          console.log('✅ BottomSheet - Using cached images from selected variant:', cachedImages);
         } else {
           // Use raw URLs for faster processing, let Image component handle errors
           const images = selectedVariant.image_urls.filter(url => url && typeof url === 'string');
           unifiedMediaItems = images.map(url => {
             const isVideo = isVideoUrl(url);
             console.log('🔍 [BottomSheet] Processing variant URL:', url.substring(0, 60) + '... →', isVideo ? 'VIDEO' : 'IMAGE');
-            return { 
-              type: isVideo ? 'video' as const : 'image' as const, 
-              url 
+            return {
+              type: isVideo ? 'video' as const : 'image' as const,
+              url
             };
           });
           processedImageCache.current[cacheKey] = images;
@@ -844,24 +867,24 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
           const cacheKey = `product_${product.id}`;
           if (processedImageCache.current[cacheKey]) {
             const cachedImages = processedImageCache.current[cacheKey];
-            unifiedMediaItems = cachedImages.map(url => {
-              const isVideo = isVideoUrl(url);
-              console.log('🔍 [BottomSheet] Processing cached product URL:', url.substring(0, 60) + '... →', isVideo ? 'VIDEO' : 'IMAGE');
-              return { 
-                type: isVideo ? 'video' as const : 'image' as const, 
-                url 
-              };
-            });
+            unifiedMediaItems = cachedImages
+              .filter(url => !isVideoUrl(url))
+              .map(url => {
+                console.log('🔍 [BottomSheet] Processing cached product URL:', url.substring(0, 60) + '... → IMAGE');
+                return {
+                  type: 'image' as const,
+                  url
+                };
+              });
             console.log('✅ BottomSheet - Using cached images from product variants:', cachedImages);
           } else {
-            // Use raw URLs for faster processing
-            const images = productImages.filter(url => url && typeof url === 'string');
+            // Use raw URLs for faster processing - filter out videos
+            const images = productImages.filter(url => url && typeof url === 'string' && !isVideoUrl(url));
             unifiedMediaItems = images.map(url => {
-              const isVideo = isVideoUrl(url);
-              console.log('🔍 [BottomSheet] Processing product URL:', url.substring(0, 60) + '... →', isVideo ? 'VIDEO' : 'IMAGE');
-              return { 
-                type: isVideo ? 'video' as const : 'image' as const, 
-                url 
+              console.log('🔍 [BottomSheet] Processing product URL:', url.substring(0, 60) + '... → IMAGE');
+              return {
+                type: 'image' as const,
+                url
               };
             });
             processedImageCache.current[cacheKey] = images;
@@ -877,24 +900,24 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
           const cacheKey = `product_urls_${product.id}`;
           if (processedImageCache.current[cacheKey]) {
             const cachedImages = processedImageCache.current[cacheKey];
-            unifiedMediaItems = cachedImages.map(url => {
-              const isVideo = isVideoUrl(url);
-              console.log('🔍 [BottomSheet] Processing cached image_urls URL:', url.substring(0, 60) + '... →', isVideo ? 'VIDEO' : 'IMAGE');
-              return { 
-                type: isVideo ? 'video' as const : 'image' as const, 
-                url 
-              };
-            });
+            unifiedMediaItems = cachedImages
+              .filter(url => !isVideoUrl(url))
+              .map(url => {
+                console.log('🔍 [BottomSheet] Processing cached image_urls URL:', url.substring(0, 60) + '... → IMAGE');
+                return {
+                  type: 'image' as const,
+                  url
+                };
+              });
             console.log('✅ BottomSheet - Using cached image_urls array:', cachedImages);
           } else {
-            // Use raw URLs for faster processing
-            const images = product.image_urls.filter(url => url && typeof url === 'string');
+            // Use raw URLs for faster processing - filter out videos
+            const images = product.image_urls.filter(url => url && typeof url === 'string' && !isVideoUrl(url));
             unifiedMediaItems = images.map(url => {
-              const isVideo = isVideoUrl(url);
-              console.log('🔍 [BottomSheet] Processing image_urls URL:', url.substring(0, 60) + '... →', isVideo ? 'VIDEO' : 'IMAGE');
-              return { 
-                type: isVideo ? 'video' as const : 'image' as const, 
-                url 
+              console.log('🔍 [BottomSheet] Processing image_urls URL:', url.substring(0, 60) + '... → IMAGE');
+              return {
+                type: 'image' as const,
+                url
               };
             });
             processedImageCache.current[cacheKey] = images;
@@ -903,46 +926,33 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
         }
       }
 
-      // Add videos if available (from selected variant first, then product)
-      let videoItems: MediaItem[] = [];
-      if (selectedVariant && selectedVariant.video_urls && selectedVariant.video_urls.length > 0) {
-        videoItems = selectedVariant.video_urls
-          .filter(url => url && typeof url === 'string')
-          .map(url => ({ 
-            type: 'video' as const, 
-            url: convertGoogleDriveVideoUrl(url),
-            thumbnail: unifiedMediaItems[0]?.url // Use first image as thumbnail
-          }));
-        console.log('✅ BottomSheet - Using videos from selected variant:', selectedVariant.video_urls);
-      } else if (
-        product.video_urls &&
-        Array.isArray(product.video_urls) &&
-        product.video_urls.length > 0
-      ) {
-        videoItems = product.video_urls
-          .filter(url => url && typeof url === 'string')
-          .map(url => ({ 
-            type: 'video' as const, 
-            url: convertGoogleDriveVideoUrl(url),
-            thumbnail: unifiedMediaItems[0]?.url // Use first image as thumbnail
-          }));
-        console.log('✅ BottomSheet - Using videos from product:', product.video_urls);
-      }
+      // Videos are removed - only show images
+      const combinedMediaItems = unifiedMediaItems.filter(item => item.type === 'image');
 
-      // Combine images and videos
-      const combinedMediaItems = [...unifiedMediaItems, ...videoItems];
-
-      console.log('📸 BottomSheet - Final unified media items:', combinedMediaItems.map(item => ({ 
-        type: item.type, 
-        url: item.url.substring(0, 50) + '...', 
-        isFirstItem: combinedMediaItems.indexOf(item) === 0 
+      console.log('📸 BottomSheet - Final unified media items:', combinedMediaItems.map(item => ({
+        type: item.type,
+        url: item.url.substring(0, 50) + '...',
+        isFirstItem: combinedMediaItems.indexOf(item) === 0
       })));
-      
+
       // Only update if the media items have actually changed
-      setMediaItems(prevItems => {
+      setMediaItems((prevItems) => {
         const newItems = combinedMediaItems;
         if (JSON.stringify(prevItems) !== JSON.stringify(newItems)) {
-      setCurrentImageIndex(0);
+          setCurrentImageIndex(0);
+          setVideoStates(() => {
+            const initialStates: { [key: number]: { isPlaying: boolean } } = {};
+            newItems.forEach((item, index) => {
+              if (item.type === 'video') {
+                initialStates[index] = { isPlaying: false };
+              }
+            });
+            Object.values(videoRefs.current).forEach((ref) => {
+              ref?.pauseAsync?.().catch(() => { });
+            });
+            videoRefs.current = {};
+            return initialStates;
+          });
           return newItems;
         }
         return prevItems;
@@ -1066,7 +1076,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
 
   const fetchUserCoinBalance = async () => {
     if (!userData?.id) return;
-    
+
     try {
       const balance = await akoolService.getUserCoinBalance(userData.id);
       setCoinBalance(balance);
@@ -1083,9 +1093,9 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
 
     if (availableSizes.length > 0) {
       const preferredSize =
-        (selectedSize && availableSizes.find((size) => size.id === selectedSize)) ||
-        (tryOnSizeId && availableSizes.find((size) => size.id === tryOnSizeId)) ||
-        (userData?.size && availableSizes.find((size) => size.name === userData.size));
+        (selectedSize ? availableSizes.find((size) => size.id === selectedSize) : undefined) ||
+        (tryOnSizeId ? availableSizes.find((size) => size.id === tryOnSizeId) : undefined) ||
+        (userData?.size ? availableSizes.find((size) => size.name === userData.size) : undefined);
       const initialSizeId = preferredSize?.id || availableSizes[0].id;
       setSizeSelectionDraft(initialSizeId);
       setSizeSelectionError('');
@@ -1152,8 +1162,8 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       return;
     }
 
-    if (coinBalance < 25) {
-      Alert.alert('Insufficient Coins', 'You need at least 25 coins for Face Swap. Please purchase more coins.');
+    if (coinBalance < 50) {
+      Alert.alert('Insufficient Coins', 'You need at least 50 coins for Face Swap. Please purchase more coins.');
       return;
     }
 
@@ -1162,9 +1172,9 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       Alert.alert('Error', 'Product not available');
       return;
     }
-    
+
     const sizedVariant =
-      sizeId && variants.find((variant) => variant.size_id === sizeId && variant.image_urls?.length);
+      sizeId ? variants.find((variant) => variant.size_id === sizeId && variant.image_urls?.length) : undefined;
     const firstVariantWithImage = variants.find(v => v.image_urls && v.image_urls.length > 0);
     const productImageUrl =
       sizedVariant?.image_urls?.[0] ||
@@ -1179,18 +1189,18 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
     setShowTryOnModal(false);
 
     try {
-      // Update coin balance (deduct 25 coins for face swap)
-      setCoinBalance(prev => prev - 25);
-      
+      // Update coin balance (deduct 50 coins for face swap)
+      setCoinBalance(prev => prev - 50);
+
       // Also update user context
       if (userData) {
-        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 25 });
+        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 50 });
       }
 
       // Deduct coins from database
       await supabase
         .from('users')
-        .update({ coin_balance: (userData?.coin_balance || 0) - 25 })
+        .update({ coin_balance: (userData?.coin_balance || 0) - 50 })
         .eq('id', userData?.id);
 
       // Initiate face swap with PiAPI
@@ -1205,7 +1215,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       if (response.success && response.taskId) {
         // PiAPI always processes asynchronously - start polling
         startFaceSwapPolling(productId, response.taskId);
-          
+
         Toast.show({
           type: 'success',
           text1: 'Face Swap Started',
@@ -1213,13 +1223,13 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
         });
       } else {
         // Refund coins on failure
-        setCoinBalance(prev => prev + 25);
+        setCoinBalance(prev => prev + 50);
         if (userData) {
-          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 25 });
+          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
         }
         await supabase
           .from('users')
-          .update({ coin_balance: (userData?.coin_balance || 0) + 25 })
+          .update({ coin_balance: (userData?.coin_balance || 0) + 50 })
           .eq('id', userData?.id);
 
         Alert.alert('Error', response.error || 'Failed to start face swap');
@@ -1235,24 +1245,40 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
   };
 
   const startFaceSwapPolling = (productId: string, taskId: string) => {
+    // Clear any existing polling interval
+    if (faceSwapPollingIntervalRef.current) {
+      clearInterval(faceSwapPollingIntervalRef.current);
+      faceSwapPollingIntervalRef.current = null;
+    }
+
     let pollCount = 0;
     const maxPollAttempts = 60; // 5 minutes timeout (60 * 5 seconds)
-    
+
     const interval = setInterval(async () => {
+      // Check if component is still mounted
+      if (!isMountedRef.current) {
+        clearInterval(interval);
+        faceSwapPollingIntervalRef.current = null;
+        return;
+      }
+
       try {
         pollCount++;
         console.log(`[ProductDetailsBottomSheet] Polling attempt ${pollCount}/${maxPollAttempts}`);
-        
+
         const status = await piAPIVirtualTryOnService.checkTaskStatus(taskId);
-        
+
         if (status.status === 'completed' && status.resultImages) {
           clearInterval(interval);
-          
+          faceSwapPollingIntervalRef.current = null;
+
+          if (!isMountedRef.current) return;
+
           // Save results permanently
           if (userData?.id) {
             await akoolService.saveFaceSwapResults(userData.id, productId, status.resultImages);
           }
-          
+
           // Add product to preview
           const orderedImages = (status.resultImages || []).sort((a, b) => {
             const aApi = /theapi\.app/i.test(a) ? 0 : 1;
@@ -1277,31 +1303,42 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
             originalProductId: productId,
           };
           addToPreview(personalizedProduct as any);
-          
-          Toast.show({
-            type: 'success',
-            text1: 'Preview Ready!',
-            text2: 'Your personalized product has been added to Your Preview.',
-          });
+
+          if (isMountedRef.current) {
+            Toast.show({
+              type: 'success',
+              text1: 'Preview Ready!',
+              text2: 'Your personalized product has been added to Your Preview.',
+            });
+          }
         } else if (status.status === 'failed') {
           clearInterval(interval);
-          Alert.alert('Error', status.error || 'Face swap failed. Please try again.');
+          faceSwapPollingIntervalRef.current = null;
+          if (isMountedRef.current) {
+            Alert.alert('Error', status.error || 'Face swap failed. Please try again.');
+          }
         } else if (pollCount >= maxPollAttempts) {
           // Timeout after 5 minutes
           clearInterval(interval);
+          faceSwapPollingIntervalRef.current = null;
           console.warn('[ProductDetailsBottomSheet] Face swap polling timeout');
-          Alert.alert(
-            'Processing Timeout', 
-            'Face swap is taking longer than expected. Please try again later or contact support if the issue persists.'
-          );
+          if (isMountedRef.current) {
+            Alert.alert(
+              'Processing Timeout',
+              'Face swap is taking longer than expected. Please try again later or contact support if the issue persists.'
+            );
+          }
         }
       } catch (error) {
         console.error('Error checking face swap status:', error);
         if (pollCount >= maxPollAttempts) {
           clearInterval(interval);
+          faceSwapPollingIntervalRef.current = null;
         }
       }
     }, 5000); // Poll every 5 seconds
+
+    faceSwapPollingIntervalRef.current = interval;
   };
 
   const handleAddToCart = async () => {
@@ -1316,12 +1353,12 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
 
       // If we have variants and user has selected size/color, use that
       if (variants.length > 0 && selectedSize && selectedColor) {
-        selectedVariantData = variants.find(v => 
+        selectedVariantData = variants.find(v =>
           v.size_id === selectedSize && v.color_id === selectedColor
         );
         if (selectedVariantData) {
           size = selectedVariantData.size.name;
-        color = selectedVariantData.color?.name || 'Default';
+          color = selectedVariantData.color?.name || 'Default';
           price = selectedVariantData.price || price;
         }
       } else if (variants.length > 0) {
@@ -1348,7 +1385,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
         color: color,
         quantity: 1,
         stock: product.stock_quantity,
-        sku: product.sku || product.id,
+        sku: (product as any).sku || product.id,
         isReseller: false,
       };
 
@@ -1472,42 +1509,6 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
     });
   }, []);
 
-  // Video control functions
-  const togglePlay = (index: number) => {
-    setVideoStates((prev) => {
-      const prevState = prev[index] || { isPlaying: true, isMuted: true };
-      const newState = { ...prevState, isPlaying: !prevState.isPlaying };
-      const ref = videoRefs.current[index];
-      if (ref) {
-        if (newState.isPlaying) ref.playAsync();
-        else ref.pauseAsync();
-      }
-      return { ...prev, [index]: newState };
-    });
-  };
-
-  const toggleMute = (index: number) => {
-    setVideoStates((prev) => {
-      const prevState = prev[index] || { isPlaying: true, isMuted: false };
-      const newState = { ...prevState, isMuted: !prevState.isMuted };
-      const ref = videoRefs.current[index];
-      if (ref) ref.setIsMutedAsync(newState.isMuted);
-      return { ...prev, [index]: newState };
-    });
-  };
-
-  const handleVideoTap = (index: number) => {
-    setVideoStates((prev) => {
-      const prevState = prev[index] || { isPlaying: true, isMuted: false };
-      const newState = { ...prevState, isMuted: !prevState.isMuted };
-      const ref = videoRefs.current[index];
-      if (ref) {
-        ref.setIsMutedAsync(newState.isMuted);
-      }
-      return { ...prev, [index]: newState };
-    });
-  };
-
   const renderImageGallery = () => {
     if (!product || mediaItems.length === 0) {
       return (
@@ -1523,49 +1524,51 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
     const currentMedia = mediaItems[currentImageIndex];
 
     const renderMediaItem = ({ item, index }: { item: MediaItem; index: number }) => {
-      const videoState = videoStates[index] || { isPlaying: true, isMuted: false };
-      const isActive = index === currentImageIndex;
 
       if (item.type === 'video') {
-        return (
-          <TouchableOpacity
-            key={`${item.url}-${index}`}
-            activeOpacity={1}
-            style={styles.mediaSlide}
-            onPress={() => handleVideoTap(index)}
-          >
-            <Video
-              ref={(ref) => {
-                if (ref) videoRefs.current[index] = ref;
-              }}
-              source={{ uri: item.url }}
-              style={styles.videoBackground}
-              resizeMode={ResizeMode.COVER}
-              shouldPlay={isActive && videoState.isPlaying}
-              isLooping
-              isMuted={videoState.isMuted}
-              posterSource={{ uri: item.thumbnail }}
-              posterStyle={{ resizeMode: 'cover' }}
-              usePoster
-              onError={(error) => {
-                console.error('❌ Video error for index:', index, error);
-                console.error('❌ Video URL:', item.url);
-              }}
-              onLoad={() => {
-                console.log('✅ Video loaded for index:', index);
-                console.log('✅ Video URL:', item.url);
-              }}
-            />
+        const isPlaying = videoStates[index]?.isPlaying || false;
 
-            <View style={styles.videoControlsOverlay}>
-              <TouchableOpacity style={styles.videoControlButton} onPress={() => togglePlay(index)}>
-                <Ionicons name={videoState.isPlaying ? 'pause' : 'play'} size={24} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.videoControlButton} onPress={() => toggleMute(index)}>
-                <Ionicons name={videoState.isMuted ? 'volume-mute' : 'volume-high'} size={24} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
+        return (
+          <View key={`${item.url}-${index}`} style={styles.mediaSlide}>
+            <TouchableOpacity
+              style={styles.videoWrapper}
+              activeOpacity={0.95}
+              onPress={() => openFullScreen('video', index)}
+            >
+              <Video
+                ref={(ref) => {
+                  if (ref) {
+                    videoRefs.current[index] = ref;
+                  } else {
+                    delete videoRefs.current[index];
+                  }
+                }}
+                source={{ uri: item.url }}
+                style={styles.productImage}
+                resizeMode={ResizeMode.COVER}
+                shouldPlay={isPlaying}
+                isLooping
+                isMuted
+                useNativeControls={false}
+              />
+              {!isPlaying && (
+                <View style={styles.videoPlayOverlay} pointerEvents="box-none">
+                  <TouchableOpacity
+                    style={styles.videoPlayButtonCircle}
+                    activeOpacity={0.9}
+                    onPress={() => toggleVideoPlayback(index)}
+                  >
+                    <Ionicons
+                      name="play-circle"
+                      size={56}
+                      color="#111"
+                    />
+                    <Text style={styles.videoPlayOverlayText}>Play Preview</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
         );
       }
 
@@ -1606,15 +1609,15 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
           showsHorizontalScrollIndicator={false}
           onMomentumScrollEnd={handleMediaScroll}
           getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
-          extraData={{ currentImageIndex, videoStates, imageLoadingStates }}
+          extraData={{ currentImageIndex, imageLoadingStates, videoStates }}
           onScrollToIndexFailed={handleScrollToIndexFailed}
         />
 
         {/* Navigation Arrows */}
         {mediaItems.length > 1 && (
           <>
-            <TouchableOpacity 
-              style={[styles.navArrow, styles.leftArrow]} 
+            <TouchableOpacity
+              style={[styles.navArrow, styles.leftArrow]}
               onPress={() => scrollToMediaIndex(currentImageIndex - 1)}
               disabled={currentImageIndex === 0}
               activeOpacity={0.7}
@@ -1622,8 +1625,8 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
             >
               <Ionicons name="chevron-back" size={24} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.navArrow, styles.rightArrow]} 
+            <TouchableOpacity
+              style={[styles.navArrow, styles.rightArrow]}
               onPress={() => scrollToMediaIndex(currentImageIndex + 1)}
               disabled={currentImageIndex === mediaItems.length - 1}
               activeOpacity={0.7}
@@ -1634,18 +1637,58 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
           </>
         )}
 
-        {/* Rating Badge (bottom right) */}
-        <View style={styles.ratingBadge}>
+        {/* Rating Badge (bottom-right) - Clickable */}
+        <TouchableOpacity
+          style={styles.ratingBadge}
+          onPress={() => {
+            // Set active tab to reviews
+            setActiveTab('reviews');
+            // Scroll to tabs container (start of reviews section) after a short delay
+            setTimeout(() => {
+              if (tabsContainerRef.current && scrollViewRef.current) {
+                tabsContainerRef.current.measureLayout(
+                  scrollViewRef.current as any,
+                  (x, y) => {
+                    if (scrollViewRef.current) {
+                      scrollViewRef.current.scrollTo({
+                        y: Math.max(0, y - 20), // Scroll to start of tabs section with padding
+                        animated: true,
+                      });
+                    }
+                  },
+                  () => {
+                    // Fallback: try using reviews section position
+                    if (reviewsSectionRef.current && scrollViewRef.current) {
+                      reviewsSectionRef.current.measureLayout(
+                        scrollViewRef.current as any,
+                        (x, y) => {
+                          if (scrollViewRef.current) {
+                            scrollViewRef.current.scrollTo({
+                              y: Math.max(0, y - 20),
+                              animated: true,
+                            });
+                          }
+                        },
+                        () => { }
+                      );
+                    }
+                  }
+                );
+              }
+            }, 300);
+          }}
+          activeOpacity={0.8}
+        >
           <Text style={styles.ratingBadgeText}>
-            {reviews.length > 0 
+            {reviews.length > 0
               ? (reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length).toFixed(1)
               : '0.0'
             }
           </Text>
           <Ionicons name="star" size={12} color="#FFD700" />
           <Text style={styles.ratingCountText}>{reviews.length}</Text>
-        </View>
-        
+        </TouchableOpacity>
+
         {/* Media Dots Indicator (inside image, absolute bottom center) */}
         {mediaItems.length > 1 && (
           <View style={styles.imageDotsOverlay}>
@@ -1664,7 +1707,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
             ))}
           </View>
         )}
-        
+
         {/* Full View Button */}
         <TouchableOpacity
           style={styles.fullViewButton}
@@ -1675,8 +1718,8 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
         </TouchableOpacity>
 
         {/* Wishlist Icon */}
-        <TouchableOpacity 
-          style={styles.wishlistButton} 
+        <TouchableOpacity
+          style={styles.wishlistButton}
           onPress={async () => {
             if (isInWishlist(product.id)) {
               // Show collection sheet in parent to manually remove from collections
@@ -1718,10 +1761,10 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
           }}
           activeOpacity={0.7}
         >
-          <Ionicons 
-            name={isInWishlist(product.id) ? 'heart' : 'heart-outline'} 
-            size={24} 
-            color={isInWishlist(product.id) ? '#F53F7A' : '#333'} 
+          <Ionicons
+            name={isInWishlist(product.id) ? 'heart' : 'heart-outline'}
+            size={24}
+            color={isInWishlist(product.id) ? '#F53F7A' : '#333'}
           />
         </TouchableOpacity>
       </View>
@@ -1743,9 +1786,9 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
               ]}
               onPress={() => handleImagePress(index)}
             >
-              <Image 
-                source={{ uri: media.type === 'video' ? (media.thumbnail || media.url) : media.url }} 
-                style={styles.thumbnailImage} 
+              <Image
+                source={{ uri: media.type === 'video' ? (media.thumbnail || media.url) : media.url }}
+                style={styles.thumbnailImage}
               />
               {media.type === 'video' && (
                 <View style={styles.videoThumbnailOverlay}>
@@ -1763,771 +1806,709 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
 
   return (
     <>
-    <BottomSheet
-      ref={bottomSheetRef}
-      index={visible ? 0 : -1}
-      snapPoints={snapPoints}
-      enablePanDownToClose={true}
-      onClose={onClose}
-      backgroundStyle={{ backgroundColor: '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18 }}
-      handleIndicatorStyle={{ backgroundColor: '#ccc' }}
-      enableContentPanningGesture={true}
-      keyboardBehavior="interactive"
-    >
-      <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
-            <View style={styles.ratingContainer}>
-              <Ionicons name="star" size={16} color="#FFD700" />
-              <Text style={styles.ratingText}>
-                {reviews.length > 0 
-                  ? (reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length).toFixed(1)
-                  : '0.0'
-                }
-              </Text>
-              <Text style={styles.reviewsText}>({reviews.length})</Text>
+      <BottomSheet
+        ref={bottomSheetRef}
+        index={visible ? 0 : -1}
+        snapPoints={snapPoints}
+        enablePanDownToClose={true}
+        onClose={onClose}
+        backgroundStyle={{ backgroundColor: '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18 }}
+        handleIndicatorStyle={{ backgroundColor: '#ccc' }}
+        enableContentPanningGesture={true}
+        keyboardBehavior="interactive"
+      >
+        <View style={styles.container}>
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
+              <View style={styles.ratingContainer}>
+                <Ionicons name="star" size={16} color="#FFD700" />
+                <Text style={styles.ratingText}>
+                  {reviews.length > 0
+                    ? (reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length).toFixed(1)
+                    : '0.0'
+                  }
+                </Text>
+                <Text style={styles.reviewsText}>({reviews.length})</Text>
+              </View>
             </View>
+            <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+              <Ionicons name="close" size={24} color="#333" />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons name="close" size={24} color="#333" />
-          </TouchableOpacity>
-        </View>
 
-        <BottomSheetScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
-          {/* Image Gallery */}
-          {renderImageGallery()}
+          <BottomSheetScrollView
+            ref={scrollViewRef}
+            style={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled={true}
+          >
+            {/* Image Gallery */}
+            {renderImageGallery()}
 
-          {/* Product Info */}
-          <View style={styles.productInfo}>
-            {/* Vendor Name, Product Title and Share Button Row */}
-            <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
-              <View style={{ flex: 1, marginRight: 16 }}>
-                <Text style={styles.productName}>
-                  {vendorName} <Text style={{ fontSize: 18, color: '#666', fontWeight: '400' }}> {product.name}</Text>
-                </Text>
-              </View>
-              <TouchableOpacity style={styles.shareButton} onPress={() => setShareModalVisible(true)}>
-                <AntDesign name="sharealt" size={24} color="#333" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Price */}
-            <View style={styles.priceContainer}>
-              <Text style={styles.price}>₹{userPrice}</Text>
-              {product.discount && product.discount > 0 && (
-                <Text style={styles.originalPrice}>MRP ₹{(userPrice / (1 - product.discount / 100)).toFixed(2)}</Text>
-              )}
-              {product.discount && product.discount > 0 && (
-                <Text style={styles.discount}>({product.discount}% OFF)</Text>
-              )}
-            </View>
-
-
-
-            {/* Size Selection */}
-            {availableSizes.length > 0 && (
-              <View style={styles.sectionContainer}>
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>{t('select_size')}</Text>
+            {/* Product Info - Matching Products screen layout */}
+            <View style={styles.productInfo}>
+              {/* Vendor Name, Product Title and Share Button Row */}
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                <View style={{ flex: 1, marginRight: 16 }}>
+                  {/* Vendor Name - Matching Products screen */}
+                  <TouchableOpacity
+                    onPress={() => {
+                      const vendorId = (product as any).vendor_id;
+                      if (vendorId) {
+                        onClose();
+                        // Use type assertion to avoid TS errors if navigation prop types aren't fully aligned
+                        (navigation as any).navigate('VendorProfile', { vendorId });
+                      }
+                    }}
+                    disabled={!(product as any).vendor_id}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.verticalVendorText} numberOfLines={1}>{vendorName}</Text>
+                  </TouchableOpacity>
+                  {/* Product Name - Matching Products screen */}
+                  <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
+                  {/* Category - Matching Products screen */}
+                  {product.category && (
+                    <Text style={styles.category} numberOfLines={1}>{product.category.name || ''}</Text>
+                  )}
                 </View>
-                <View style={styles.sizesContainer}>
-                  {availableSizes.map(renderSizeOption)}
-                </View>
+                <TouchableOpacity style={styles.shareButton} onPress={() => setShareModalVisible(true)}>
+                  <AntDesign name="sharealt" size={24} color="#333" />
+                </TouchableOpacity>
               </View>
-            )}
 
-
-
-
-
-            {/* Tabs */}
-            <View style={styles.tabsContainer}>
-              <TouchableOpacity
-                style={[styles.tab, activeTab === 'details' && styles.activeTab]}
-                onPress={() => setActiveTab('details')}
-              >
-                <Text style={[styles.tabText, activeTab === 'details' && styles.activeTabText]}>
-                  {t('product_details')}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.tab, activeTab === 'reviews' && styles.activeTab]}
-                onPress={() => setActiveTab('reviews')}
-              >
-                <Text style={[styles.tabText, activeTab === 'reviews' && styles.activeTabText]}>
-                  {t('reviews')} ({reviews.length})
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Tab Content */}
-            {activeTab === 'details' && (
-              <View style={styles.tabContent}>
-                <Text style={styles.descriptionTitle}>{t('description')}</Text>
-                <Text style={styles.descriptionText}>{product.description}</Text>
-                <View style={styles.sectionContainer}>
-                  <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Replacement Policy</Text>
-                    <TouchableOpacity onPress={() => setReplacementPolicyVisible(true)}>
-                      <Ionicons name="add" size={22} color="#F53F7A" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            {activeTab === 'reviews' && (
-              <View style={styles.tabContent}>
-                {reviewsLoading ? (
-                  <ActivityIndicator size="large" color="#F53F7A" style={{ marginVertical: 20 }} />
-                ) : reviews.length > 0 ? (
-                  <View>
-                    {reviews.map((review, index) => (
-                      <View key={review.id} style={styles.reviewItem}>
-                        <View style={styles.reviewHeader}>
-                          <View style={styles.reviewerInfo}>
-                            {review.profile_image_url ? (
-                              <Image source={{ uri: review.profile_image_url }} style={styles.reviewerImage} />
-                            ) : (
-                              <View style={styles.reviewerImagePlaceholder}>
-                                <Ionicons name="person" size={20} color="#666" />
-                              </View>
-                            )}
-                            <View style={styles.reviewerDetails}>
-                              <Text style={styles.reviewerName}>{review.reviewer_name}</Text>
-                              <View style={styles.ratingRow}>
-                                {[1, 2, 3, 4, 5].map((star) => (
-                                  <Ionicons
-                                    key={star}
-                                    name={star <= review.rating ? "star" : "star-outline"}
-                                    size={16}
-                                    color={star <= review.rating ? "#FFD700" : "#ccc"}
-                                  />
-                                ))}
-                                {review.is_verified && (
-                                  <Ionicons name="checkmark-circle" size={16} color="#4CAF50" style={{ marginLeft: 8 }} />
-                                )}
-                              </View>
-                            </View>
-                          </View>
-                          <Text style={styles.reviewDate}>
-                            {new Date(review.date || review.created_at).toLocaleDateString()}
-                          </Text>
-                        </View>
-                        <Text style={styles.reviewComment}>{review.comment}</Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : (
-                <Text style={styles.noReviewsText}>{t('no_reviews_yet')}</Text>
+              {/* Price - Black and larger */}
+              <View style={styles.priceContainer}>
+                <Text style={styles.price}>₹{userPrice}</Text>
+                {product.discount && product.discount > 0 && (
+                  <Text style={styles.originalPrice}>MRP ₹{(userPrice / (1 - product.discount / 100)).toFixed(2)}</Text>
+                )}
+                {product.discount && product.discount > 0 && (
+                  <Text style={styles.discount}>({product.discount}% OFF)</Text>
                 )}
               </View>
-            )}
-          </View>
-        <View style={styles.bottomBar}>
-          <View style={styles.bottomTopRow}>
-            <TouchableOpacity
-              style={styles.tryOnButton}
-              onPress={handleTryOnButtonPress}
-            >
-              <Ionicons name="camera" size={20} color="#F53F7A" style={{ marginRight: 8 }} />
-              <Text style={styles.tryOnButtonText}>{t('try_on')}</Text>
-            </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.addToCartButton, { opacity: availableQuantity === 0 ? 0.5 : 1 }]}
-              onPress={handleAddToCart}
-              disabled={availableQuantity === 0 || addToCartLoading}
-            >
-              <Ionicons name="cart-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={styles.addToCartButtonText}>
-                {addToCartLoading ? t('adding') : t('add_to_cart')}
-              </Text>
-            </TouchableOpacity>
-          </View>
 
-          {userData?.id && (
-            <TouchableOpacity
-              style={styles.resellButtonFull}
-              onPress={handleResellPress}
-            >
-              <Ionicons name="storefront" size={20} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={styles.resellButtonFullText}>Resell</Text>
-            </TouchableOpacity>
-          )}
-        </View>
 
-        {/* More Like This Section */}
-        {suggestedProducts.length > 0 && (
-          <View style={styles.moreLikeThisContainer}>
-            <View style={styles.moreLikeThisHeader}>
-              <Text style={styles.moreLikeThisTitle}>More Like This</Text>
-              {suggestedProducts.length > 10 && (
+              {/* Size Selection */}
+              {availableSizes.length > 0 && (
+                <View style={styles.sectionContainer}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>{t('select_size')}</Text>
+                  </View>
+                  <View style={styles.sizesContainer}>
+                    {availableSizes.map(renderSizeOption)}
+                  </View>
+                </View>
+              )}
+
+              {/* Action Buttons - Try On, Add to Cart, Resell */}
+              <View style={styles.bottomBar}>
+                <View style={styles.bottomTopRow}>
+                  <TouchableOpacity
+                    style={styles.tryOnButton}
+                    onPress={handleTryOnButtonPress}
+                  >
+                    <Ionicons name="camera" size={20} color="#F53F7A" style={{ marginRight: 8 }} />
+                    <Text style={styles.tryOnButtonText}>{t('try_on')}</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.addToCartButton, { opacity: availableQuantity === 0 ? 0.5 : 1 }]}
+                    onPress={handleAddToCart}
+                    disabled={availableQuantity === 0 || addToCartLoading}
+                  >
+                    <Ionicons name="cart-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.addToCartButtonText}>
+                      {addToCartLoading ? t('adding') : t('add_to_cart')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {userData?.id && (
+                  <TouchableOpacity
+                    style={styles.resellButtonFull}
+                    onPress={handleResellPress}
+                  >
+                    <Ionicons name="storefront" size={20} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.resellButtonFullText}>Resell</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Tabs */}
+              <View ref={tabsContainerRef} style={styles.tabsContainer}>
                 <TouchableOpacity
-                  onPress={() => {
-                    // Close bottom sheet and navigate to Products screen
-                    onClose();
-                    // Note: Navigation would need to be passed as prop for this to work
+                  style={[styles.tab, activeTab === 'details' && styles.activeTab]}
+                  onPress={() => setActiveTab('details')}
+                >
+                  <Text style={[styles.tabText, activeTab === 'details' && styles.activeTabText]}>
+                    {t('product_details')}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.tab, activeTab === 'reviews' && styles.activeTab]}
+                  onPress={() => setActiveTab('reviews')}
+                >
+                  <Text style={[styles.tabText, activeTab === 'reviews' && styles.activeTabText]}>
+                    {t('reviews')} ({reviews.length})
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Tab Content */}
+              {activeTab === 'details' && (
+                <View style={styles.tabContent}>
+                  <Text style={styles.descriptionTitle}>{t('description')}</Text>
+                  <Text style={styles.descriptionText}>{product.description}</Text>
+                  <View style={styles.sectionContainer}>
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionTitle}>Replacement Policy</Text>
+                      <TouchableOpacity onPress={() => setReplacementPolicyVisible(true)}>
+                        <Ionicons name="add" size={22} color="#F53F7A" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {activeTab === 'reviews' && (
+                <View
+                  ref={reviewsSectionRef}
+                  style={styles.tabContent}
+                  onLayout={(event) => {
+                    const { y } = event.nativeEvent.layout;
+                    // Get the absolute position by measuring from the scroll view
+                    if (reviewsSectionRef.current && scrollViewRef.current) {
+                      reviewsSectionRef.current.measureLayout(
+                        scrollViewRef.current as any,
+                        (x, absoluteY) => {
+                          setReviewsSectionY(absoluteY);
+                        },
+                        () => { }
+                      );
+                    }
                   }}
                 >
-                  <Text style={styles.seeMoreText}>See More</Text>
-                </TouchableOpacity>
+                  {reviewsLoading ? (
+                    <ActivityIndicator size="large" color="#F53F7A" style={{ marginVertical: 20 }} />
+                  ) : reviews.length > 0 ? (
+                    <View>
+                      {reviews.map((review, index) => (
+                        <View key={review.id} style={styles.reviewItem}>
+                          <View style={styles.reviewHeader}>
+                            <View style={styles.reviewerInfo}>
+                              {review.profile_image_url ? (
+                                <Image source={{ uri: review.profile_image_url }} style={styles.reviewerImage} />
+                              ) : (
+                                <View style={styles.reviewerImagePlaceholder}>
+                                  <Ionicons name="person" size={20} color="#666" />
+                                </View>
+                              )}
+                              <View style={styles.reviewerDetails}>
+                                <Text style={styles.reviewerName}>{review.reviewer_name}</Text>
+                                <View style={styles.ratingRow}>
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <Ionicons
+                                      key={star}
+                                      name={star <= review.rating ? "star" : "star-outline"}
+                                      size={16}
+                                      color={star <= review.rating ? "#FFD700" : "#ccc"}
+                                    />
+                                  ))}
+                                  {review.is_verified && (
+                                    <Ionicons name="checkmark-circle" size={16} color="#4CAF50" style={{ marginLeft: 8 }} />
+                                  )}
+                                </View>
+                              </View>
+                            </View>
+                            <Text style={styles.reviewDate}>
+                              {new Date(review.date || review.created_at).toLocaleDateString()}
+                            </Text>
+                          </View>
+                          <Text style={styles.reviewComment}>{review.comment}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text style={styles.noReviewsText}>{t('no_reviews_yet')}</Text>
+                  )}
+                </View>
               )}
             </View>
-            <View style={styles.suggestionsWrapper}>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.suggestionsListContent}
-                style={styles.suggestionsScrollView}
-                nestedScrollEnabled={true}
-              >
-              {suggestedProducts.slice(0, 10).map((p: any) => {
-                const variants = p.product_variants || [];
-                const firstVariant = variants[0];
-                const img = (firstVariant?.image_urls && firstVariant.image_urls[0]) || (p.image_urls && p.image_urls[0]);
-                
-                // Calculate MRP, RSP, and discount from variants (same logic as Cart)
-                const mrpPrices = variants
-                  .map((v: any) => v.mrp_price)
-                  .filter((price: any) => price != null && price > 0);
-                const rspPrices = variants
-                  .map((v: any) => v.rsp_price || v.price)
-                  .filter((price: any) => price != null && price > 0);
-                const discounts = variants
-                  .map((v: any) => v.discount_percentage)
-                  .filter((d: any) => d != null && d > 0);
-                
-                const minMrpPrice = mrpPrices.length > 0 ? Math.min(...mrpPrices) : 0;
-                const minRspPrice = rspPrices.length > 0 ? Math.min(...rspPrices) : (firstVariant?.price || 0);
-                const maxDiscountPercentage = discounts.length > 0 ? Math.max(...discounts) : 0;
-                
-                const calculatedDiscount = maxDiscountPercentage > 0
-                  ? maxDiscountPercentage
-                  : minMrpPrice > 0 && minRspPrice > 0 && minMrpPrice > minRspPrice
-                  ? Math.round(((minMrpPrice - minRspPrice) / minMrpPrice) * 100)
-                  : 0;
-                
-                return (
-                  <View key={p.id || Math.random()} style={styles.suggestionCard}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        // Close current bottom sheet and navigate to ProductDetails screen
-                        onClose();
-                        setTimeout(() => {
-                          navigation.navigate('ProductDetails', { productId: p.id });
-                        }, 300);
-                      }}
-                      activeOpacity={0.9}>
-                      <Image
-                        source={{ uri: img || 'https://via.placeholder.com/160x160.png?text=Only2U' }}
-                        style={styles.suggestionImage}
-                      />
-                      <View style={styles.suggestionInfo}>
-                        <Text style={styles.suggestionProductName} numberOfLines={2}>
-                          {p.name}
-                        </Text>
-                        <View style={styles.suggestionPriceContainer}>
-                          {minMrpPrice > 0 && minMrpPrice > minRspPrice && (
-                            <Text style={styles.suggestionOriginalPrice}>₹{Math.round(minMrpPrice)}</Text>
-                          )}
-                          <Text style={styles.suggestionPrice}>₹{Math.round(minRspPrice)}</Text>
-                          {calculatedDiscount > 0 && (
-                            <Text style={styles.suggestionDiscountBadge}>{calculatedDiscount}% OFF</Text>
-                          )}
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={styles.suggestionAddButton}
-                      onPress={() => {
-                        // Add to cart functionality would go here
-                        Alert.alert('Added!', `${p.name} added to cart`, [{ text: 'OK' }]);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="add" size={18} color="#fff" />
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
+          </BottomSheetScrollView>
+        </View>
+
+        {/* Replacement Policy Modal */}
+        {replacementPolicyVisible && (
+          <View style={{ ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)', zIndex: 99999 }}>
+            <View style={{ width: '88%', maxHeight: '80%', backgroundColor: '#fff', borderRadius: 16, paddingTop: 16, paddingHorizontal: 16, paddingBottom: 16 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: '#222' }}>Replacement Policy</Text>
+                <TouchableOpacity onPress={() => setReplacementPolicyVisible(false)}>
+                  <Ionicons name="close" size={22} color="#333" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={true} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 8 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#111', marginBottom: 8 }}>✅ Conditions for Replacement:</Text>
+                <Text style={{ color: '#333', marginBottom: 10 }}>1. Unboxing Video Required – Customers must record a clear video while opening the parcel, showing the product from start to finish.</Text>
+                <Text style={{ color: '#333', marginBottom: 10 }}>2. Dress Condition – The item must be unused, in good condition, and with the original tag intact.</Text>
+                <Text style={{ color: '#333', marginBottom: 10 }}>3. Size Replacement Option – If the fitting is not right, you can request a size replacement (subject to availability).</Text>
+                <Text style={{ color: '#666', fontStyle: 'italic', marginBottom: 10 }}>Note: Size replacement requests must also be made within 48 hours of receiving the product.</Text>
+                <Text style={{ color: '#333', marginBottom: 10 }}>4. Report Within 48 Hours – All replacement requests (damaged/defective/size issues) should be raised within 48 hours of delivery through the app.</Text>
+                <Text style={{ color: '#333', marginBottom: 16 }}>5. Original Packaging – Keep the dress in its original packaging until replacement is confirmed.</Text>
+
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#111', marginBottom: 8 }}>⚡ How It Works:</Text>
+                <Text style={{ color: '#333', marginBottom: 10 }}>1. Upload your unboxing video in the My Orders section and request a replacement.</Text>
+                <Text style={{ color: '#333', marginBottom: 10 }}>2. Our team will verify and approve your request.</Text>
+                <Text style={{ color: '#333', marginBottom: 16 }}>3. A replacement product will be shipped to you at no extra cost.</Text>
               </ScrollView>
             </View>
           </View>
         )}
-        </BottomSheetScrollView>
-      </View>
-      
-      {/* Replacement Policy Modal */}
-      {replacementPolicyVisible && (
-        <View style={{ ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)', zIndex: 99999 }}>
-          <View style={{ width: '88%', maxHeight: '80%', backgroundColor: '#fff', borderRadius: 16, paddingTop: 16, paddingHorizontal: 16, paddingBottom: 16 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={{ fontSize: 18, fontWeight: '700', color: '#222' }}>Replacement Policy</Text>
-              <TouchableOpacity onPress={() => setReplacementPolicyVisible(false)}>
-                <Ionicons name="close" size={22} color="#333" />
+
+        {/* Try On Modal */}
+        {showTryOnModal && (
+          <View
+            style={{
+              ...StyleSheet.absoluteFillObject,
+              justifyContent: 'center',
+              alignItems: 'center',
+              backgroundColor: 'rgba(0,0,0,0.3)',
+              zIndex: 9999,
+            }}
+          >
+            <View style={styles.akoolModal}>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => {
+                  setShowTryOnModal(false);
+                  setTryOnSizeId(null);
+                }}
+              >
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+              <Text style={styles.akoolTitle}>👗 Want to see how this outfit looks on you?</Text>
+              <Text style={styles.akoolSubtitle}>Try on with Only2U Face Swap AI</Text>
+              <View style={styles.tryOnInfoCard}>
+                <View style={styles.tryOnInfoHeader}>
+                  <Ionicons name="sparkles" size={20} color="#F53F7A" />
+                  <Text style={styles.tryOnInfoTitle}>Photo Face Swap</Text>
+                </View>
+                <Text style={styles.tryOnInfoDesc}>
+                  See how this outfit looks on you with AI-powered face swap
+                </Text>
+                {selectedTryOnSizeName && (
+                  <Text style={styles.tryOnInfoDesc}>
+                    Preview size: {selectedTryOnSizeName}
+                  </Text>
+                )}
+                <View style={styles.tryOnInfoCost}>
+                  <Ionicons name="diamond-outline" size={16} color="#F53F7A" />
+                  <Text style={styles.tryOnInfoCostText}>50 coins</Text>
+                </View>
+              </View>
+              <Text style={styles.akoolBalance}>
+                {t('available_balance')}:{' '}
+                <Text style={{ color: '#F53F7A', fontWeight: 'bold' }}>
+                  {coinBalance} {t('coins')}
+                </Text>
+              </Text>
+              <TouchableOpacity style={styles.akoolContinueBtn} onPress={handleStartFaceSwap}>
+                <Text style={styles.akoolContinueText}>Start Face Swap</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView showsVerticalScrollIndicator={true} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 8 }}>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111', marginBottom: 8 }}>✅ Conditions for Replacement:</Text>
-              <Text style={{ color: '#333', marginBottom: 10 }}>1. Unboxing Video Required – Customers must record a clear video while opening the parcel, showing the product from start to finish.</Text>
-              <Text style={{ color: '#333', marginBottom: 10 }}>2. Dress Condition – The item must be unused, in good condition, and with the original tag intact.</Text>
-              <Text style={{ color: '#333', marginBottom: 10 }}>3. Size Replacement Option – If the fitting is not right, you can request a size replacement (subject to availability).</Text>
-              <Text style={{ color: '#666', fontStyle: 'italic', marginBottom: 10 }}>Note: Size replacement requests must also be made within 48 hours of receiving the product.</Text>
-              <Text style={{ color: '#333', marginBottom: 10 }}>4. Report Within 48 Hours – All replacement requests (damaged/defective/size issues) should be raised within 48 hours of delivery through the app.</Text>
-              <Text style={{ color: '#333', marginBottom: 16 }}>5. Original Packaging – Keep the dress in its original packaging until replacement is confirmed.</Text>
-
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111', marginBottom: 8 }}>⚡ How It Works:</Text>
-              <Text style={{ color: '#333', marginBottom: 10 }}>1. Upload your unboxing video in the My Orders section and request a replacement.</Text>
-              <Text style={{ color: '#333', marginBottom: 10 }}>2. Our team will verify and approve your request.</Text>
-              <Text style={{ color: '#333', marginBottom: 16 }}>3. A replacement product will be shipped to you at no extra cost.</Text>
-            </ScrollView>
           </View>
-        </View>
-      )}
+        )}
 
-      {/* Try On Modal */}
-      {showTryOnModal && (
-        <View
-          style={{
-            ...StyleSheet.absoluteFillObject,
-            justifyContent: 'center',
-            alignItems: 'center',
-            backgroundColor: 'rgba(0,0,0,0.3)',
-            zIndex: 9999,
-          }}
-        >
-          <View style={styles.akoolModal}>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => {
-                setShowTryOnModal(false);
-                setTryOnSizeId(null);
-              }}
-            >
-              <Ionicons name="close" size={24} color="#333" />
-            </TouchableOpacity>
-            <Text style={styles.akoolTitle}>👗 Want to see how this outfit looks on you?</Text>
-            <Text style={styles.akoolSubtitle}>Try on with Only2U Face Swap AI</Text>
-            <View style={styles.tryOnInfoCard}>
-              <View style={styles.tryOnInfoHeader}>
-                <Ionicons name="sparkles" size={20} color="#F53F7A" />
-                <Text style={styles.tryOnInfoTitle}>Photo Face Swap</Text>
-              </View>
-              <Text style={styles.tryOnInfoDesc}>
-                See how this outfit looks on you with AI-powered face swap
-              </Text>
-              {selectedTryOnSizeName && (
-                <Text style={styles.tryOnInfoDesc}>
-                  Preview size: {selectedTryOnSizeName}
-                </Text>
-              )}
-              <View style={styles.tryOnInfoCost}>
-                <Ionicons name="diamond-outline" size={16} color="#F53F7A" />
-                <Text style={styles.tryOnInfoCostText}>25 coins</Text>
-              </View>
-            </View>
-            <Text style={styles.akoolBalance}>
-              {t('available_balance')}:{' '}
-              <Text style={{ color: '#F53F7A', fontWeight: 'bold' }}>
-                {coinBalance} {t('coins')}
-              </Text>
-            </Text>
-            <TouchableOpacity style={styles.akoolContinueBtn} onPress={handleStartFaceSwap}>
-              <Text style={styles.akoolContinueText}>Start Face Swap</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {/* Consent Modal */}
-      {showConsentModal && (
-        <Modal
-          transparent
-          animationType="fade"
-          visible={showConsentModal}
-          onRequestClose={handleConsentCancel}
-        >
-          <View style={styles.consentOverlay}>
-            <View style={styles.consentModal}>
-              <View style={styles.consentIconCircle}>
-                <Ionicons name="shield-checkmark" size={40} color="#F53F7A" />
-              </View>
-              <Text style={styles.consentTitle}>Privacy & Consent</Text>
-              <View style={styles.consentContent}>
-                <View style={styles.consentPoint}>
-                  <View style={styles.consentBullet}>
-                    <Ionicons name="checkmark-circle" size={20} color="#10B981" />
-                  </View>
-                  <Text style={styles.consentPointText}>I have the right to use this photo</Text>
+        {/* Consent Modal */}
+        {showConsentModal && (
+          <Modal
+            transparent
+            animationType="fade"
+            visible={showConsentModal}
+            onRequestClose={handleConsentCancel}
+          >
+            <View style={styles.consentOverlay}>
+              <View style={styles.consentModal}>
+                <View style={styles.consentIconCircle}>
+                  <Ionicons name="shield-checkmark" size={40} color="#F53F7A" />
                 </View>
-                <View style={styles.consentPoint}>
-                  <View style={styles.consentBullet}>
-                    <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                <Text style={styles.consentTitle}>Privacy & Consent</Text>
+                <View style={styles.consentContent}>
+                  <View style={styles.consentPoint}>
+                    <View style={styles.consentBullet}>
+                      <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                    </View>
+                    <Text style={styles.consentPointText}>I have the right to use this photo</Text>
                   </View>
-                  <Text style={styles.consentPointText}>I consent to AI processing for face swap</Text>
-                </View>
-                <View style={styles.consentPoint}>
-                  <View style={styles.consentBullet}>
-                    <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                  <View style={styles.consentPoint}>
+                    <View style={styles.consentBullet}>
+                      <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                    </View>
+                    <Text style={styles.consentPointText}>I consent to AI processing for face swap</Text>
                   </View>
+                  <View style={styles.consentPoint}>
+                    <View style={styles.consentBullet}>
+                      <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                    </View>
                     <Text style={styles.consentPointText}>
                       Generated previews may be stored to improve my experience
                     </Text>
+                  </View>
+                </View>
+                <View style={styles.consentButtons}>
+                  <TouchableOpacity style={styles.consentCancelButton} onPress={handleConsentCancel}>
+                    <Text style={styles.consentCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.consentAgreeButton} onPress={handleConsentAgree}>
+                    <Ionicons name="checkmark-circle" size={18} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.consentAgreeText}>I Agree</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
-              <View style={styles.consentButtons}>
-                <TouchableOpacity style={styles.consentCancelButton} onPress={handleConsentCancel}>
-                  <Text style={styles.consentCancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.consentAgreeButton} onPress={handleConsentAgree}>
-                  <Ionicons name="checkmark-circle" size={18} color="#fff" style={{ marginRight: 6 }} />
-                  <Text style={styles.consentAgreeText}>I Agree</Text>
+            </View>
+          </Modal>
+        )}
+
+        {/* Size Selection Modal */}
+        <Modal
+          visible={showSizeSelectionModal}
+          transparent
+          animationType="fade"
+          onRequestClose={handleCancelSizeSelection}
+        >
+          <View style={styles.sizeModalOverlay}>
+            <View style={styles.sizeModalContainer}>
+              <View style={styles.sizeModalHeader}>
+                <Text style={styles.sizeModalTitle}>Select Your Size</Text>
+                <TouchableOpacity style={styles.sizeModalCloseButton} onPress={handleCancelSizeSelection}>
+                  <Ionicons name="close" size={20} color="#1C1C1E" />
                 </TouchableOpacity>
               </View>
+              <Text style={styles.sizeModalSubtitle}>
+                Choose the size you want to preview before running Face Swap.
+              </Text>
+              <View style={styles.sizeOptionsWrap}>
+                {availableSizes.map((size) => {
+                  const isSelected = sizeSelectionDraft === size.id;
+                  return (
+                    <TouchableOpacity
+                      key={`modal-size-${size.id}`}
+                      style={[
+                        styles.sizeOptionChip,
+                        isSelected && styles.sizeOptionChipSelected,
+                      ]}
+                      onPress={() => {
+                        setSizeSelectionDraft(size.id);
+                        setSizeSelectionError('');
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.sizeOptionChipText,
+                          isSelected && styles.sizeOptionChipTextSelected,
+                        ]}
+                      >
+                        {size.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              {!!sizeSelectionError && (
+                <Text style={styles.sizeSelectionError}>{sizeSelectionError}</Text>
+              )}
+              <TouchableOpacity style={styles.sizeModalConfirmButton} onPress={handleConfirmSizeSelection}>
+                <Text style={styles.sizeModalConfirmText}>Continue</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </Modal>
-      )}
 
-      {/* Size Selection Modal */}
-      <Modal
-        visible={showSizeSelectionModal}
-        transparent
-        animationType="fade"
-        onRequestClose={handleCancelSizeSelection}
-      >
-        <View style={styles.sizeModalOverlay}>
-          <View style={styles.sizeModalContainer}>
-            <View style={styles.sizeModalHeader}>
-              <Text style={styles.sizeModalTitle}>Select Your Size</Text>
-              <TouchableOpacity style={styles.sizeModalCloseButton} onPress={handleCancelSizeSelection}>
-                <Ionicons name="close" size={20} color="#1C1C1E" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.sizeModalSubtitle}>
-              Choose the size you want to preview before running Face Swap.
-            </Text>
-            <View style={styles.sizeOptionsWrap}>
-              {availableSizes.map((size) => {
-                const isSelected = sizeSelectionDraft === size.id;
-                return (
-                  <TouchableOpacity
-                    key={`modal-size-${size.id}`}
-                    style={[
-                      styles.sizeOptionChip,
-                      isSelected && styles.sizeOptionChipSelected,
-                    ]}
-                    onPress={() => {
-                      setSizeSelectionDraft(size.id);
-                      setSizeSelectionError('');
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      style={[
-                        styles.sizeOptionChipText,
-                        isSelected && styles.sizeOptionChipTextSelected,
-                      ]}
-                    >
-                      {size.name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-            {!!sizeSelectionError && (
-              <Text style={styles.sizeSelectionError}>{sizeSelectionError}</Text>
-            )}
-            <TouchableOpacity style={styles.sizeModalConfirmButton} onPress={handleConfirmSizeSelection}>
-              <Text style={styles.sizeModalConfirmText}>Continue</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-      
-      {/* SaveToCollectionSheet */}
-      <SaveToCollectionSheet
-        visible={showCollectionSheet}
-        product={selectedProduct}
-        onClose={() => {
-          setShowCollectionSheet(false);
-          setSelectedProduct(null);
-        }}
-      />
+        {/* SaveToCollectionSheet */}
+        <SaveToCollectionSheet
+          visible={showCollectionSheet}
+          product={selectedProduct}
+          onClose={() => {
+            setShowCollectionSheet(false);
+            setSelectedProduct(null);
+          }}
+        />
 
-      {showMarginModal && (
-        <View style={styles.marginModalOverlay}>
-          <View style={styles.marginModal}>
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={closeMarginModal}>
-              <Ionicons name="close" size={24} color="#333" />
-            </TouchableOpacity>
-
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              nestedScrollEnabled
-              style={styles.marginScroll}
-              contentContainerStyle={{ paddingBottom: 24 }}
-            >
-              <Text style={styles.marginModalTitle}>💰 Set Your Margin</Text>
-              <Text style={styles.marginModalSubtitle}>
-                Choose your profit margin for this product
-              </Text>
-
-              <View style={styles.marginOptions}>
-                {[10, 15, 20, 25, 30].map((margin) => (
-                  <TouchableOpacity
-                    key={margin}
-                    style={[
-                      styles.marginOption,
-                      selectedMargin === margin && styles.marginOptionSelected,
-                    ]}
-                    onPress={() => setSelectedMargin(margin)}>
-                    <View style={styles.radioCircle}>
-                      {selectedMargin === margin && <View style={styles.radioDot} />}
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.marginOptionTitle}>{margin}% Margin</Text>
-                      <Text style={styles.marginOptionDesc}>
-                        Sell at ₹{Math.round((baseResellPrice || 0) * (1 + margin / 100))}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <View style={styles.customPriceContainer}>
-                <Text style={styles.customPriceLabel}>Or enter a custom price</Text>
-                <View style={styles.customPriceRow}>
-                  <Text style={styles.customCurrency}>₹</Text>
-                  <TextInput
-                    value={customPrice}
-                    onChangeText={(val) => {
-                      setCustomPrice(val);
-                      const base = baseResellPrice || 0;
-                      const num = Number(val);
-                      if (!val) {
-                        setCustomPriceError(null);
-                      } else if (isNaN(num)) {
-                        setCustomPriceError('Enter a valid number');
-                      } else if (num < base) {
-                        setCustomPriceError(`Must be ≥ ₹${base}`);
-                      } else {
-                        setCustomPriceError(null);
-                      }
-                    }}
-                    placeholder={`${baseResellPrice || 0}`}
-                    placeholderTextColor="#999"
-                    keyboardType="numeric"
-                    style={styles.customPriceInput}
-                  />
-                </View>
-                {!!customPriceError && <Text style={styles.customPriceError}>{customPriceError}</Text>}
-                <Text style={styles.customPriceHelp}>Leave empty to use selected margin</Text>
-              </View>
-
-              <View style={styles.marginSummary}>
-                <Text style={styles.marginSummaryTitle}>Profit Summary</Text>
-                {(() => {
-                  const base = baseResellPrice || 0;
-                  const resellPrice = computeEffectiveResellPrice();
-                  const effectiveMarginPct = base > 0 ? Math.round(((resellPrice - base) / base) * 100) : 0;
-                  const effectiveProfit = base > 0 ? Math.round(resellPrice - base) : 0;
-                  return (
-                    <>
-                      <View style={styles.marginSummaryRow}>
-                        <Text style={styles.marginSummaryLabel}>Base Price:</Text>
-                        <Text style={styles.marginSummaryValue}>
-                          ₹{base}
-                        </Text>
-                      </View>
-                      <View style={styles.marginSummaryRow}>
-                        <Text style={styles.marginSummaryLabel}>Your Margin:</Text>
-                        <Text style={styles.marginSummaryValue}>{effectiveMarginPct}%</Text>
-                      </View>
-                      <View style={styles.marginSummaryRow}>
-                        <Text style={styles.marginSummaryLabel}>Your Price:</Text>
-                        <Text style={[styles.marginSummaryValue, styles.marginSummaryHighlight]}>
-                          ₹{resellPrice}
-                        </Text>
-                      </View>
-                      <View style={styles.marginSummaryRow}>
-                        <Text style={styles.marginSummaryLabel}>Your Profit:</Text>
-                        <Text style={[styles.marginSummaryValue, styles.marginSummaryProfit]}>
-                          ₹{effectiveProfit}
-                        </Text>
-                      </View>
-                    </>
-                  );
-                })()}
-              </View>
-
+        {showMarginModal && (
+          <View style={styles.marginModalOverlay}>
+            <View style={styles.marginModal}>
               <TouchableOpacity
-                style={styles.marginContinueBtn}
-                onPress={handleResellContinue}>
-                <Text style={styles.marginContinueText}>Continue to Share</Text>
+                style={styles.modalCloseButton}
+                onPress={closeMarginModal}>
+                <Ionicons name="close" size={24} color="#333" />
               </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      )}
 
-{shareModalVisible && (
-        <View style={{ ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 9999 }}>
-          <View style={styles.akoolModal}>
-            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShareModalVisible(false)}>
-              <Ionicons name="close" size={24} color="#333" />
-            </TouchableOpacity>
-            <View style={styles.shareModalContent}>
-            <TouchableOpacity style={styles.shareModalOption} onPress={shareOnWhatsApp}>
-              <Ionicons
-                name="logo-whatsapp"
-                size={30}
-                color="#25D366"
-                style={{ marginRight: 10 }}
-              />
-              <Text style={styles.shareModalText}>{t('share_on_whatsapp')}</Text>
-            </TouchableOpacity>
-          </View>
-          </View>
-        </View>
-      )}
-    </BottomSheet>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                nestedScrollEnabled
+                style={styles.marginScroll}
+                contentContainerStyle={{ paddingBottom: 24 }}
+              >
+                <Text style={styles.marginModalTitle}>Set Profit Margin</Text>
+                <Text style={styles.marginModalSubtitle}>
+                  Adjust your selling price to earn a profit
+                </Text>
 
-    <Modal
-      visible={isFullScreenVisible}
-      animationType="fade"
-      transparent={false}
-      onRequestClose={closeFullScreen}
-      presentationStyle="fullScreen"
-    >
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={styles.fullscreenContainer}>
-          <StatusBar barStyle="light-content" backgroundColor="#000" />
-          <View style={styles.fullscreenSafeArea}>
-            <View style={styles.fullscreenHeader}>
-              <TouchableOpacity onPress={closeFullScreen} style={styles.fullscreenCloseButton}>
-                <Ionicons name="close" size={26} color="#fff" />
+                <View style={styles.marginOptions}>
+                  {[10, 15, 20, 25, 30].map((margin) => (
+                    <TouchableOpacity
+                      key={margin}
+                      style={[
+                        styles.marginOption,
+                        selectedMargin === margin && styles.marginOptionSelected,
+                      ]}
+                      onPress={() => setSelectedMargin(margin)}>
+                      <View style={styles.radioCircle}>
+                        {selectedMargin === margin && <View style={styles.radioDot} />}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.marginOptionTitle}>{margin}% Margin</Text>
+                        <Text style={styles.marginOptionDesc}>
+                          Sell at ₹{Math.round((baseResellPrice || 0) * (1 + margin / 100))}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <View style={styles.customPriceContainer}>
+                  <Text style={styles.customPriceLabel}>Or enter a custom price</Text>
+                  <View style={styles.customPriceRow}>
+                    <Text style={styles.customCurrency}>₹</Text>
+                    <TextInput
+                      value={customPrice}
+                      onChangeText={(val) => {
+                        setCustomPrice(val);
+                        const base = baseResellPrice || 0;
+                        const num = Number(val);
+                        if (!val) {
+                          setCustomPriceError(null);
+                        } else if (isNaN(num)) {
+                          setCustomPriceError('Enter a valid number');
+                        } else if (num < base) {
+                          setCustomPriceError(`Must be ≥ ₹${base}`);
+                        } else {
+                          setCustomPriceError(null);
+                        }
+                      }}
+                      placeholder={`${baseResellPrice || 0}`}
+                      placeholderTextColor="#999"
+                      keyboardType="numeric"
+                      style={styles.customPriceInput}
+                    />
+                  </View>
+                  {!!customPriceError && <Text style={styles.customPriceError}>{customPriceError}</Text>}
+                  <Text style={styles.customPriceHelp}>Leave empty to use selected margin</Text>
+                </View>
+
+                <View style={styles.marginSummary}>
+                  <Text style={styles.marginSummaryTitle}>Profit Summary</Text>
+                  {(() => {
+                    const base = baseResellPrice || 0;
+                    const resellPrice = computeEffectiveResellPrice();
+                    const effectiveMarginPct = base > 0 ? Math.round(((resellPrice - base) / base) * 100) : 0;
+                    const effectiveProfit = base > 0 ? Math.round(resellPrice - base) : 0;
+                    return (
+                      <>
+                        <View style={styles.marginSummaryRow}>
+                          <Text style={styles.marginSummaryLabel}>Base Price:</Text>
+                          <Text style={styles.marginSummaryValue}>
+                            ₹{base}
+                          </Text>
+                        </View>
+                        <View style={styles.marginSummaryRow}>
+                          <Text style={styles.marginSummaryLabel}>Your Margin:</Text>
+                          <Text style={styles.marginSummaryValue}>{effectiveMarginPct}%</Text>
+                        </View>
+                        <View style={styles.marginSummaryRow}>
+                          <Text style={styles.marginSummaryLabel}>Your Price:</Text>
+                          <Text style={[styles.marginSummaryValue, styles.marginSummaryHighlight]}>
+                            ₹{resellPrice}
+                          </Text>
+                        </View>
+                        <View style={styles.marginSummaryRow}>
+                          <Text style={styles.marginSummaryLabel}>Your Profit:</Text>
+                          <Text style={[styles.marginSummaryValue, styles.marginSummaryProfit]}>
+                            ₹{effectiveProfit}
+                          </Text>
+                        </View>
+                      </>
+                    );
+                  })()}
+                </View>
+
+                <TouchableOpacity
+                  style={styles.marginContinueBtn}
+                  onPress={handleResellContinue}>
+                  <Text style={styles.marginContinueText}>Continue to Share</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        )}
+
+        {shareModalVisible && (
+          <View style={{ ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 9999 }}>
+            <View style={styles.akoolModal}>
+              <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShareModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#333" />
               </TouchableOpacity>
-              <Text style={styles.fullscreenTitle}>Preview</Text>
-              <View style={styles.fullscreenHeaderAction}>
-                {fullScreenMediaType === 'video' ? (
+              <View style={styles.shareModalContent}>
+                <TouchableOpacity style={styles.shareModalOption} onPress={shareOnWhatsApp}>
+                  <Ionicons
+                    name="logo-whatsapp"
+                    size={30}
+                    color="#25D366"
+                    style={{ marginRight: 10 }}
+                  />
+                  <Text style={styles.shareModalText}>{t('share_on_whatsapp')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+      </BottomSheet>
+
+      <Modal
+        visible={isFullScreenVisible}
+        animationType="fade"
+        transparent={false}
+        onRequestClose={closeFullScreen}
+        presentationStyle="fullScreen"
+      >
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <View style={styles.fullscreenContainer}>
+            <StatusBar barStyle="light-content" backgroundColor="#000" />
+            <View style={styles.fullscreenSafeArea}>
+              <View style={styles.fullscreenHeader}>
+                <TouchableOpacity onPress={closeFullScreen} style={styles.fullscreenCloseButton}>
+                  <Ionicons name="close" size={26} color="#fff" />
+                </TouchableOpacity>
+                <Text style={styles.fullscreenTitle}>Preview</Text>
+                <View style={styles.fullscreenHeaderAction}>
+                  {fullScreenMediaType === 'video' ? (
+                    <TouchableOpacity
+                      onPress={() => setIsFullScreenVideoPlaying((prev) => !prev)}
+                      style={styles.fullscreenControlButton}
+                    >
+                      <Ionicons
+                        name={isFullScreenVideoPlaying ? 'pause' : 'play'}
+                        size={22}
+                        color="#fff"
+                      />
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity onPress={resetFullScreenZoom} style={styles.fullscreenControlButton}>
+                      <Ionicons name="refresh" size={22} color="#fff" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+
+              <View style={styles.fullscreenContent}>
+                {fullScreenMediaType === 'video' && mediaItems[imageViewerIndex]?.type === 'video' ? (
                   <TouchableOpacity
+                    activeOpacity={1}
                     onPress={() => setIsFullScreenVideoPlaying((prev) => !prev)}
-                    style={styles.fullscreenControlButton}
+                    style={styles.fullscreenMedia}
                   >
-                    <Ionicons
-                      name={isFullScreenVideoPlaying ? 'pause' : 'play'}
-                      size={22}
-                      color="#fff"
+                    <Video
+                      source={{ uri: mediaItems[imageViewerIndex]?.url }}
+                      style={styles.fullscreenMedia}
+                      resizeMode={ResizeMode.CONTAIN}
+                      shouldPlay={isFullScreenVideoPlaying}
+                      useNativeControls
+                      isLooping
                     />
                   </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity onPress={resetFullScreenZoom} style={styles.fullscreenControlButton}>
-                    <Ionicons name="refresh" size={22} color="#fff" />
-                  </TouchableOpacity>
+                  <PanGestureHandler
+                    onGestureEvent={onPanEvent}
+                    onHandlerStateChange={onPanStateChange}
+                    minPointers={1}
+                    maxPointers={1}
+                    avgTouches
+                  >
+                    <Animated.View style={styles.fullscreenMedia}>
+                      <PinchGestureHandler
+                        onGestureEvent={onPinchEvent}
+                        onHandlerStateChange={onPinchStateChange}
+                      >
+                        <Animated.View style={styles.fullscreenMedia}>
+                          <TouchableOpacity
+                            activeOpacity={1}
+                            onPress={handleFullScreenDoubleTap}
+                            style={styles.fullscreenMedia}
+                          >
+                            <Animated.Image
+                              source={{ uri: mediaItems[imageViewerIndex]?.url }}
+                              style={[
+                                styles.fullscreenMedia,
+                                {
+                                  transform: [
+                                    { scale: combinedScale },
+                                    { translateX: translateXFullscreen },
+                                    { translateY: translateYFullscreen },
+                                  ],
+                                },
+                              ]}
+                              resizeMode="contain"
+                            />
+                          </TouchableOpacity>
+                          <View style={styles.fullscreenHint}>
+                            <Ionicons name="hand-left-outline" size={16} color="#fff" />
+                            <Text style={styles.fullscreenHintText}>Pinch & drag to explore</Text>
+                          </View>
+                          {currentZoom > 1 && (
+                            <View style={styles.zoomIndicator}>
+                              <Ionicons name="expand-outline" size={16} color="#fff" />
+                              <Text style={styles.zoomIndicatorText}>{currentZoom.toFixed(1)}x</Text>
+                            </View>
+                          )}
+                        </Animated.View>
+                      </PinchGestureHandler>
+                    </Animated.View>
+                  </PanGestureHandler>
                 )}
               </View>
             </View>
-
-            <View style={styles.fullscreenContent}>
-              {fullScreenMediaType === 'video' && mediaItems[imageViewerIndex]?.type === 'video' ? (
-                <TouchableOpacity
-                  activeOpacity={1}
-                  onPress={() => setIsFullScreenVideoPlaying((prev) => !prev)}
-                  style={styles.fullscreenMedia}
-                >
-                  <Video
-                    source={{ uri: mediaItems[imageViewerIndex]?.url }}
-                    style={styles.fullscreenMedia}
-                    resizeMode={ResizeMode.CONTAIN}
-                    shouldPlay={isFullScreenVideoPlaying}
-                    useNativeControls
-                    isLooping
-                  />
-                </TouchableOpacity>
-              ) : (
-                <PanGestureHandler
-                  onGestureEvent={onPanEvent}
-                  onHandlerStateChange={onPanStateChange}
-                  minPointers={1}
-                  maxPointers={1}
-                  avgTouches
-                >
-                  <Animated.View style={styles.fullscreenMedia}>
-                    <PinchGestureHandler
-                      onGestureEvent={onPinchEvent}
-                      onHandlerStateChange={onPinchStateChange}
-                    >
-                      <Animated.View style={styles.fullscreenMedia}>
-                        <TouchableOpacity
-                          activeOpacity={1}
-                          onPress={handleFullScreenDoubleTap}
-                          style={styles.fullscreenMedia}
-                        >
-                          <Animated.Image
-                            source={{ uri: mediaItems[imageViewerIndex]?.url }}
-                            style={[
-                              styles.fullscreenMedia,
-                              {
-                                transform: [
-                                  { scale: combinedScale },
-                                  { translateX: translateXFullscreen },
-                                  { translateY: translateYFullscreen },
-                                ],
-                              },
-                            ]}
-                            resizeMode="contain"
-                          />
-                        </TouchableOpacity>
-                        <View style={styles.fullscreenHint}>
-                          <Ionicons name="hand-left-outline" size={16} color="#fff" />
-                          <Text style={styles.fullscreenHintText}>Pinch & drag to explore</Text>
-                        </View>
-                        {currentZoom > 1 && (
-                          <View style={styles.zoomIndicator}>
-                            <Ionicons name="expand-outline" size={16} color="#fff" />
-                            <Text style={styles.zoomIndicatorText}>{currentZoom.toFixed(1)}x</Text>
-                          </View>
-                        )}
-                      </Animated.View>
-                    </PinchGestureHandler>
-                  </Animated.View>
-                </PanGestureHandler>
-              )}
-            </View>
           </View>
-        </View>
-      </GestureHandlerRootView>
-    </Modal>
-    <ProfilePhotoRequiredModal
-      visible={showProfilePhotoModal}
-      title="Profile Photo Required"
-      description="Upload a profile photo to unlock Face Swap and see outfits on you."
-      dismissLabel="Maybe Later"
-      uploadLabel="Upload Photo"
-      onDismiss={() => {
-        setShowProfilePhotoModal(false);
-        setShowConsentModal(false);
-        setShowTryOnModal(false);
-        setSizeSelectionDraft(null);
-        setSizeSelectionError('');
-        setTryOnSizeId(null);
-      }}
-      onUpload={() => {
-        setShowProfilePhotoModal(false);
-        setShowConsentModal(false);
-        setShowTryOnModal(false);
-        setSizeSelectionDraft(null);
-        setSizeSelectionError('');
-        setTryOnSizeId(null);
-        (navigation as any).navigate('ProfilePictureUpload');
-      }}
-    />
+        </GestureHandlerRootView>
+      </Modal>
+      <ProfilePhotoRequiredModal
+        visible={showProfilePhotoModal}
+        title="Profile Photo Required"
+        description="Upload a profile photo to unlock Face Swap and see outfits on you."
+        dismissLabel="Maybe Later"
+        uploadLabel="Upload Photo"
+        onDismiss={() => {
+          setShowProfilePhotoModal(false);
+          setShowConsentModal(false);
+          setShowTryOnModal(false);
+          setSizeSelectionDraft(null);
+          setSizeSelectionError('');
+          setTryOnSizeId(null);
+        }}
+        onUpload={() => {
+          setShowProfilePhotoModal(false);
+          setShowConsentModal(false);
+          setShowTryOnModal(false);
+          setSizeSelectionDraft(null);
+          setSizeSelectionError('');
+          setTryOnSizeId(null);
+          (navigation as any).navigate('ProfilePictureUpload');
+        }}
+      />
     </>
   );
 };
@@ -2551,10 +2532,23 @@ const styles = StyleSheet.create({
     marginRight: 16,
   },
   productName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
+    fontWeight: 'bold',
+    fontSize: 14,
     marginBottom: 4,
+    color: '#333',
+  },
+  verticalVendorText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#374151',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  category: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 6,
   },
   closeButton: {
     padding: 4,
@@ -2584,6 +2578,12 @@ const styles = StyleSheet.create({
   mediaSlide: {
     width,
     height: '100%',
+  },
+  videoWrapper: {
+    width: '100%',
+    height: '100%',
+    position: 'relative',
+    backgroundColor: '#000',
   },
   productImage: {
     width: '100%',
@@ -2978,21 +2978,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  resellButtonFull: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#22C55E',
-    borderRadius: 10,
-    paddingVertical: 14,
-    minHeight: 52,
-    marginTop: 4,
-  },
-  resellButtonFullText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
   stockIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3076,11 +3061,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#111',
     marginBottom: 4,
+    textAlign: 'center',
   },
   marginModalSubtitle: {
     fontSize: 16,
     color: '#555',
     marginBottom: 20,
+    textAlign: 'center',
   },
   marginOptions: {
     marginBottom: 16,
@@ -3309,6 +3296,27 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 1,
     left: 1,
+  },
+  videoPlayOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.18)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoPlayButtonCircle: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoPlayOverlayText: {
+    marginTop: 8,
+    color: '#111',
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
   videoThumbnailOverlay: {
     position: 'absolute',

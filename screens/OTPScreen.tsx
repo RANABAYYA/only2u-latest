@@ -82,52 +82,52 @@ const OTPScreen: React.FC<OTPScreenProps> = ({ phone, name, onVerified }) => {
       </View>
       {/* Card */}
       <View style={{ flex: 1, justifyContent: 'center' }}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Verify Your Number</Text>
-        <Text style={styles.subtitle}>
-          We've sent a 6-digit OTP to {phone}
-        </Text>
-        {/* OTP input */}
-        <View style={styles.otpRow}>
-          {otp.map((digit, idx) => (
-            <TextInput
-              key={idx}
-              ref={ref => { inputRefs.current[idx] = ref; }}
-              style={styles.otpInput}
-              keyboardType="number-pad"
-              maxLength={1}
-              value={digit}
-              onChangeText={v => handleChange(v, idx)}
-              returnKeyType="next"
-              autoFocus={idx === 0}
-              onKeyPress={({ nativeEvent }) => {
-                if (nativeEvent.key === 'Backspace' && !otp[idx] && idx > 0) {
-                  inputRefs.current[idx - 1]?.focus();
-                }
-              }}
-            />
-          ))}
-        </View>
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        {/* Resend OTP */}
-        <TouchableOpacity
-          style={styles.resendBtn}
-          onPress={handleResend}
-          disabled={resendTimer > 0}
-        >
-          <Text style={[styles.resendText, resendTimer > 0 && { opacity: 0.5 }]}>Resend OTP{resendTimer > 0 ? ` (${resendTimer})` : ''}</Text>
-        </TouchableOpacity>
-        {/* Verify button */}
-        <TouchableOpacity
-          // style={[styles.verifyBtn, (otp.join('').length !== OTP_LENGTH) && { opacity: 0.7 }]}
-          style={styles.verifyBtn}
-          onPress={handleVerify}
+        <View style={styles.card}>
+          <Text style={styles.title}>Verify Your Number</Text>
+          <Text style={styles.subtitle}>
+            We've sent a 6-digit OTP to {phone}
+          </Text>
+          {/* OTP input */}
+          <View style={styles.otpRow}>
+            {otp.map((digit, idx) => (
+              <TextInput
+                key={idx}
+                ref={ref => { inputRefs.current[idx] = ref; }}
+                style={styles.otpInput}
+                keyboardType="number-pad"
+                maxLength={1}
+                value={digit}
+                onChangeText={v => handleChange(v, idx)}
+                returnKeyType="next"
+                autoFocus={idx === 0}
+                onKeyPress={({ nativeEvent }) => {
+                  if (nativeEvent.key === 'Backspace' && !otp[idx] && idx > 0) {
+                    inputRefs.current[idx - 1]?.focus();
+                  }
+                }}
+              />
+            ))}
+          </View>
+          {error ? <Text style={styles.errorText}>SisDial API Request Response Timed Out.</Text> : null}
+          {/* Resend OTP */}
+          <TouchableOpacity
+            style={styles.resendBtn}
+            onPress={handleResend}
+            disabled={resendTimer > 0}
+          >
+            <Text style={[styles.resendText, resendTimer > 0 && { opacity: 0.5 }]}>Resend OTP{resendTimer > 0 ? ` (${resendTimer})` : ''}</Text>
+          </TouchableOpacity>
+          {/* Verify button */}
+          <TouchableOpacity
+            // style={[styles.verifyBtn, (otp.join('').length !== OTP_LENGTH) && { opacity: 0.7 }]}
+            style={styles.verifyBtn}
+            onPress={handleVerify}
           // disabled={loading || otp.join('').length !== OTP_LENGTH}
-        >
-          <Text style={styles.verifyBtnText}>Verify & Proceed</Text>
-          <Ionicons name="key-outline" size={18} color="#fff" style={{ marginLeft: 8 }} />
-        </TouchableOpacity>
-      </View>
+          >
+            <Text style={styles.verifyBtnText}>Verify & Proceed</Text>
+            <Ionicons name="key-outline" size={18} color="#fff" style={{ marginLeft: 8 }} />
+          </TouchableOpacity>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );

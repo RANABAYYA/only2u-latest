@@ -153,6 +153,45 @@ export const preferApiRenderedImageFirst = (urls: string[] | null | undefined): 
   return [theApi, ...others];
 };
 
+// Size priority for sorting variants (ascending order)
+const SIZE_PRIORITY = [
+  'XXS',
+  'XS',
+  'S',
+  'M',
+  'L',
+  'XL',
+  '2XL',
+  '3XL',
+  '4XL',
+  '5XL',
+  '6XL',
+  '7XL',
+  '8XL',
+];
+
+const getSizeSortValue = (sizeName: string | null | undefined): number => {
+  if (!sizeName) return Number.MAX_SAFE_INTEGER;
+  const normalized = sizeName.trim().toUpperCase();
+  const priorityIndex = SIZE_PRIORITY.indexOf(normalized);
+  if (priorityIndex !== -1) return priorityIndex;
+
+  const numericValue = parseFloat(normalized.replace(/[^0-9.]/g, ''));
+  if (!Number.isNaN(numericValue)) {
+    return SIZE_PRIORITY.length + numericValue;
+  }
+
+  return SIZE_PRIORITY.length + normalized.charCodeAt(0);
+};
+
+const sortVariantsBySize = (variants: any[]): any[] => {
+  return [...variants].sort((a, b) => {
+    const sizeA = a.size?.name || a.size_name || a.size || '';
+    const sizeB = b.size?.name || b.size_name || b.size || '';
+    return getSizeSortValue(sizeA) - getSizeSortValue(sizeB);
+  });
+};
+
 /**
  * Extract images from product variants with fallback to product images
  * @param product - Product object with variants
@@ -163,9 +202,12 @@ export const getProductImages = (product: any): string[] => {
 
   const variants = product.variants || product.product_variants || [];
 
-  // Get images from the first variant that has images
+  // Sort variants by size (ascending: XXS, XS, S, M, L, XL, etc.)
+  const sortedVariants = sortVariantsBySize(variants);
+
+  // Get images from the first variant (smallest size) that has images
   const variantImages =
-    variants.find((v: any) => v.image_urls && v.image_urls.length > 0)?.image_urls || [];
+    sortedVariants.find((v: any) => v.image_urls && v.image_urls.length > 0)?.image_urls || [];
 
   // Fallback to product images
   const productImages = product.image_urls || [];
@@ -184,8 +226,12 @@ export const getFirstSafeProductImage = (product: any): string => {
 
   const variants = product.variants || product.product_variants || [];
 
-  // First, try to get images from variants
-  for (const variant of variants) {
+  // Sort variants by size (ascending: XXS, XS, S, M, L, XL, etc.)
+  // This ensures we prefer M variant over XL variant
+  const sortedVariants = sortVariantsBySize(variants);
+
+  // First, try to get images from variants (starting with smallest size)
+  for (const variant of sortedVariants) {
     if (variant.image_urls && Array.isArray(variant.image_urls) && variant.image_urls.length > 0) {
       const firstVariantImage = variant.image_urls[0];
       if (firstVariantImage) {

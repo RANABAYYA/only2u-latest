@@ -43,7 +43,7 @@ const FaceSwap = () => {
   const [taskId, setTaskId] = useState<string | null>(null);
   const statusCheckInterval = useRef<NodeJS.Timeout | null>(null);
 
-  const PHOTO_PREVIEW_COST = 25;
+  const PHOTO_PREVIEW_COST = 50;
 
   useEffect(() => {
     if (userData?.id) {
@@ -62,7 +62,7 @@ const FaceSwap = () => {
 
   const fetchCoinBalance = async () => {
     if (!userData?.id) return;
-    
+
     try {
       const balance = await akoolService.getUserCoinBalance(userData.id);
       setCoinBalance(balance);
@@ -100,10 +100,10 @@ const FaceSwap = () => {
       if (response.success && response.taskId) {
         setTaskId(response.taskId);
         setTaskStatus({ status: 'processing' });
-        
+
         // Start polling for status updates
         startStatusPolling(response.taskId);
-        
+
         Toast.show({
           type: 'success',
           text1: t('face_swap_started'),
@@ -130,14 +130,14 @@ const FaceSwap = () => {
         if (status.status === 'completed' && status.resultImages) {
           // Prefer second image (API-rendered) if present; otherwise keep order
           const imgs = Array.isArray(status.resultImages) ? [...status.resultImages] : [];
-          const ordered = imgs.length > 1 ? [imgs[1], ...imgs.slice(0,1), ...imgs.slice(2)] : imgs;
+          const ordered = imgs.length > 1 ? [imgs[1], ...imgs.slice(0, 1), ...imgs.slice(2)] : imgs;
           setResultImages(ordered);
           setSelectedImageIndex(0);
           setIsProcessing(false);
           if (statusCheckInterval.current) {
             clearInterval(statusCheckInterval.current);
           }
-          
+
           // Add product to preview with personalized images
           const personalizedProduct = {
             id: `personalized_${productId}_${Date.now()}`, // Unique ID for personalized version
@@ -155,9 +155,9 @@ const FaceSwap = () => {
             faceSwapDate: new Date().toISOString(),
             originalProductId: productId, // Keep reference to original product
           };
-          
+
           addToPreview(personalizedProduct);
-          
+
           Toast.show({
             type: 'success',
             text1: t('face_swap_complete'),
@@ -168,7 +168,7 @@ const FaceSwap = () => {
           if (statusCheckInterval.current) {
             clearInterval(statusCheckInterval.current);
           }
-          
+
           Alert.alert(t('error'), status.error || t('face_swap_failed'));
         }
       } catch (error) {
@@ -212,8 +212,8 @@ const FaceSwap = () => {
 
       {/* Single Image Display */}
       <View style={styles.mainImageContainer}>
-        <Image 
-          source={{ uri: resultImages[0] }} 
+        <Image
+          source={{ uri: resultImages[0] }}
           style={styles.mainImage}
           resizeMode="cover"
         />
@@ -221,15 +221,15 @@ const FaceSwap = () => {
 
       {/* Action Buttons - Share and Shop Now */}
       <View style={styles.actionButtons}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.actionButton, styles.primaryButton]}
           onPress={() => handleShareImage(resultImages[0])}
         >
           <Ionicons name="share-outline" size={20} color="#fff" />
           <Text style={[styles.actionButtonText, styles.primaryButtonText]}>Share</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
+
+        <TouchableOpacity
           style={[styles.actionButton, styles.primaryButton]}
           onPress={() => {
             (navigation as any).navigate('ProductDetails', { productId });
@@ -266,7 +266,7 @@ const FaceSwap = () => {
         {/* <Text style={styles.infoSubtitle}>
           {t('get_3_styled_product_images_with_your_face_swapped_in')}
         </Text> */}
-        
+
         <View style={styles.costContainer}>
           <Ionicons name="logo-bitcoin" size={20} color="#F53F7A" />
           <Text style={styles.costText}>{PHOTO_PREVIEW_COST} {t('coins')}</Text>
@@ -279,7 +279,7 @@ const FaceSwap = () => {
         </View>
       </View>
 
-      <TouchableOpacity 
+      <TouchableOpacity
         style={[
           styles.startButton,
           (!userData?.profilePhoto || coinBalance < PHOTO_PREVIEW_COST) && styles.startButtonDisabled
@@ -288,10 +288,10 @@ const FaceSwap = () => {
         disabled={!userData?.profilePhoto || coinBalance < PHOTO_PREVIEW_COST}
       >
         <Text style={styles.startButtonText}>
-          {!userData?.profilePhoto 
-            ? t('upload_profile_photo_first') 
-            : coinBalance < PHOTO_PREVIEW_COST 
-              ? t('insufficient_coins') 
+          {!userData?.profilePhoto
+            ? t('upload_profile_photo_first')
+            : coinBalance < PHOTO_PREVIEW_COST
+              ? t('insufficient_coins')
               : t('start_face_swap')
           }
         </Text>
@@ -303,7 +303,7 @@ const FaceSwap = () => {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
         >

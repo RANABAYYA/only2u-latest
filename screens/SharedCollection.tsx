@@ -384,6 +384,11 @@ const SharedCollection = () => {
           numColumns={2}
           contentContainerStyle={styles.productList}
           showsVerticalScrollIndicator={false}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          initialNumToRender={10}
+          updateCellsBatchingPeriod={50}
         />
       )}
     </SafeAreaView>

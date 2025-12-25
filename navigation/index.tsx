@@ -35,6 +35,7 @@ import Checkout from '~/screens/Checkout';
 import AddressBook from '~/screens/AddressBook';
 import AddAddress from '~/screens/AddAddress';
 import VendorProfile from '~/screens/VendorProfile';
+import InfluencerProfile from '~/screens/InfluencerProfile';
 import ResellerRegistration from '~/screens/ResellerRegistration';
 import ResellerDashboard from '~/screens/ResellerDashboard';
 import CatalogShare from '~/screens/CatalogShare';
@@ -82,6 +83,7 @@ const Navigation = () => {
       <Stack.Screen name="AddressBook" component={AddressBook} />
       <Stack.Screen name="AddAddress" component={AddAddress} />
       <Stack.Screen name="VendorProfile" component={VendorProfile} />
+      <Stack.Screen name="InfluencerProfile" component={InfluencerProfile} />
       <Stack.Screen name="VendorDashboard" component={VendorDashboard} />
       <Stack.Screen name="ResellerRegistration" component={ResellerRegistration} />
       <Stack.Screen name="ResellerDashboard" component={ResellerDashboard} />
@@ -217,17 +219,62 @@ export default function RootStack() {
     },
   };
 
-  // Handle deep links when app is already open
+  // Handle deep links for Supabase OAuth (Google login) + navigation
   useEffect(() => {
+    const handleDeepLink = async (url: string) => {
+      try {
+        console.log('Deep link received:', url);
+
+        // Handle Supabase OAuth callback: only2u://auth/callback#access_token=...
+        const isAuthCallback =
+          url.startsWith('only2u://auth/callback') ||
+          url.includes('/auth/callback');
+
+        if (isAuthCallback) {
+          // Supabase mobile OAuth typically returns tokens in the hash fragment:
+          // only2u://auth/callback#access_token=...&refresh_token=...&expires_in=...
+          const hashIndex = url.indexOf('#');
+          if (hashIndex !== -1) {
+            const fragment = url.substring(hashIndex + 1);
+            const params = new URLSearchParams(fragment);
+            const access_token = params.get('access_token') || '';
+            const refresh_token = params.get('refresh_token') || '';
+
+            if (access_token && refresh_token) {
+              console.log('Setting Supabase session from OAuth redirect (hash tokens)...');
+              const { data, error } = await supabase.auth.setSession({
+                access_token,
+                refresh_token,
+              });
+              if (error) {
+                console.error('Error setting session from OAuth redirect:', error);
+              } else {
+                console.log(
+                  'Supabase session established from OAuth redirect:',
+                  !!data.session
+                );
+              }
+            } else {
+              console.warn('Auth callback received without access_token/refresh_token in hash');
+            }
+          } else {
+            console.warn('Auth callback URL has no hash fragment; nothing to parse:', url);
+          }
+        }
+      } catch (err) {
+        console.error('Error handling deep link:', err);
+      }
+    };
+
     const subscription = Linking.addEventListener('url', ({ url }) => {
-      console.log('Deep link received:', url);
-      // Navigation will be handled automatically by linking config
+      handleDeepLink(url);
+      // Navigation will also be handled by linking config
     });
 
     // Handle initial URL when app is opened via deep link
     Linking.getInitialURL().then((url) => {
       if (url) {
-        console.log('Initial deep link:', url);
+        handleDeepLink(url);
       }
     });
 

@@ -407,27 +407,6 @@ const MyOrders = () => {
         return;
       }
 
-      // Add mock delivered order for testing (using valid UUIDs)
-      const mockDeliveredOrder = {
-        orderId: '00000000-0000-0000-0000-000000000001',
-        orderNumber: 'ONL123456',
-        date: 'Nov 5, 2025',
-        status: 'delivered',
-        statusColor: '#34C759',
-        statusBg: '#E8F8ED',
-        paymentStatus: 'paid',
-        paymentMethod: 'UPI',
-        shippingAddress: '123 Main St, City',
-        itemId: '00000000-0000-0000-0000-000000000002',
-        name: 'Premium Cotton T-Shirt',
-        image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400',
-        size: 'M',
-        color: 'Navy Blue',
-        quantity: 2,
-        unitPrice: 599,
-        totalPrice: 1198,
-      };
-
       const { data: ordersData, error: ordersError } = await supabase
         .from('orders')
         .select(`
@@ -459,8 +438,38 @@ const MyOrders = () => {
         return;
       }
 
+      // Add sample completed order for demonstration
+      const sampleCompletedOrder = {
+        orderId: '00000000-0000-0000-0000-000000000020',
+        orderNumber: 'ONL789456',
+        date: formatDate(new Date('2025-11-12').toISOString()),
+        status: 'delivered',
+        statusColor: '#34C759',
+        statusBg: '#E8F8ED',
+        paymentStatus: 'paid',
+        paymentMethod: 'UPI',
+        shippingAddress: {
+          name: 'Sample User',
+          phone: '+91 98765 43210',
+          address_line1: '123 Sample Street',
+          address_line2: 'Apt 5B',
+          city: 'Mumbai',
+          state: 'Maharashtra',
+          pincode: '400001',
+          country: 'India',
+        },
+        itemId: '00000000-0000-0000-0000-000000000021',
+        name: 'Elegant Silk Saree',
+        image: 'https://images.unsplash.com/photo-1583292650898-7d22cd27ca6f?w=400',
+        size: 'Free Size',
+        color: 'Maroon',
+        quantity: 1,
+        unitPrice: 3499,
+        totalPrice: 3499,
+      };
+
       // Transform data to individual product items
-      const flattenedItems: any[] = [mockDeliveredOrder]; // Start with mock order
+      const flattenedItems: any[] = [sampleCompletedOrder];
       ordersData?.forEach(order => {
         const statusStyle = getStatusStyle(order.status);
         order.order_items?.forEach((item: any) => {

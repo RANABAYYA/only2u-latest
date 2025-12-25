@@ -50,7 +50,27 @@ export const toastConfig = {
   success: ({ text1, text2 }: any) => {
     // Check if this is a removal action
     const isRemoval = text1?.toLowerCase().includes('removed');
-    const iconName = isRemoval ? 'heart-dislike-outline' : 'heart';
+    // Check if this is a face swap toast - check both text1 and text2
+    const isFaceSwap = text1?.toLowerCase().includes('face swap') || 
+                       text2?.toLowerCase().includes('face swap') ||
+                       text1?.toLowerCase().includes('face swap started') ||
+                       text1?.toLowerCase() === 'face swap started';
+    
+    let iconName = 'heart';
+    if (isRemoval) {
+      iconName = 'heart-dislike-outline';
+    } else if (isFaceSwap) {
+      iconName = 'sparkles';
+    }
+    
+    // Determine border style based on face swap detection
+    const borderStyle = isFaceSwap ? {
+      borderWidth: 2,
+      borderColor: '#F53F7A', // Full pink border for face swap
+    } : {
+      borderLeftWidth: 4,
+      borderLeftColor: '#F53F7A', // Left border for other success toasts
+    };
     
     return (
       <View style={{
@@ -67,8 +87,7 @@ export const toastConfig = {
         shadowOpacity: 0.15,
         shadowRadius: 8,
         elevation: 8,
-        borderLeftWidth: 4,
-        borderLeftColor: '#F53F7A',
+        ...borderStyle,
       }}>
         <View style={{ marginRight: 12 }}>
           <Ionicons name={iconName} size={24} color="#F53F7A" />
@@ -141,6 +160,42 @@ export const toastConfig = {
       <View style={styles.toastTextContainer}>
         {text1 && <Text style={styles.toastTitle}>{text1}</Text>}
         {text2 && <Text style={styles.toastSubtitle}>{text2}</Text>}
+      </View>
+    </View>
+  ),
+  faceSwapStarted: ({ text1, text2 }: any) => (
+    <View style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#fff',
+      marginHorizontal: 16,
+      marginTop: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 8,
+      elevation: 8,
+      borderWidth: 2,
+      borderColor: '#F53F7A', // Full pink border for face swap
+    }}>
+      <View style={{ marginRight: 12 }}>
+        <Ionicons name="sparkles" size={24} color="#F53F7A" />
+      </View>
+      <View style={{ flex: 1 }}>
+        {text1 && <Text style={{
+          fontSize: 15,
+          fontWeight: '700',
+          color: '#1a1a1a',
+          marginBottom: 2,
+        }}>{text1}</Text>}
+        {text2 && <Text style={{
+          fontSize: 13,
+          fontWeight: '500',
+          color: '#666',
+        }}>{text2}</Text>}
       </View>
     </View>
   ),
