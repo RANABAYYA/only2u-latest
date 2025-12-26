@@ -67,7 +67,7 @@ const Admin = () => {
       // Fetch orders for today
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      
+
       const { count: ordersCount, error: ordersError } = await supabase
         .from('orders')
         .select('*', { count: 'exact', head: true })
@@ -150,13 +150,20 @@ const Admin = () => {
     },
     {
       id: 7,
+      title: 'Feedback Management',
+      subtitle: 'Approve or reject user feedbacks',
+      icon: 'thumbs-up-outline',
+      onPress: () => navigation.navigate('FeedbackManagement' as never),
+    },
+    {
+      id: 8,
       title: t('analytics'),
       subtitle: t('view_sales_and_user_analytics'),
       icon: 'analytics-outline',
       onPress: () => console.log('Analytics'),
     },
     {
-      id: 8,
+      id: 9,
       title: t('settings'),
       subtitle: t('app_configuration_and_settings'),
       icon: 'settings-outline',
@@ -238,7 +245,7 @@ const Admin = () => {
         {/* Admin Menu */}
         <View style={styles.menuContainer}>
           <Text style={styles.sectionTitle}>{t('admin_functions')}</Text>
-          
+
           {adminMenuItems.map((item) => (
             <TouchableOpacity
               key={item.id}
@@ -260,7 +267,7 @@ const Admin = () => {
         {/* Quick Stats */}
         <View style={styles.statsContainer}>
           <Text style={styles.sectionTitle}>{t('quick_stats')}</Text>
-          
+
           {loading ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#F53F7A" />
@@ -273,19 +280,19 @@ const Admin = () => {
                 <Text style={styles.statNumber}>{stats.totalUsers.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>{t('total_users')}</Text>
               </View>
-              
+
               <View style={styles.statCard}>
                 <Ionicons name="cube" size={24} color="#2196F3" />
                 <Text style={styles.statNumber}>{stats.totalProducts.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>{t('products')}</Text>
               </View>
-              
+
               <View style={styles.statCard}>
                 <Ionicons name="receipt" size={24} color="#FF9800" />
                 <Text style={styles.statNumber}>{stats.ordersToday.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>{t('orders_today')}</Text>
               </View>
-              
+
               <View style={styles.statCard}>
                 <Ionicons name="trending-up" size={24} color="#9C27B0" />
                 <Text style={styles.statNumber}>{formatCurrency(stats.totalRevenue)}</Text>

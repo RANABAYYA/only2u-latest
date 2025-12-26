@@ -50,6 +50,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const FILTER_TUTORIAL_KEY = 'has_seen_filter_tutorial_v3';
 
 
+import TrendingVideoItem from '~/components/TrendingVideoItem';
+import CollabActionSheet from '~/components/Trending/CollabActionSheet';
+import { useAuth } from '~/contexts/useAuth';
 const { width, height } = Dimensions.get('window');
 const TRENDING_DEBUG = true;
 const debugLog = (...args: any[]) => {
@@ -149,6 +152,7 @@ interface Product {
   video_urls?: string[];
   rating?: number;
   reviews?: number;
+  influencer_id?: string;
   category?: {
     name: string;
   };
@@ -254,7 +258,26 @@ const TrendingScreen = () => {
   }
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLiked, setIsLiked] = useState(false);
+
+  // Influencer Collab Sheet
+  const collabSheetRef = useRef<BottomSheetModal>(null);
+  const [selectedCollabProduct, setSelectedCollabProduct] = useState<Product | null>(null);
+
+  const handleCollabPress = useCallback((product: Product) => {
+    setSelectedCollabProduct(product);
+    collabSheetRef.current?.present();
+  }, []);
+
+  const handleNavigateToProfile = useCallback((type: 'vendor' | 'influencer', id: string, data: any) => {
+    collabSheetRef.current?.dismiss();
+    if (type === 'influencer') {
+      navigation.navigate('InfluencerProfile', { influencerId: id, influencer: data });
+    } else {
+      navigation.navigate('VendorProfile', { vendorId: id, vendor: data });
+    }
+  }, [navigation]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productInfluencers, setProductInfluencers] = useState<{ [productId: string]: any }>({});
   const [loading, setLoading] = useState(true);
 
   const [hasError, setHasError] = useState(false);
@@ -885,6 +908,7 @@ const TrendingScreen = () => {
           vendor_name,
           alias_vendor,
           vendor_id,
+          influencer_id,
           category:categories(name),
           product_variants!inner(
             id,
@@ -955,6 +979,31 @@ const TrendingScreen = () => {
               }
             });
             setProductVendors(vendorsMap);
+          }
+        }
+      }
+
+      // Fetch influencer info
+      let influencersMap: { [productId: string]: any } = {};
+      if (fixedData.length > 0) {
+        const influencerIds = fixedData.map(p => p.influencer_id).filter(Boolean);
+        if (influencerIds.length > 0) {
+          const uniqueIds = [...new Set(influencerIds)];
+          const { data: influencersData } = await supabase
+            .from('influencer_profiles')
+            .select('*')
+            .in('id', uniqueIds);
+
+          if (influencersData) {
+            fixedData.forEach(product => {
+              if (product.influencer_id) {
+                const influencer = influencersData.find(i => i.id === product.influencer_id);
+                if (influencer) {
+                  influencersMap[product.id] = influencer;
+                }
+              }
+            });
+            setProductInfluencers(influencersMap);
           }
         }
       }
@@ -1242,26 +1291,40 @@ const TrendingScreen = () => {
 
   useEffect(() => {
     if (!isFocused) {
+      clearAllTimers(); // Restore timer cleanup
       setActiveVideo(null);
+
+      // Cleanup comments subscription on blur
+      if (commentsRealtimeSubRef.current) {
+        supabase.removeChannel(commentsRealtimeSubRef.current);
+        commentsRealtimeSubRef.current = null;
+        setCommentsRealtimeSub(null);
+      }
+      commentsSheetRef.current?.close();
+      setCommentsProductId(null);
+
       Object.keys(videoRefs.current).forEach((productId) => {
         const ref = videoRefs.current[productId];
         if (ref) {
           try {
             ref.pauseAsync?.().catch(() => { });
-            ref.stopAsync?.().catch(() => { });
-            ref.unloadAsync?.().catch(() => { });
+            // Only pause, don't unload to allow quick resume
           } catch (error) {
-            debugLog(`[Trending] Error stopping video on blur for ${productId}`, error);
+            debugLog(`[Trending] Error pausing video on blur for ${productId}`, error);
           }
         }
-        if (videoOpacity.current[productId]) {
-          videoOpacity.current[productId].setValue(0);
-        }
       });
-      videoRefs.current = {};
-      setVideoStates({});
-      setVideoLoadingStates({});
-      setVideoReadyStates({});
+      // Do NOT clear refs as components remain mounted
+      // videoRefs.current = {}; 
+
+      // Do NOT clear states completely, just ensure nothing is playing
+      setVideoStates(prev => {
+        const pausedStates: { [key: string]: any } = {};
+        Object.keys(prev).forEach(key => {
+          pausedStates[key] = { ...prev[key], isPlaying: false };
+        });
+        return pausedStates;
+      });
       return;
     }
     const activeProduct = products[currentIndex];
@@ -1516,6 +1579,53 @@ const TrendingScreen = () => {
       vendorId: vendor.id,
       vendor
     } as never);
+  };
+
+  const handleWishlistPress = async (product: Product) => {
+    if (isInWishlist(product.id)) {
+      // Show collection sheet to manually remove from collections
+      setSelectedProduct({
+        ...product,
+        price: productPrices[product.id] || 0,
+        featured_type: product.featured_type || undefined
+      } as any);
+      setShowCollectionSheet(true);
+    } else {
+      // Add to "All" collection first
+      await addToAllCollection(product);
+      // Set selected product
+      setSelectedProduct({
+        ...product,
+        price: productPrices[product.id] || 0,
+        featured_type: product.featured_type || undefined
+      } as any);
+      // Wait longer to ensure database operation completes
+      registerTimeout(() => {
+        setShowCollectionSheet(true);
+      }, 1000);
+    }
+  };
+
+  const handleShare = (productId: string) => {
+    setUGCActionProductId(productId);
+    shareSheetRef.current?.expand();
+  };
+
+  const handleShowMore = (productId: string) => {
+    setUGCActionProductId(productId);
+    ugcActionsSheetRef.current?.expand();
+  };
+
+  const setVideoRef = (id: string, ref: Video | null) => {
+    if (ref) {
+      videoRefs.current[id] = ref;
+    } else {
+      delete videoRefs.current[id];
+    }
+  };
+
+  const setVideoReady = (id: string, isReady: boolean) => {
+    setVideoReadyStates(prev => ({ ...prev, [id]: isReady }));
   };
 
   const handleTryOnButtonPress = (product: Product) => {
@@ -1780,481 +1890,46 @@ const TrendingScreen = () => {
     }, 5000); // Poll every 5 seconds
   };
 
-  const renderVideoItem = useCallback((product: Product, index: number) => {
-    const selectedIdx = selectedVideoIndexes[product.id] || 0;
-    // Mute videos while initial loading is active (overlay visible)
-    const isInitialLoading = loading;
-
-    // Get the global mute state from any existing video, or default based on loading state
-    const existingVideoStates = Object.values(videoStates);
-    const globalMuteState = existingVideoStates.length > 0
-      ? existingVideoStates[0].isMuted
-      : (isInitialLoading ? true : false);
-
-    const videoState = videoStates[product.id] || { isPlaying: true, isMuted: globalMuteState };
-    const isActive = index === currentIndex;
-
-    // Get media from variants
-    const firstVariant = product.variants[0];
-
-    // Get all video URLs from variants and product
-    const allVideoUrls: string[] = [];
-
-    // Check variants for videos
-    product.variants.forEach(variant => {
-      if (variant.video_urls && Array.isArray(variant.video_urls)) {
-        variant.video_urls.forEach(url => {
-          if (isVideoUrl(url)) {
-            const playableUrl = getPlayableVideoUrl(url);
-            if (playableUrl) {
-              allVideoUrls.push(playableUrl);
-            }
-          }
-        });
-      }
-    });
-
-    // Check product level video_urls
-    if (product.video_urls && Array.isArray(product.video_urls)) {
-      product.video_urls.forEach(url => {
-        if (isVideoUrl(url)) {
-          const playableUrl = getPlayableVideoUrl(url);
-          if (playableUrl) {
-            allVideoUrls.push(playableUrl);
-          }
-        }
-      });
-    }
-
-    const hasVideo = allVideoUrls.length > 0;
-    const hasImage = !!(firstVariant?.image_urls?.[0] || product.image_urls?.[0]);
-
-    const isLiked = likeStates[product.id] || false;
-    const inWishlist = isInWishlist(product.id);
+  const renderItem = ({ item: product, index }: { item: Product; index: number }) => {
+    const videoState = videoStates[product.id] || { isPlaying: true, isMuted: true }; // Default muted
     const vendor = productVendors[product.id] || generateMockVendor(product);
-
-    // Generate username and vendor name from product data
-    const vendorName = product.vendor_name || product.alias_vendor || vendor.business_name || 'Vendor';
-    const vendorUsername = vendor.username || `@${slugifyName(vendorName)}`;
-
-    // Use demo usernames for all products (not product-derived)
-    const demoHandles = [
-      '@style.hub',
-      '@trend.house',
-      '@urban.outfits',
-      '@daily.fit',
-      '@shop.boutique',
-      '@couture.club',
-      '@lookbook.now',
-      '@vogue.vault',
-      '@wearwave',
-      '@the.drape'
-    ];
-    const vendorHandle = demoHandles[index % demoHandles.length];
-
-    // Face swap state
-    // const isFaceSwapProcessing = faceSwapProcessing[product.id] || false;
-
-    // Create video array with optimized Cloudinary thumbnails
-    const mediaItems = hasVideo && allVideoUrls.length > 0 ? [{
-      url: allVideoUrls[0],
-      thumbnail: isCloudinaryUrl(allVideoUrls[0])
-        ? getCloudinaryVideoThumbnail(allVideoUrls[0], { width: 400, height: 600, time: 0 })
-        : (firstVariant.image_urls?.[0] || product.image_urls?.[0])
-    }] :
-      hasImage ? [{ url: null, thumbnail: firstVariant.image_urls?.[0] || product.image_urls?.[0] }] :
-        [{ url: null, thumbnail: 'https://via.placeholder.com/400x600/cccccc/999999?text=No+Image' }];
-
-    if (mediaItems.length === 0) {
-      return null;
-    }
-
-    const mainMedia = mediaItems[selectedIdx];
-    const finalVideoUrl = mainMedia.url || null;
-    const resolvedVideoUrl = finalVideoUrl ? videoFallbackOverrides[finalVideoUrl] || finalVideoUrl : null;
-
-    const commentCount = commentCounts[product.id] || 0;
-
-    // Calculate total stock from variants
-    const totalStock = product.variants?.reduce((sum, variant) => sum + (variant.quantity || 0), 0) || product.stock_quantity || 0;
-    const isLowStock = totalStock < 5;
-
-    // Preload current and next video for smooth transitions
-    const shouldRenderVideo = index === currentIndex || index === currentIndex + 1;
-
-    // Initialize opacity animation for this video if not exists
-    if (!videoOpacity.current[product.id]) {
-      videoOpacity.current[product.id] = new Animated.Value(0);
-    }
-
-    const isVideoReady = videoReadyStates[product.id];
+    const influencer = productInfluencers[product.id];
 
     return (
-      <View key={product.id} style={styles.videoContainer}>
-        {/* Video/Image Background */}
-        {hasVideo ? (
-          <TouchableOpacity
-            activeOpacity={1}
-            style={[styles.videoBackground, { backgroundColor: '#000' }]}
-            onPress={() => handleVideoTap(product.id)}
-          >
-            {/* Video Player - Preload current and next */}
-            {resolvedVideoUrl && shouldRenderVideo && (
-              <Animated.View
-                style={[
-                  styles.videoBackground,
-                  {
-                    opacity: videoOpacity.current[product.id],
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0
-                  }
-                ]}
-              >
-                <Video
-                  ref={ref => {
-                    if (ref) {
-                      videoRefs.current[product.id] = ref;
-                    } else {
-                      delete videoRefs.current[product.id];
-                    }
-                  }}
-                  source={{
-                    uri: resolvedVideoUrl,
-                    overrideFileExtensionAndroid: isHlsUrl(resolvedVideoUrl || '') ? 'm3u8' : 'mp4',
-                  }}
-                  style={styles.videoBackground}
-                  resizeMode={ResizeMode.COVER}
-                  shouldPlay={isActive && videoState.isPlaying}
-                  isLooping
-                  isMuted={videoState.isMuted}
-                  useNativeControls={false}
-                  progressUpdateIntervalMillis={1000}
-                  videoStyle={{ width: '100%', height: '100%' }}
-                  onLoadStart={() => {
-                    debugLog(`[Trending] Video loading started for ${product.id}`);
-                  }}
-                  onLoad={() => {
-                    debugLog(`[Trending] Video loaded for ${product.id}, isActive: ${isActive}`);
-
-                    // Mark video as ready
-                    setVideoReadyStates(prev => ({ ...prev, [product.id]: true }));
-
-                    // Fade in the video smoothly
-                    Animated.timing(videoOpacity.current[product.id], {
-                      toValue: 1,
-                      duration: 300,
-                      useNativeDriver: true,
-                    }).start();
-
-                    // Auto-play when loaded if this is the active video
-                    if (isActive) {
-                      const ref = videoRefs.current[product.id];
-                      if (ref) {
-                        registerTimeout(() => {
-                          ref.playAsync().catch(() => { });
-                        }, 100);
-                      }
-                    }
-                  }}
-                  onReadyForDisplay={() => {
-                    debugLog(`[Trending] Video ready for display: ${product.id}`);
-                  }}
-                  onError={(error) => {
-                    console.error(`[Trending] ❌ Video error for ${product.id}:`, error);
-                    console.error(`[Trending] Failed URL: ${resolvedVideoUrl}`);
-
-                    if (finalVideoUrl) {
-                      const fallbackUrl = getFallbackVideoUrl(finalVideoUrl);
-                      if (
-                        fallbackUrl &&
-                        fallbackUrl !== finalVideoUrl &&
-                        !videoFallbackOverrides[finalVideoUrl]
-                      ) {
-                        console.warn('[Trending] Switching to fallback video URL:', fallbackUrl);
-                        setVideoFallbackOverrides((prev) => ({
-                          ...prev,
-                          [finalVideoUrl]: fallbackUrl,
-                        }));
-                        return;
-                      }
-                    }
-                  }}
-                  onPlaybackStatusUpdate={(status: any) => {
-                    if (status.isLoaded && status.didJustFinish && isActive) {
-                      const ref = videoRefs.current[product.id];
-                      if (ref) {
-                        ref.setPositionAsync(0).then(() => {
-                          if (isActive) ref.playAsync().catch(() => { });
-                        });
-                      }
-                    }
-                  }}
-                />
-              </Animated.View>
-            )}
-
-            {/* Gradient overlay for better readability */}
-            <View style={styles.gradientOverlay} />
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            activeOpacity={1}
-            style={styles.videoBackground}
-            onPress={() => handleVideoTap(product.id)}
-          >
-            <Image
-              source={{ uri: mainMedia.thumbnail }}
-              style={styles.videoBackground}
-              resizeMode="cover"
-            />
-            <View style={styles.gradientOverlay} />
-          </TouchableOpacity>
-        )}
-
-        {/* Double Tap Heart Animation */}
-        {doubleTapHearts[product.id] && (
-          <Animated.View style={styles.doubleTapHeartContainer}>
-            <Ionicons name="heart" size={100} color="#fff" style={styles.doubleTapHeart} />
-          </Animated.View>
-        )}
-
-        {/* Top Bar Controls */}
-        <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
-          <TouchableOpacity style={styles.topBarButton} onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={24} color="#fff" />
-          </TouchableOpacity>
-
-          <View style={styles.topBarRight}>
-            {hasVideo && (
-              <TouchableOpacity
-                style={styles.topBarButton}
-                onPress={() => toggleMute(product.id)}
-              >
-                <Ionicons
-                  name={videoState.isMuted ? 'volume-mute' : 'volume-high'}
-                  size={24}
-                  color="#fff"
-                />
-              </TouchableOpacity>
-            )}
-
-            {/* Wishlist button in top bar */}
-            <TouchableOpacity
-              style={styles.topBarButton}
-              onPress={async (e) => {
-                e.stopPropagation && e.stopPropagation();
-                if (isInWishlist(product.id)) {
-                  // Show collection sheet to manually remove from collections
-                  setSelectedProduct({
-                    ...product,
-                    price: productPrices[product.id] || 0,
-                    featured_type: product.featured_type || undefined
-                  } as any);
-                  setShowCollectionSheet(true);
-                } else {
-                  // Add to "All" collection first
-                  await addToAllCollection(product);
-                  // Set selected product
-                  setSelectedProduct({
-                    ...product,
-                    price: productPrices[product.id] || 0,
-                    featured_type: product.featured_type || undefined
-                  } as any);
-                  // Wait longer to ensure database operation completes
-                  registerTimeout(() => {
-                    setShowCollectionSheet(true);
-                  }, 1000);
-                }
-              }}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={isInWishlist(product.id) ? 'heart' : 'heart-outline'}
-                size={24}
-                color={isInWishlist(product.id) ? '#F53F7A' : '#fff'}
-              />
-            </TouchableOpacity>
-
-            {/* Search/Filter button in top bar */}
-            <TouchableOpacity
-              style={styles.topBarButton}
-              onPress={() => filterSheetRef.current?.present()}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="search" size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Right Side Actions with improved design */}
-        <View style={styles.rightActions}>
-          {/* Like button */}
-          <TouchableOpacity
-            style={styles.modernActionButton}
-            onPress={async () => {
-              // Toggle like for the product
-              const currentLikeState = likeStates[product.id] || false;
-              if (currentLikeState) {
-                await handleLike(product.id);
-                Toast.show({ type: 'info', text1: 'Removed from likes' });
-              } else {
-                await handleLike(product.id);
-                Toast.show({ type: 'success', text1: 'Added to likes' });
-              }
-            }}
-            activeOpacity={0.7}
-          >
-            <View style={styles.actionIconCircle}>
-              <Ionicons
-                name={likeStates[product.id] ? 'thumbs-up' : 'thumbs-up-outline'}
-                size={28}
-                color={likeStates[product.id] ? '#F53F7A' : '#fff'}
-              />
-            </View>
-            <Text style={styles.modernActionText}>Like</Text>
-          </TouchableOpacity>
-
-          {/* Q&A button - replaced comments */}
-          <TouchableOpacity
-            style={styles.modernActionButton}
-            onPress={() => openComments(product.id)}
-          >
-            <View style={styles.actionIconCircle}>
-              <Ionicons name="help-circle-outline" size={28} color="#fff" />
-            </View>
-            <Text style={styles.modernActionText}>Q&A</Text>
-          </TouchableOpacity>
-
-          {/* Share button */}
-          <TouchableOpacity
-            style={styles.modernActionButton}
-            onPress={() => {
-              setUGCActionProductId(product.id);
-              shareSheetRef.current?.expand();
-            }}
-          >
-            <View style={styles.actionIconCircle}>
-              <Ionicons name="paper-plane-outline" size={24} color="#fff" />
-            </View>
-            <Text style={styles.modernActionText}>Share</Text>
-          </TouchableOpacity>
-
-          {/* 3-dot menu for UGC actions */}
-          <TouchableOpacity
-            style={styles.modernActionButton}
-            onPress={() => {
-              setUGCActionProductId(product.id);
-              ugcActionsSheetRef.current?.expand();
-            }}
-          >
-            <View style={styles.actionIconCircle}>
-              <Ionicons name="ellipsis-horizontal" size={24} color="#fff" />
-            </View>
-            <Text style={styles.modernActionText}>More</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Bottom content with improved layout */}
-        <View
-          style={[
-            styles.modernBottomContent,
-            { paddingBottom: Math.max(insets.bottom, 24) + 12 },
-          ]}
-        >
-          {/* Vendor Info */}
-          <View style={styles.modernVendorRow}>
-            <TouchableOpacity
-              style={styles.modernVendorInfo}
-              onPress={() => handleVendorProfile(vendor)}
-              activeOpacity={0.8}
-            >
-              <Image
-                source={{ uri: vendor?.profile_image_url || 'https://via.placeholder.com/40' }}
-                style={styles.modernVendorAvatar}
-              />
-              <View style={styles.modernVendorTextCol}>
-                <View style={styles.vendorNameFollowRow}>
-                  <Text
-                    style={styles.modernVendorName}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    {vendorName}
-                  </Text>
-                  {vendor && (
-                    <TouchableOpacity
-                      style={[
-                        styles.compactFollowButton,
-                        isFollowingVendorSafe(vendor.id) && styles.compactFollowingButton,
-                      ]}
-                      onPress={() => handleFollowVendor(vendor.id)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.compactFollowText}>
-                        {isFollowingVendorSafe(vendor.id) ? 'Following' : 'Follow'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <Text style={styles.modernProductName} numberOfLines={1}>{product.name}</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-
-          {/* Price Row */}
-          <View style={styles.modernPriceRow}>
-            <View style={styles.modernPriceGroup}>
-              <Text style={styles.modernPrice}>₹{productPrices[product.id]?.toFixed(2) || '0.00'}</Text>
-              {(() => {
-                const maxDiscount = Math.max(...(product.variants?.map(v => v.discount_percentage || 0) || [0]));
-                const hasDiscount = maxDiscount > 0;
-                if (hasDiscount) {
-                  const originalPrice = productPrices[product.id] / (1 - maxDiscount / 100);
-                  return (
-                    <View style={styles.modernDiscountRow}>
-                      <Text style={styles.modernOriginalPrice}>₹{originalPrice.toFixed(2)}</Text>
-                      <View style={styles.modernDiscountBadge}>
-                        <Text style={styles.modernDiscountText}>{Math.round(maxDiscount)}% OFF</Text>
-                      </View>
-                    </View>
-                  );
-                }
-                return null;
-              })()}
-            </View>
-          </View>
-
-          {/* Action Buttons */}
-          <View style={styles.modernActionButtons}>
-            <TouchableOpacity
-              style={styles.modernTryOnButton}
-              onPress={() => handleTryOnButtonPress(product)}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="camera-outline" size={20} color="#fff" style={{ marginRight: 6 }} />
-              <Text style={styles.modernTryOnText}>{t('try_on')}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.modernShopButton}
-              onPress={() => {
-                debugLog('[Trending] Shop Now pressed', product?.id);
-                handleShopNow(product);
-              }}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="cart-outline" size={20} color="#fff" style={{ marginRight: 6 }} />
-              <Text style={styles.modernShopText}>{t('shop_now')}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+      <View key={product.id} style={{ width: width, height: height }}>
+        <TrendingVideoItem
+          product={product}
+          index={index}
+          currentIndex={currentIndex}
+          isActive={index === currentIndex}
+          videoState={videoState}
+          isLiked={likeStates[product.id] || false}
+          isInWishlist={isInWishlist(product.id)}
+          isFollowingVendor={isFollowingVendorSafe(vendor.id)}
+          vendor={vendor}
+          influencer={influencer}
+          productPrice={productPrices[product.id] || 0}
+          insets={insets}
+          onLike={handleLike}
+          onFollowVendor={handleFollowVendor}
+          onVideoTap={handleVideoTap}
+          onToggleMute={toggleMute}
+          onWishlistPress={handleWishlistPress}
+          onShare={handleShare}
+          onShowMore={handleShowMore}
+          onOpenComments={openComments}
+          onTryOn={handleTryOnButtonPress}
+          onCollabPress={handleCollabPress}
+          onShowFilters={() => filterSheetRef.current?.present()}
+          setVideoRef={setVideoRef}
+          videoFallbackOverrides={videoFallbackOverrides}
+          setVideoFallbackOverrides={setVideoFallbackOverrides}
+          videoReady={videoReadyStates[product.id] || false}
+          setVideoReady={setVideoReady}
+        />
       </View>
     );
-  }, [currentIndex, selectedVideoIndexes, videoStates, isInWishlist, productVendors, commentCounts, productRatings, likeCounts]);
-
+  };
   // Memoize product prices to prevent unnecessary recalculations
   const productPrices = useMemo(() => {
     const prices: { [key: string]: number } = {};
@@ -2540,35 +2215,10 @@ const TrendingScreen = () => {
     }
   };
 
+  // Duplicate useEffect removed
   useEffect(() => {
     commentsRealtimeSubRef.current = commentsRealtimeSub;
   }, [commentsRealtimeSub]);
-
-  useEffect(() => {
-    if (!isFocused) {
-      clearAllTimers();
-
-      Object.keys(videoRefs.current).forEach((productId) => {
-        const ref = videoRefs.current[productId];
-        if (ref) {
-          try {
-            ref.pauseAsync?.().catch(() => { });
-            ref.stopAsync?.().catch(() => { });
-            ref.unloadAsync?.().catch(() => { });
-          } catch { }
-        }
-      });
-
-      if (commentsRealtimeSubRef.current) {
-        supabase.removeChannel(commentsRealtimeSubRef.current);
-        commentsRealtimeSubRef.current = null;
-        setCommentsRealtimeSub(null);
-      }
-
-      commentsSheetRef.current?.close();
-      setCommentsProductId(null);
-    }
-  }, [isFocused, clearAllTimers]);
 
   // Show loading overlay only while data is loading
   const showLoadingOverlay = loading;
@@ -2760,9 +2410,26 @@ const TrendingScreen = () => {
             scrollEnabled={true}
             pageMargin={0}
           >
-            {products.map((product, index) => renderVideoItem(product, index))}
+            {products.map((product, index) => renderItem({ item: product, index }))}
           </PagerView>
         )}
+
+        {/* Collab Action Sheet */}
+        {selectedCollabProduct && (
+          <CollabActionSheet
+            sheetRef={collabSheetRef as any} // Cast to satisfy strict type if needed, or fix in component definition
+            vendor={productVendors[selectedCollabProduct.id] || generateMockVendor(selectedCollabProduct)}
+            influencer={productInfluencers[selectedCollabProduct.id]}
+            isFollowingVendor={isFollowingVendorSafe(productVendors[selectedCollabProduct.id]?.id || '')}
+            onFollowVendor={handleFollowVendor}
+            onNavigateToProfile={handleNavigateToProfile}
+            onClose={() => {
+              collabSheetRef.current?.dismiss();
+              setSelectedCollabProduct(null);
+            }}
+          />
+        )}
+
         {showTryOnModal && tryOnProduct && (
           <View
             style={{
@@ -4070,6 +3737,13 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
     marginRight: 10,
   },
+  compactVendorAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    marginRight: 6,
+    borderWidth: 1.5,
+  },
   modernVendorTextCol: {
     flex: 1,
     marginRight: 12,
@@ -4094,6 +3768,11 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     flexGrow: 1,
     flexWrap: 'wrap',
+  },
+  compactVendorName: {
+    fontSize: 13,
+    marginTop: 0,
+    lineHeight: 18,
   },
   modernProductName: {
     color: '#fff',

@@ -30,7 +30,7 @@ const AddressBook = () => {
   const { userData } = useUser();
   const [addresses, setAddresses] = useState<UserAddress[]>([]);
   const [loading, setLoading] = useState(false);
-  
+
   // Check if we're in selection mode (coming from checkout)
   const selectionMode = (route.params as any)?.selectMode || false;
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
@@ -213,14 +213,16 @@ const AddressBook = () => {
   const deleteAddress = async (id: string) => {
     Alert.alert('Delete Address', 'Are you sure you want to delete this address?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-        const { error } = await supabase.from('user_addresses').delete().eq('id', id);
-        if (error) {
-          Alert.alert('Error', 'Could not delete');
-          return;
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          const { error } = await supabase.from('user_addresses').delete().eq('id', id);
+          if (error) {
+            Alert.alert('Error', 'Could not delete');
+            return;
+          }
+          fetchAddresses();
         }
-        fetchAddresses();
-      }}
+      }
     ]);
   };
 
@@ -261,8 +263,8 @@ const AddressBook = () => {
 
       <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
         {addresses.map(addr => (
-          <TouchableOpacity 
-            key={addr.id} 
+          <TouchableOpacity
+            key={addr.id}
             style={[
               styles.card,
               selectionMode && selectedAddressId === addr.id && styles.selectedCard
@@ -276,10 +278,10 @@ const AddressBook = () => {
               </View>
               {selectionMode ? (
                 <View style={styles.selectionIndicator}>
-                  <Ionicons 
-                    name={addr.is_default ? 'checkmark-circle' : 'radio-button-off'} 
-                    size={24} 
-                    color={addr.is_default ? '#F53F7A' : '#ccc'} 
+                  <Ionicons
+                    name={addr.is_default ? 'checkmark-circle' : 'radio-button-off'}
+                    size={24}
+                    color={addr.is_default ? '#F53F7A' : '#ccc'}
                   />
                 </View>
               ) : (
@@ -295,21 +297,21 @@ const AddressBook = () => {
             <Text style={styles.addressText}>
               {addr.city}, {addr.state} {addr.postal_code}
             </Text>
-            {!selectionMode && (
-              <View style={styles.cardActions}>
-                {!addr.is_default && (
-                  <TouchableOpacity style={styles.actionPill} onPress={() => setDefaultAddress(addr.id)}>
-                    <Text style={styles.actionPillText}>Set Default</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity style={styles.actionPill} onPress={() => openEdit(addr)}>
-                  <Text style={styles.actionPillText}>Edit</Text>
+            <View style={styles.cardActions}>
+              {!addr.is_default && !selectionMode && (
+                <TouchableOpacity style={styles.actionPill} onPress={() => setDefaultAddress(addr.id)}>
+                  <Text style={styles.actionPillText}>Set Default</Text>
                 </TouchableOpacity>
+              )}
+              <TouchableOpacity style={styles.actionPill} onPress={() => openEdit(addr)}>
+                <Text style={styles.actionPillText}>Edit</Text>
+              </TouchableOpacity>
+              {!selectionMode && (
                 <TouchableOpacity style={[styles.actionPill, { backgroundColor: '#fee2e2' }]} onPress={() => deleteAddress(addr.id)}>
                   <Text style={[styles.actionPillText, { color: '#b91c1c' }]}>Delete</Text>
                 </TouchableOpacity>
-              </View>
-            )}
+              )}
+            </View>
           </TouchableOpacity>
         ))}
         {addresses.length === 0 && (
@@ -329,103 +331,101 @@ const AddressBook = () => {
             <View style={{ width: 40 }} />
           </View>
           <ScrollView style={styles.fullFormScroll} contentContainerStyle={{ paddingBottom: 32 }}>
-                <Text style={styles.inputLabel}>Label</Text>
-                <TextInput style={styles.input} placeholder="Home / Work" value={label} onChangeText={setLabel} />
 
-                <Text style={styles.inputLabel}>Full Name <Text style={styles.requiredStar}>*</Text></Text>
-                <TextInput style={styles.input} placeholder="Receiver's name" value={fullName} onChangeText={setFullName} />
+            <Text style={styles.inputLabel}>Full Name <Text style={styles.requiredStar}>*</Text></Text>
+            <TextInput style={styles.input} placeholder="Receiver's name" value={fullName} onChangeText={setFullName} />
 
-                <Text style={styles.inputLabel}>Phone <Text style={styles.requiredStar}>*</Text></Text>
-                <TextInput 
-                  style={styles.input} 
-                  placeholder="10-digit phone number" 
-                  value={phone} 
-                  onChangeText={(text) => {
-                    const cleaned = text.replace(/\D/g, '');
-                    if (cleaned.length <= 10) {
-                      setPhone(cleaned);
-                    }
-                  }}
-                  keyboardType="phone-pad" 
-                  maxLength={10}
+            <Text style={styles.inputLabel}>Phone <Text style={styles.requiredStar}>*</Text></Text>
+            <TextInput
+              style={styles.input}
+              placeholder="10-digit phone number"
+              value={phone}
+              onChangeText={(text) => {
+                const cleaned = text.replace(/\D/g, '');
+                if (cleaned.length <= 10) {
+                  setPhone(cleaned);
+                }
+              }}
+              keyboardType="phone-pad"
+              maxLength={10}
+            />
+
+            <Text style={styles.inputLabel}>Street Address 1 <Text style={styles.requiredStar}>*</Text></Text>
+            <TextInput style={styles.input} placeholder="House no, Street" value={line1} onChangeText={setLine1} />
+
+            <Text style={styles.inputLabel}>Street Address 2 (Optional)</Text>
+            <TextInput style={styles.input} placeholder="Area / Locality" value={line2} onChangeText={setLine2} />
+
+            <Text style={styles.inputLabel}>Landmark (Optional)</Text>
+            <TextInput style={styles.input} placeholder="Nearby landmark" value={landmark} onChangeText={setLandmark} />
+
+            <View style={styles.row}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={styles.inputLabel}>City <Text style={styles.requiredStar}>*</Text></Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Start typing city"
+                  value={city}
+                  onChangeText={(t) => { setCity(t); setPlaceQuery(t); }}
                 />
+              </View>
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={styles.inputLabel}>State <Text style={styles.requiredStar}>*</Text></Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="State"
+                  value={stateName}
+                  onChangeText={(t) => { setStateName(t); setPlaceQuery(t); }}
+                />
+              </View>
+            </View>
 
-                <Text style={styles.inputLabel}>Street Address 1 <Text style={styles.requiredStar}>*</Text></Text>
-                <TextInput style={styles.input} placeholder="House no, Street" value={line1} onChangeText={setLine1} />
+            <View style={styles.row}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={styles.inputLabel}>Postal Code <Text style={styles.requiredStar}>*</Text></Text>
+                <TextInput style={styles.input} placeholder="Pincode" value={postalCode} onChangeText={setPostalCode} keyboardType="numeric" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={styles.inputLabel}>Country <Text style={styles.requiredStar}>*</Text></Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Country"
+                  value={country}
+                  onChangeText={(t) => { setCountry(t); setPlaceQuery(t); }}
+                />
+              </View>
+            </View>
 
-                <Text style={styles.inputLabel}>Street Address 2 (Optional)</Text>
-                <TextInput style={styles.input} placeholder="Area / Locality" value={line2} onChangeText={setLine2} />
-
-                <Text style={styles.inputLabel}>Landmark (Optional)</Text>
-                <TextInput style={styles.input} placeholder="Nearby landmark" value={landmark} onChangeText={setLandmark} />
-
-                <View style={styles.row}>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={styles.inputLabel}>City <Text style={styles.requiredStar}>*</Text></Text>
-                    <TextInput 
-                      style={styles.input} 
-                      placeholder="Start typing city"
-                      value={city} 
-                      onChangeText={(t) => { setCity(t); setPlaceQuery(t); }} 
-                    />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Text style={styles.inputLabel}>State <Text style={styles.requiredStar}>*</Text></Text>
-                    <TextInput 
-                      style={styles.input} 
-                      placeholder="State"
-                      value={stateName} 
-                      onChangeText={(t) => { setStateName(t); setPlaceQuery(t); }} 
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.row}>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={styles.inputLabel}>Postal Code <Text style={styles.requiredStar}>*</Text></Text>
-                    <TextInput style={styles.input} placeholder="Pincode" value={postalCode} onChangeText={setPostalCode} keyboardType="numeric" />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Text style={styles.inputLabel}>Country <Text style={styles.requiredStar}>*</Text></Text>
-                    <TextInput 
-                      style={styles.input} 
-                      placeholder="Country" 
-                      value={country} 
-                      onChangeText={(t) => { setCountry(t); setPlaceQuery(t); }} 
-                    />
-                  </View>
-                </View>
-
-                {/* Autocomplete results */}
-                {placeResults.length > 0 && (
-                  <View style={styles.autocompleteBox}>
-                    {placeResults.map((p, idx) => (
-                      <TouchableOpacity
-                        key={`${p.description}-${idx}`}
-                        style={styles.autocompleteItem}
-                        onPress={() => {
-                          // Split description to fill entries best-effort: "City, State, Country"
-                          const parts = p.description.split(',').map((s) => s.trim());
-                          if (parts[0]) setCity(parts[0]);
-                          if (parts[1]) setStateName(parts[1]);
-                          if (parts[2]) setCountry(parts[2]);
-                          setPlaceResults([]);
-                          setPlaceQuery('');
-                        }}
-                      >
-                        <Ionicons name="location-outline" size={16} color="#666" style={{ marginRight: 8 }} />
-                        <Text style={styles.autocompleteText}>{p.description}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
-
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
-                  <TouchableOpacity onPress={() => setIsDefault(!isDefault)} style={styles.checkbox}>
-                    {isDefault && <Ionicons name="checkmark" size={14} color="#fff" />}
+            {/* Autocomplete results */}
+            {placeResults.length > 0 && (
+              <View style={styles.autocompleteBox}>
+                {placeResults.map((p, idx) => (
+                  <TouchableOpacity
+                    key={`${p.description}-${idx}`}
+                    style={styles.autocompleteItem}
+                    onPress={() => {
+                      // Split description to fill entries best-effort: "City, State, Country"
+                      const parts = p.description.split(',').map((s) => s.trim());
+                      if (parts[0]) setCity(parts[0]);
+                      if (parts[1]) setStateName(parts[1]);
+                      if (parts[2]) setCountry(parts[2]);
+                      setPlaceResults([]);
+                      setPlaceQuery('');
+                    }}
+                  >
+                    <Ionicons name="location-outline" size={16} color="#666" style={{ marginRight: 8 }} />
+                    <Text style={styles.autocompleteText}>{p.description}</Text>
                   </TouchableOpacity>
-                  <Text style={{ marginLeft: 8, color: '#374151', fontWeight: '600' }}>Set as default address</Text>
-                </View>
+                ))}
+              </View>
+            )}
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+              <TouchableOpacity onPress={() => setIsDefault(!isDefault)} style={styles.checkbox}>
+                {isDefault && <Ionicons name="checkmark" size={14} color="#fff" />}
+              </TouchableOpacity>
+              <Text style={{ marginLeft: 8, color: '#374151', fontWeight: '600' }}>Set as default address</Text>
+            </View>
           </ScrollView>
           <View style={styles.fullFormFooter}>
             <TouchableOpacity style={styles.secondaryBtn} onPress={() => setFormVisible(false)}>

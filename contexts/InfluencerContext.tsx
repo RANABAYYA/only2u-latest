@@ -54,25 +54,26 @@ interface InfluencerContextType {
   followedInfluencers: string[];
   loading: boolean;
   error: string | null;
-  
+
   // Influencer actions
   fetchInfluencers: () => Promise<void>;
   fetchInfluencerById: (influencerId: string) => Promise<Influencer | null>;
   fetchInfluencerPosts: (influencerId?: string) => Promise<void>;
   fetchFollowedInfluencers: () => Promise<void>;
-  
+
   // Follow actions
   followInfluencer: (influencerId: string) => Promise<boolean>;
   unfollowInfluencer: (influencerId: string) => Promise<boolean>;
   isFollowingInfluencer: (influencerId: string) => boolean;
-  
+
   // Post actions
   likePost: (postId: string) => Promise<boolean>;
   unlikePost: (postId: string) => Promise<boolean>;
   sharePost: (postId: string) => Promise<boolean>;
-  
+
   // Utility functions
   getInfluencerByProductId: (productId: string) => Promise<Influencer | null>;
+  fetchProductsByInfluencerId: (influencerId: string) => Promise<any[]>;
   refreshInfluencerData: () => Promise<void>;
 }
 
@@ -103,7 +104,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
     try {
       setLoading(true);
       setError(null);
-      
+
       const { data, error } = await supabase
         .from('influencer_profiles')
         .select('*')
@@ -142,7 +143,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
     try {
       setLoading(true);
       setError(null);
-      
+
       let query = supabase
         .from('influencer_posts')
         .select('*')
@@ -161,7 +162,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
       const postsWithLikes = await Promise.all(
         (data || []).map(async (post) => {
           if (!user) return { ...post, is_liked: false };
-          
+
           const { data: likeData } = await supabase
             .from('influencer_post_likes')
             .select('id')
@@ -185,7 +186,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
   // Fetch followed influencers
   const fetchFollowedInfluencers = async () => {
     if (!user) return;
-    
+
     try {
       const { data, error } = await supabase
         .from('influencer_follows')
@@ -202,7 +203,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
   // Follow influencer
   const followInfluencer = async (influencerId: string): Promise<boolean> => {
     if (!user) return false;
-    
+
     try {
       const { error } = await supabase
         .from('influencer_follows')
@@ -212,7 +213,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
         });
 
       if (error) throw error;
-      
+
       setFollowedInfluencers(prev => [...prev, influencerId]);
       return true;
     } catch (err) {
@@ -224,7 +225,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
   // Unfollow influencer
   const unfollowInfluencer = async (influencerId: string): Promise<boolean> => {
     if (!user) return false;
-    
+
     try {
       const { error } = await supabase
         .from('influencer_follows')
@@ -233,7 +234,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
         .eq('influencer_id', influencerId);
 
       if (error) throw error;
-      
+
       setFollowedInfluencers(prev => prev.filter(id => id !== influencerId));
       return true;
     } catch (err) {
@@ -250,7 +251,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
   // Like post
   const likePost = async (postId: string): Promise<boolean> => {
     if (!user) return false;
-    
+
     try {
       const { error } = await supabase
         .from('influencer_post_likes')
@@ -260,14 +261,14 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
         });
 
       if (error) throw error;
-      
+
       // Update local state
-      setInfluencerPosts(prev => prev.map(post => 
-        post.id === postId 
+      setInfluencerPosts(prev => prev.map(post =>
+        post.id === postId
           ? { ...post, likes: post.likes + 1, is_liked: true }
           : post
       ));
-      
+
       return true;
     } catch (err) {
       console.error('Error liking post:', err);
@@ -278,7 +279,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
   // Unlike post
   const unlikePost = async (postId: string): Promise<boolean> => {
     if (!user) return false;
-    
+
     try {
       const { error } = await supabase
         .from('influencer_post_likes')
@@ -287,14 +288,14 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
         .eq('post_id', postId);
 
       if (error) throw error;
-      
+
       // Update local state
-      setInfluencerPosts(prev => prev.map(post => 
-        post.id === postId 
+      setInfluencerPosts(prev => prev.map(post =>
+        post.id === postId
           ? { ...post, likes: post.likes - 1, is_liked: false }
           : post
       ));
-      
+
       return true;
     } catch (err) {
       console.error('Error unliking post:', err);
@@ -311,14 +312,14 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
         .eq('id', postId);
 
       if (error) throw error;
-      
+
       // Update local state
-      setInfluencerPosts(prev => prev.map(post => 
-        post.id === postId 
+      setInfluencerPosts(prev => prev.map(post =>
+        post.id === postId
           ? { ...post, shares: post.shares + 1 }
           : post
       ));
-      
+
       return true;
     } catch (err) {
       console.error('Error sharing post:', err);
@@ -341,6 +342,29 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
     } catch (err) {
       console.error('Error getting influencer by product ID:', err);
       return null;
+    }
+  };
+
+  // Get products by influencer ID
+  const fetchProductsByInfluencerId = async (influencerId: string): Promise<any[]> => {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select(`
+          *,
+          product_variants (
+            price,
+            image_urls
+          )
+        `)
+        .eq('influencer_id', influencerId)
+        .eq('is_active', true);
+
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      console.error('Error fetching products by influencer ID:', err);
+      return [];
     }
   };
 
@@ -385,6 +409,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
     unlikePost,
     sharePost,
     getInfluencerByProductId,
+    fetchProductsByInfluencerId,
     refreshInfluencerData
   };
 

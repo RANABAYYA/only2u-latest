@@ -623,6 +623,31 @@ const Profile = () => {
     });
   };
 
+  // Sample data for Profile feedbacks
+  const SAMPLE_FEEDBACKS = [
+    {
+      id: 'sample-1',
+      user_name: 'Rahul Sharma',
+      feedback_text: 'The app is great, but I think the try-on feature takes a bit too long to load on older devices.',
+      created_at: '2025-12-24T10:30:00Z',
+      image_urls: [],
+    },
+    {
+      id: 'sample-2',
+      user_name: 'Priya Patel',
+      feedback_text: 'Found a bug in the wishlist screen. When I remove an item, it sometimes comes back after refreshing.',
+      created_at: '2025-12-25T09:15:00Z',
+      image_urls: ['https://images.unsplash.com/photo-1551650975-87deedd944c3?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80'],
+    },
+    {
+      id: 'sample-3',
+      user_name: 'Amit Kumar',
+      feedback_text: 'Love the new collection! Can we have more filters for searching products by color?',
+      created_at: '2025-12-25T14:20:00Z',
+      image_urls: [],
+    },
+  ];
+
   // Feedback functions
   const loadFeedbacks = useCallback(async () => {
     setLoadingFeedbacks(true);
@@ -635,14 +660,37 @@ const Profile = () => {
 
       if (error) {
         console.error('Error loading feedbacks:', error);
-        setFeedbacks([]);
+        // Fallback to sample data on error
+        setFeedbacks(SAMPLE_FEEDBACKS);
         return;
       }
 
-      setFeedbacks(feedbacksData || []);
+      if (!feedbacksData || feedbacksData.length === 0) {
+        setFeedbacks(SAMPLE_FEEDBACKS);
+      } else {
+        setFeedbacks(feedbacksData);
+      }
 
       // Load likes for current user
       const userId = userData?.id || user?.id;
+      // Only try to load likes if we have IDs from real fetching (skip for sample data for now to avoid errors or mock it)
+      const isSampleData = !feedbacksData || feedbacksData.length === 0;
+
+      if (userId && !isSampleData) {
+        // ... existing like loading logic ...
+      }
+
+      // If sample data, just initialize 0 likes
+      if (isSampleData) {
+        // Initialize empty like counts
+        const likeCountsMap: Record<string, number> = {};
+        SAMPLE_FEEDBACKS.forEach((f: any) => {
+          likeCountsMap[f.id] = 0;
+        });
+        setFeedbackLikeCounts(likeCountsMap);
+        return; // Skip the rest of DB logic
+      }
+
       if (userId && feedbacksData && feedbacksData.length > 0) {
         const feedbackIds = feedbacksData.map(f => f.id);
 
@@ -700,7 +748,7 @@ const Profile = () => {
       }
     } catch (error) {
       console.error('Error loading feedbacks:', error);
-      setFeedbacks([]);
+      setFeedbacks(SAMPLE_FEEDBACKS);
     } finally {
       setLoadingFeedbacks(false);
     }

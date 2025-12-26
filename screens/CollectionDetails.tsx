@@ -38,7 +38,7 @@ const CollectionDetails = () => {
   // Get collection info from route params (either old or new format)
   const collectionId = (route.params as any)?.collectionId || (route.params as any)?.collection?.id;
   const collectionName = (route.params as any)?.collectionName || (route.params as any)?.collection?.name;
-  
+
   const [collection, setCollection] = useState<Collection | null>(null);
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +53,7 @@ const CollectionDetails = () => {
       // Check if it's a custom collection (not "All" or category-based)
       const isCustom = collectionName !== 'All' && !collectionName?.startsWith('Swiped -') && !collectionName?.startsWith('Category:');
       setIsCustomCollection(isCustom);
-      
+
       // Set collection info
       setCollection({
         id: collectionId,
@@ -67,7 +67,7 @@ const CollectionDetails = () => {
 
   const fetchCollectionProducts = async () => {
     if (!collectionId || !userData?.id) return;
-    
+
     setLoading(true);
     try {
       // Fetch products in this collection
@@ -78,8 +78,69 @@ const CollectionDetails = () => {
 
       if (cpError) throw cpError;
 
+      // Sample data for testing/demo
+      const SAMPLE_PRODUCTS = [
+        {
+          id: 'sample-1',
+          name: 'Classic Cotton T-Shirt',
+          description: 'Premium cotton t-shirt with comfortable fit.',
+          vendor_name: 'Urban Styles',
+          alias_vendor: 'Urban Styles',
+          price: 499,
+          originalPrice: 999,
+          discount: 50,
+          image_urls: ['https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
+          video_urls: [],
+          variants: [],
+          stock: 10,
+        },
+        {
+          id: 'sample-2',
+          name: 'Slim Fit Denim Jeans',
+          description: 'Classic blue denim jeans with perfect stretch.',
+          vendor_name: 'Denim Co.',
+          alias_vendor: 'Denim Co.',
+          price: 1299,
+          originalPrice: 2499,
+          discount: 48,
+          image_urls: ['https://images.unsplash.com/photo-1542272454315-4c01d7abdf4a?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
+          video_urls: [],
+          variants: [],
+          stock: 15,
+        },
+        {
+          id: 'sample-3',
+          name: 'Floral Summer Dress',
+          description: 'Lightweight and breezy dress for summer days.',
+          vendor_name: 'Chic Boutique',
+          alias_vendor: 'Chic Boutique',
+          price: 899,
+          originalPrice: 1799,
+          discount: 50,
+          image_urls: ['https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
+          video_urls: [],
+          variants: [],
+          stock: 8,
+        },
+        {
+          id: 'sample-4',
+          name: 'Running Shoes - Sport Edition',
+          description: 'High performance running shoes for athletes.',
+          vendor_name: 'SportZ',
+          alias_vendor: 'SportZ',
+          price: 2499,
+          originalPrice: 4999,
+          discount: 50,
+          image_urls: ['https://images.unsplash.com/photo-1542291026-7eec264c27ff?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
+          video_urls: [],
+          variants: [],
+          stock: 5,
+        }
+      ];
+
       if (!collectionProducts || collectionProducts.length === 0) {
-        setProducts([]);
+        // Use sample data if no products found (requested by user)
+        setProducts(SAMPLE_PRODUCTS);
         setLoading(false);
         return;
       }
@@ -115,27 +176,27 @@ const CollectionDetails = () => {
         const formattedProducts = productsData.map((p: any) => {
           // Get pricing from variants
           const variants = p.variants || [];
-          
+
           // Calculate min RSP price, MRP, and stock from variants
           let minRspPrice = 0;
           let minMrpPrice = 0;
           let totalStock = 0;
           let maxDiscount = 0;
-          
+
           if (variants.length > 0) {
             // Use RSP price (retail selling price) as the actual price
             const rspPrices = variants.map((v: any) => v.rsp_price || v.price || 0).filter((p: number) => p > 0);
             minRspPrice = rspPrices.length > 0 ? Math.min(...rspPrices) : 0;
-            
+
             // Use MRP price as the original price (for strikethrough)
             const mrpPrices = variants.map((v: any) => v.mrp_price || 0).filter((p: number) => p > 0);
             minMrpPrice = mrpPrices.length > 0 ? Math.min(...mrpPrices) : 0;
-            
+
             totalStock = variants.reduce((sum: number, v: any) => sum + (v.quantity || 0), 0);
             const discounts = variants.map((v: any) => v.discount_percentage || 0);
             maxDiscount = Math.max(...discounts);
           }
-          
+
           // Calculate discount percentage from MRP and RSP
           const calculatedDiscount = minMrpPrice > minRspPrice && minMrpPrice > 0
             ? Math.round(((minMrpPrice - minRspPrice) / minMrpPrice) * 100)
@@ -186,7 +247,7 @@ const CollectionDetails = () => {
     try {
       const collectionUrl = `https://only2u.app/collection/${collectionId}`;
       const message = `Check out my ${collection?.name || 'collection'} on Only2U! 🛍️\n\n${products.length} amazing products curated just for you.\n\n${collectionUrl}`;
-      
+
       await Share.share({
         message: message,
         title: collection?.name || 'My Collection',
@@ -219,7 +280,7 @@ const CollectionDetails = () => {
       // Update local state
       setCollection(prev => prev ? { ...prev, name: newCollectionName.trim() } : null);
       setShowRenameModal(false);
-      
+
       Alert.alert('Success', 'Collection renamed successfully');
     } catch (error) {
       console.error('Error renaming collection:', error);
@@ -286,11 +347,11 @@ const CollectionDetails = () => {
 
       // Update local state
       setProducts(products.filter(p => p.id !== itemToRemove.id));
-      
+
       // Close modal
       setShowRemoveModal(false);
       setItemToRemove(null);
-      
+
       // Show success message
       Alert.alert('Success', 'Item removed from collection');
     } catch (error) {
@@ -306,13 +367,13 @@ const CollectionDetails = () => {
     const productImage = getFirstSafeProductImage(item);
     const hasValidPrice = item.price && item.price > 0;
     const hasDiscount = item.originalPrice && item.originalPrice > item.price && discountPercent > 0;
-    
+
     // Debug logging
     console.log('Rendering product:', item.name);
     console.log('Product has variants:', item.variants?.length);
     console.log('Product image_urls:', item.image_urls);
     console.log('Resolved productImage:', productImage);
-    
+
     return (
       <TouchableOpacity
         style={styles.productCard}
@@ -349,8 +410,8 @@ const CollectionDetails = () => {
 
         {/* Product Image */}
         {productImage ? (
-          <Image 
-            source={{ uri: productImage }} 
+          <Image
+            source={{ uri: productImage }}
             style={styles.productImage}
           />
         ) : (
@@ -482,7 +543,7 @@ const CollectionDetails = () => {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Rename Collection</Text>
-            
+
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Collection Name</Text>
               <TextInput
@@ -506,7 +567,7 @@ const CollectionDetails = () => {
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-              
+
               <TouchableOpacity
                 style={styles.saveButton}
                 onPress={handleRenameCollection}
@@ -540,8 +601,8 @@ const CollectionDetails = () => {
             {/* Product Info */}
             {itemToRemove && (
               <View style={styles.removeModalProductInfo}>
-                <Image 
-                  source={{ uri: getFirstSafeProductImage(itemToRemove) }} 
+                <Image
+                  source={{ uri: getFirstSafeProductImage(itemToRemove) }}
                   style={styles.removeModalProductImage}
                 />
                 <Text style={styles.removeModalProductName} numberOfLines={2}>

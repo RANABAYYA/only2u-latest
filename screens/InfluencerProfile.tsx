@@ -40,11 +40,12 @@ const InfluencerProfile: React.FC = () => {
   const { influencerId, influencer: initialInfluencer } = route.params;
   const { user } = useAuth();
   const { showLoginSheet } = useLoginSheet();
-  
+
   const {
     fetchInfluencerById,
     fetchInfluencerPosts,
     influencerPosts,
+    fetchProductsByInfluencerId,
     followInfluencer,
     unfollowInfluencer,
     isFollowingInfluencer,
@@ -58,6 +59,7 @@ const InfluencerProfile: React.FC = () => {
   const [selectedPost, setSelectedPost] = useState<InfluencerPost | null>(null);
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'products'>('posts');
+  const [influencerProducts, setInfluencerProducts] = useState<any[]>([]);
 
   useEffect(() => {
     loadInfluencerData();
@@ -65,7 +67,7 @@ const InfluencerProfile: React.FC = () => {
 
   const loadInfluencerData = async () => {
     if (!influencerId) return;
-    
+
     setLoading(true);
     try {
       // Check if this is a sample influencer
@@ -74,7 +76,7 @@ const InfluencerProfile: React.FC = () => {
         if (initialInfluencer) {
           setInfluencer(initialInfluencer);
         }
-        
+
         // Generate sample posts
         const samplePosts: InfluencerPost[] = Array.from({ length: 9 }, (_, i) => ({
           id: `sample_post_${influencerId}_${i}`,
@@ -94,7 +96,7 @@ const InfluencerProfile: React.FC = () => {
           updated_at: new Date(Date.now() - i * 86400000).toISOString(),
           is_liked: false,
         }));
-        
+
         setPosts(samplePosts);
       } else {
         // Real influencer data
@@ -102,9 +104,13 @@ const InfluencerProfile: React.FC = () => {
         if (influencerData) {
           setInfluencer(influencerData);
         }
-        
+
         await fetchInfluencerPosts(influencerId);
         setPosts(influencerPosts.filter(post => post.influencer_id === influencerId));
+
+        // Fetch products associated with this influencer
+        const products = await fetchProductsByInfluencerId(influencerId);
+        setInfluencerProducts(products);
       }
     } catch (error) {
       console.error('Error loading influencer data:', error);
@@ -144,7 +150,7 @@ const InfluencerProfile: React.FC = () => {
 
     try {
       const isFollowing = isFollowingInfluencer(influencer.id);
-      const success = isFollowing 
+      const success = isFollowing
         ? await unfollowInfluencer(influencer.id)
         : await followInfluencer(influencer.id);
 
@@ -167,13 +173,13 @@ const InfluencerProfile: React.FC = () => {
     // Handle sample posts
     if (postId.startsWith('sample_post_')) {
       // Just update local state for demo
-      setPosts(prev => prev.map(post => 
-        post.id === postId 
-          ? { 
-              ...post, 
-              likes: isLiked ? post.likes - 1 : post.likes + 1,
-              is_liked: !isLiked
-            }
+      setPosts(prev => prev.map(post =>
+        post.id === postId
+          ? {
+            ...post,
+            likes: isLiked ? post.likes - 1 : post.likes + 1,
+            is_liked: !isLiked
+          }
           : post
       ));
       Toast.show({
@@ -198,13 +204,13 @@ const InfluencerProfile: React.FC = () => {
       const success = isLiked ? await unlikePost(postId) : await likePost(postId);
       if (success) {
         // Update local state
-        setPosts(prev => prev.map(post => 
-          post.id === postId 
-            ? { 
-                ...post, 
-                likes: isLiked ? post.likes - 1 : post.likes + 1,
-                is_liked: !isLiked
-              }
+        setPosts(prev => prev.map(post =>
+          post.id === postId
+            ? {
+              ...post,
+              likes: isLiked ? post.likes - 1 : post.likes + 1,
+              is_liked: !isLiked
+            }
             : post
         ));
       }
@@ -234,14 +240,14 @@ const InfluencerProfile: React.FC = () => {
   };
 
   const renderPost = ({ item }: { item: InfluencerPost }) => (
-    <TouchableOpacity 
+    <TouchableOpacity
       style={styles.postItem}
       onPress={() => handlePostPress(item)}
     >
       {item.thumbnail_url ? (
-        <Image 
-          source={{ uri: item.thumbnail_url }} 
-          style={styles.postImage} 
+        <Image
+          source={{ uri: item.thumbnail_url }}
+          style={styles.postImage}
           resizeMode="cover"
         />
       ) : (
@@ -271,7 +277,7 @@ const InfluencerProfile: React.FC = () => {
         onRequestClose={() => setShowVideoModal(false)}
       >
         <View style={styles.videoModalContainer}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.videoModalOverlay}
             activeOpacity={1}
             onPress={() => setShowVideoModal(false)}
@@ -282,7 +288,7 @@ const InfluencerProfile: React.FC = () => {
                   <Ionicons name="close" size={28} color="white" />
                 </TouchableOpacity>
               </View>
-              
+
               <View style={styles.videoContainer}>
                 <Video
                   source={{ uri: selectedPost.video_url }}
@@ -297,7 +303,7 @@ const InfluencerProfile: React.FC = () => {
               <View style={styles.videoInfoSection}>
                 <View style={styles.videoHeader}>
                   <Image
-                    source={{ 
+                    source={{
                       uri: influencer?.profile_photo || 'https://via.placeholder.com/40'
                     }}
                     style={styles.videoInfluencerAvatar}
@@ -325,10 +331,10 @@ const InfluencerProfile: React.FC = () => {
                     style={styles.videoActionButton}
                     onPress={() => handleLikePost(selectedPost.id, selectedPost.is_liked || false)}
                   >
-                    <Ionicons 
-                      name={selectedPost.is_liked ? "heart" : "heart-outline"} 
-                      size={24} 
-                      color={selectedPost.is_liked ? "#FF6EA6" : "white"} 
+                    <Ionicons
+                      name={selectedPost.is_liked ? "heart" : "heart-outline"}
+                      size={24}
+                      color={selectedPost.is_liked ? "#FF6EA6" : "white"}
                     />
                     <Text style={styles.videoActionText}>{selectedPost.likes}</Text>
                   </TouchableOpacity>
@@ -362,7 +368,7 @@ const InfluencerProfile: React.FC = () => {
       <SafeAreaView style={styles.container}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Influencer not found</Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.retryButton}
             onPress={() => navigation.goBack()}
           >
@@ -373,8 +379,8 @@ const InfluencerProfile: React.FC = () => {
     );
   }
 
-  const isFollowing = influencer.id.startsWith('sample_influencer_') 
-    ? true 
+  const isFollowing = influencer.id.startsWith('sample_influencer_')
+    ? true
     : isFollowingInfluencer(influencer.id);
 
   return (
@@ -394,11 +400,11 @@ const InfluencerProfile: React.FC = () => {
           {/* Profile Info Row */}
           <View style={styles.profileInfoRow}>
             {/* Profile Picture */}
-            <Image 
-              source={{ uri: influencer.profile_photo || 'https://via.placeholder.com/100' }} 
-              style={styles.profileImage} 
+            <Image
+              source={{ uri: influencer.profile_photo || 'https://via.placeholder.com/100' }}
+              style={styles.profileImage}
             />
-            
+
             {/* Stats */}
             <View style={styles.statsRow}>
               <TouchableOpacity style={styles.statItem}>
@@ -407,7 +413,7 @@ const InfluencerProfile: React.FC = () => {
               </TouchableOpacity>
               <TouchableOpacity style={styles.statItem}>
                 <Text style={styles.statNumber}>
-                  {influencer.total_followers >= 1000 
+                  {influencer.total_followers >= 1000
                     ? `${(influencer.total_followers / 1000).toFixed(1)}K`
                     : influencer.total_followers}
                 </Text>
@@ -435,7 +441,7 @@ const InfluencerProfile: React.FC = () => {
 
           {/* Action Buttons */}
           <View style={styles.actionButtonsRow}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[
                 styles.primaryActionButton,
                 isFollowing && styles.followingButton
@@ -467,14 +473,14 @@ const InfluencerProfile: React.FC = () => {
         {/* Instagram-like Tab Bar */}
         <View style={styles.tabBarContainer}>
           <View style={styles.tabBarInner}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.tabItem, activeTab === 'posts' && styles.activeTabItem]}
               onPress={() => setActiveTab('posts')}
             >
-              <Ionicons 
-                name="grid" 
-                size={20} 
-                color={activeTab === 'posts' ? '#000' : '#999'} 
+              <Ionicons
+                name="grid"
+                size={20}
+                color={activeTab === 'posts' ? '#000' : '#999'}
               />
               <Text style={[styles.tabText, activeTab === 'posts' && styles.activeTabText]}>
                 POSTS
@@ -482,14 +488,14 @@ const InfluencerProfile: React.FC = () => {
               {activeTab === 'posts' && <View style={styles.tabIndicator} />}
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.tabItem, activeTab === 'products' && styles.activeTabItem]}
               onPress={() => setActiveTab('products')}
             >
-              <Ionicons 
-                name="storefront" 
-                size={20} 
-                color={activeTab === 'products' ? '#000' : '#999'} 
+              <Ionicons
+                name="storefront"
+                size={20}
+                color={activeTab === 'products' ? '#000' : '#999'}
               />
               <Text style={[styles.tabText, activeTab === 'products' && styles.activeTabText]}>
                 PRODUCTS
@@ -527,11 +533,42 @@ const InfluencerProfile: React.FC = () => {
           {/* Products Tab */}
           {activeTab === 'products' && (
             <View style={styles.contentSection}>
-              <View style={styles.emptyState}>
-                <Ionicons name="storefront-outline" size={64} color="#DDD" />
-                <Text style={styles.emptyStateTitle}>No Products Yet</Text>
-                <Text style={styles.emptyStateSubtitle}>Products promoted by {influencer?.name || 'this influencer'} will appear here</Text>
-              </View>
+              {influencerProducts.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="storefront-outline" size={64} color="#DDD" />
+                  <Text style={styles.emptyStateTitle}>No Products Yet</Text>
+                  <Text style={styles.emptyStateSubtitle}>Products promoted by {influencer?.name || 'this influencer'} will appear here</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={influencerProducts}
+                  renderItem={({ item }) => {
+                    const price = item.product_variants?.[0]?.price || 0;
+                    const imageUrl = item.image_urls?.[0] || item.product_variants?.[0]?.image_urls?.[0];
+                    return (
+                      <TouchableOpacity
+                        style={styles.productItem}
+                        onPress={() => navigation.navigate('ProductDetails' as never, { product: item } as never)}
+                      >
+                        <Image
+                          source={{ uri: imageUrl || 'https://via.placeholder.com/150' }}
+                          style={styles.productImage}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.productInfo}>
+                          <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
+                          <Text style={styles.productPrice}>₹{price.toFixed(2)}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  }}
+                  keyExtractor={(item) => item.id}
+                  numColumns={2}
+                  scrollEnabled={false}
+                  contentContainerStyle={styles.productsGrid}
+                  columnWrapperStyle={styles.productsRow}
+                />
+              )}
             </View>
           )}
         </View>
@@ -768,6 +805,44 @@ const styles = StyleSheet.create({
     color: 'white',
     marginLeft: 4,
     fontWeight: '600',
+  },
+  productsGrid: {
+    padding: 8,
+  },
+  productsRow: {
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  productItem: {
+    width: (width - 28) / 2,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    marginBottom: 4,
+  },
+  productImage: {
+    width: '100%',
+    height: 200,
+    backgroundColor: '#f0f0f0',
+  },
+  productInfo: {
+    padding: 8,
+  },
+  productName: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 4,
+  },
+  productPrice: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#000',
   },
   tabContent: {
     flex: 1,

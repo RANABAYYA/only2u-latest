@@ -23,6 +23,7 @@ import UserManagement from '~/screens/UserManagement';
 import SettingsManagement from '~/screens/SettingsManagement';
 import SupportTickets from '~/screens/SupportTickets';
 import OrderManagement from '~/screens/OrderManagement';
+import FeedbackManagement from '~/screens/FeedbackManagement';
 import Wishlist from '~/screens/Wishlist';
 import CollectionDetails from '~/screens/CollectionDetails';
 import SharedCollection from '~/screens/SharedCollection';
@@ -55,7 +56,7 @@ const Stack = createStackNavigator();
 // Custom smooth easing configuration
 const customTransitionSpec = {
   open: {
-    animation: 'spring',
+    animation: 'spring' as const,
     config: {
       stiffness: 1000,
       damping: 500,
@@ -66,7 +67,7 @@ const customTransitionSpec = {
     },
   },
   close: {
-    animation: 'spring',
+    animation: 'spring' as const,
     config: {
       stiffness: 1000,
       damping: 500,
@@ -140,6 +141,7 @@ const AdminStack = () => {
       <Stack.Screen name="ProductManagement" component={ProductManagement} />
       <Stack.Screen name="ColorManagement" component={ColorManagement} />
       <Stack.Screen name="SupportTickets" component={SupportTickets} />
+      <Stack.Screen name="FeedbackManagement" component={FeedbackManagement} />
     </Stack.Navigator>
   );
 };

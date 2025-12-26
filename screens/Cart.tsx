@@ -89,7 +89,7 @@ const Cart = () => {
   const { cartItems, removeFromCart, updateQuantity, addToCart, toggleReseller, updateResellerPrice } = useCart();
   const { userData, setUserData } = useUser();
   const { addToWishlist } = useWishlist();
-  
+
   // Reseller modal state
   const [showResellerModal, setShowResellerModal] = useState(false);
   const [selectedItemForResell, setSelectedItemForResell] = useState<any>(null);
@@ -99,15 +99,15 @@ const Cart = () => {
   const [selectedItemForSize, setSelectedItemForSize] = useState<any>(null);
   const [availableSizes, setAvailableSizes] = useState<string[]>([]);
   const [selectedNewSize, setSelectedNewSize] = useState<string>('');
-  
+
   // Collection sheet state
   const [showCollectionSheet, setShowCollectionSheet] = useState(false);
   const [productForCollection, setProductForCollection] = useState<any>(null);
-  
+
   // Remove item modal state
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [itemToRemove, setItemToRemove] = useState<any>(null);
-  
+
   // Save for later loading state
   const [savingToWishlist, setSavingToWishlist] = useState<string | null>(null);
 
@@ -994,10 +994,10 @@ const Cart = () => {
         stack: error?.stack,
         fullError: error,
       });
-      
+
       // Payment failed or cancelled
       const errorMessage = error?.message || 'Payment failed. Please try again.';
-      
+
       // Check if it's a setup/configuration error
       if (errorMessage.includes('not available') || errorMessage.includes('not installed') || errorMessage.includes('not configured')) {
         setPaymentErrorDetails({
@@ -1021,7 +1021,7 @@ const Cart = () => {
         });
         setShowPaymentErrorModal(true);
       }
-      
+
       throw error;
     }
   };
@@ -1447,8 +1447,51 @@ const Cart = () => {
         }
         return false;
       }
-      
-      console.log('[Cart] Found coupon:', coupon.code, 'Discount:', coupon.discount_type, coupon.discount_value);
+
+      // Prevent users from using their own referral code
+      // We allow WELCOME coupons (which are created by the user for themselves)
+      // But blocks referral codes (which are created by the user for others)
+      if (coupon.created_by === userData?.id) {
+        const isWelcomeCoupon = coupon.code?.startsWith('WELCOME') || coupon.description?.toLowerCase().includes('welcome');
+        const isReferralCode = coupon.description?.toLowerCase().includes('referral invite');
+
+        if (!isWelcomeCoupon && isReferralCode) {
+          if (silentMode) {
+            console.warn('[Cart] Self-referral not allowed:', codeToApply);
+          } else {
+            Toast.show({
+              type: 'error',
+              text1: 'Invalid Coupon',
+              text2: 'You cannot use your own referral code',
+            });
+          }
+          return false;
+        }
+      }
+
+      console.log('[Cart] Found coupon:', coupon.code, 'Discount:', coupon.discount_type, coupon.discount_value, 'Desc:', coupon.description);
+
+      // Prevent users from using their own referral code
+      // We allow WELCOME coupons (which are created by the user for themselves)
+      // We allow REFREWARD coupons (which are earned by the user)
+      // Everything else created by the user is likely a shareable referral code -> Block it
+      if (coupon.created_by === userData?.id) {
+        const isWelcomeCoupon = coupon.code?.startsWith('WELCOME') || coupon.description?.toLowerCase().includes('welcome');
+        const isReferralReward = coupon.code?.startsWith('REFREWARD') || coupon.description?.toLowerCase().includes('referral reward');
+
+        if (!isWelcomeCoupon && !isReferralReward) {
+          if (silentMode) {
+            console.warn('[Cart] Self-referral/Self-created coupon not allowed:', codeToApply);
+          } else {
+            Toast.show({
+              type: 'error',
+              text1: 'Invalid Coupon',
+              text2: 'You cannot use your own referral code',
+            });
+          }
+          return false;
+        }
+      }
 
       const now = new Date();
       if (coupon.start_date && new Date(coupon.start_date) > now) {
@@ -1544,11 +1587,11 @@ const Cart = () => {
       if (coupon.discount_type === 'percentage') {
         discount = Math.round((currentSubtotalForDiscount * coupon.discount_value) / 100);
         couponDescription = `${coupon.discount_value}% off`;
-        
+
         // Apply max discount cap for referral reward coupon (10% capped at referral_count * 100)
         if (coupon.code?.startsWith('REFREWARD')) {
           let maxDiscount = null;
-          
+
           // Try to get max_discount_value from column (if it exists)
           if (coupon.max_discount_value) {
             maxDiscount = coupon.max_discount_value;
@@ -1559,7 +1602,7 @@ const Cart = () => {
               maxDiscount = parseInt(descriptionMatch[1], 10);
             }
           }
-          
+
           if (maxDiscount) {
             discount = Math.min(discount, maxDiscount);
             console.log('[Cart] Referral reward coupon discount capped:', {
@@ -1587,7 +1630,7 @@ const Cart = () => {
         text1: successMessage,
         text2: `${coupon.description || couponDescription} - You saved ₹${discount}`,
       });
-      
+
       console.log('[Cart] Coupon successfully applied:', codeToApply, 'Discount:', discount);
       return true;
     } catch (error) {
@@ -1642,23 +1685,23 @@ const Cart = () => {
 
   const handleConfirmResellerPrice = () => {
     if (!selectedItemForResell) return;
-    
+
     const price = parseFloat(resellerPriceInput);
     const originalPrice = selectedItemForResell.price * selectedItemForResell.quantity;
-    
+
     if (isNaN(price) || price <= 0) {
       Alert.alert('Invalid Price', 'Please enter a valid price.');
       return;
     }
-    
+
     if (price <= originalPrice) {
       Alert.alert(
-        'Invalid Price', 
+        'Invalid Price',
         `Reseller price must be higher than ₹${originalPrice.toFixed(2)}`
       );
       return;
     }
-    
+
     toggleReseller(selectedItemForResell.id, true);
     updateResellerPrice(selectedItemForResell.id, price);
     setShowResellerModal(false);
@@ -1681,18 +1724,18 @@ const Cart = () => {
   const handleMoveToWishlist = async (item: any) => {
     // Prevent multiple clicks
     if (savingToWishlist === item.id) return;
-    
+
     try {
       // Set loading state
       setSavingToWishlist(item.id);
-      
+
       if (!userData?.id) {
         throw new Error('User not logged in');
       }
 
       // Get or create "Saved for later" collection
       let savedForLaterCollectionId: string | null = null;
-      
+
       // Check if "Saved for later" collection exists
       const { data: existingCollection, error: fetchError } = await supabase
         .from('collections')
@@ -1764,7 +1807,7 @@ const Cart = () => {
         category: item.category,
         variants: item.variants || [],
       });
-      
+
       // Show success toast
       Toast.show({
         type: 'success',
@@ -1772,13 +1815,13 @@ const Cart = () => {
         text2: `${item.name} has been moved to your Saved for later folder`,
         position: 'top',
       });
-      
+
       // Add artificial delay for smooth transition (500ms)
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       // Remove from cart after delay
       removeFromCart(item.id);
-      
+
       // Clear loading state
       setSavingToWishlist(null);
     } catch (error) {
@@ -1799,12 +1842,12 @@ const Cart = () => {
       // Fetch available sizes for this product from product_variants
       try {
         const { supabase } = await import('~/utils/supabase');
-        
+
         // Get the product name to find matching product_variants
         const productName = currentItem.name;
-        
+
         console.log('Fetching sizes for product:', productName);
-        
+
         // Query by product name to get all available sizes
         // This is more reliable than using product_id since cart items may have generated IDs
         const { data: allVariants, error: nameError } = await supabase
@@ -1829,7 +1872,7 @@ const Cart = () => {
         if (nameError || !allVariants || allVariants.length === 0) {
           console.error('Error fetching by product name:', nameError);
           // Fallback to just updating quantity
-    updateQuantity(id, newQuantity);
+          updateQuantity(id, newQuantity);
           return;
         }
 
@@ -1892,7 +1935,7 @@ const Cart = () => {
   };
 
   // Cache variant pricing fetched from DB by SKU
-  const [variantPricingBySku, setVariantPricingBySku] = useState<{ [sku: string]: { mrp: number; rsp: number; discountPct: number } } >({});
+  const [variantPricingBySku, setVariantPricingBySku] = useState<{ [sku: string]: { mrp: number; rsp: number; discountPct: number } }>({});
 
   // Helper: derive MRP/RSP/discount from cart item (prefer variant fields)
   const getItemPricing = (item: any) => {
@@ -1966,38 +2009,38 @@ const Cart = () => {
   // Calculate totals based on variant RSP/MRP - memoized for performance
   const subtotalMrp = useMemo(() => {
     return cartItems.reduce((sum, item) => {
-    const { mrp } = getItemPricing(item);
-    return sum + (mrp * (item.quantity || 1));
-  }, 0);
+      const { mrp } = getItemPricing(item);
+      return sum + (mrp * (item.quantity || 1));
+    }, 0);
   }, [cartItems, variantPricingBySku]);
 
   const subtotalRspBase = useMemo(() => {
     return cartItems.reduce((sum, item) => {
-    const { rsp } = getItemPricing(item);
-    return sum + (rsp * (item.quantity || 1));
-  }, 0);
+      const { rsp } = getItemPricing(item);
+      return sum + (rsp * (item.quantity || 1));
+    }, 0);
   }, [cartItems, variantPricingBySku]);
 
   // Include reseller override if set
   const subtotalWithReseller = useMemo(() => {
     return cartItems.reduce((sum, item) => {
-    if (item.isReseller && item.resellerPrice) return sum + item.resellerPrice;
-    const { rsp } = getItemPricing(item);
-    return sum + (rsp * (item.quantity || 1));
-  }, 0);
+      if (item.isReseller && item.resellerPrice) return sum + item.resellerPrice;
+      const { rsp } = getItemPricing(item);
+      return sum + (rsp * (item.quantity || 1));
+    }, 0);
   }, [cartItems, variantPricingBySku]);
 
   const totalResellerProfit = useMemo(() => {
     return cartItems.reduce((sum, item) => {
-    if (item.isReseller && item.resellerPrice) {
-      const { rsp } = getItemPricing(item);
-      const originalPrice = rsp * (item.quantity || 1);
-      return sum + (item.resellerPrice - originalPrice);
-    }
-    return sum;
-  }, 0);
+      if (item.isReseller && item.resellerPrice) {
+        const { rsp } = getItemPricing(item);
+        const originalPrice = rsp * (item.quantity || 1);
+        return sum + (item.resellerPrice - originalPrice);
+      }
+      return sum;
+    }, 0);
   }, [cartItems, variantPricingBySku]);
-  
+
   const resellerItemsCount = useMemo(() => {
     return cartItems.filter(item => item.isReseller).length;
   }, [cartItems]);
@@ -2208,7 +2251,7 @@ const Cart = () => {
   ]);
 
   useEffect(() => {
-    return () => {};
+    return () => { };
   }, []);
 
   const handleApplyCoinDiscount = useCallback(() => {
@@ -2268,21 +2311,21 @@ const Cart = () => {
     };
 
     return (
-    <View key={item.id} style={styles.cartItem}>
+      <View key={item.id} style={styles.cartItem}>
         <View style={styles.cartItemContent}>
           <View style={styles.itemImageColumn}>
-      <TouchableOpacity
-        onPress={() => {
-          (navigation as any).navigate('ProductDetails', {
-            productId: item.sku || item.id,
+            <TouchableOpacity
+              onPress={() => {
+                (navigation as any).navigate('ProductDetails', {
+                  productId: item.sku || item.id,
                   product: productForDetails,
-          });
-        }}
-        activeOpacity={0.9}
-        style={styles.itemImageContainer}
-      >
-        <Image source={{ uri: item.image }} style={styles.itemImage} />
-      </TouchableOpacity>
+                });
+              }}
+              activeOpacity={0.9}
+              style={styles.itemImageContainer}
+            >
+              <Image source={{ uri: item.image }} style={styles.itemImage} />
+            </TouchableOpacity>
 
             <View style={styles.imageQuantityWrapper}>
               <View style={styles.quantityContainer}>
@@ -2305,144 +2348,144 @@ const Cart = () => {
             </View>
           </View>
 
-      <View style={styles.itemDetails}>
-        <View style={styles.itemHeader}>
-          <TouchableOpacity
-            style={styles.itemNameContainer}
-            onPress={() => {
-              (navigation as any).navigate('ProductDetails', {
-                productId: item.sku || item.id,
-                product: productForDetails,
-              });
-            }}
-            activeOpacity={0.7}
-          >
-            <View style={styles.itemNameRow}>
-              <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-            </View>
-            <View style={styles.itemAttributes}>
-              {item.size && (
-                <View style={styles.attributeChip}>
-                  <Text style={styles.attributeText}>Size: {item.size}</Text>
+          <View style={styles.itemDetails}>
+            <View style={styles.itemHeader}>
+              <TouchableOpacity
+                style={styles.itemNameContainer}
+                onPress={() => {
+                  (navigation as any).navigate('ProductDetails', {
+                    productId: item.sku || item.id,
+                    product: productForDetails,
+                  });
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={styles.itemNameRow}>
+                  <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
                 </View>
-              )}
-              {/* {item.color && (
+                <View style={styles.itemAttributes}>
+                  {item.size && (
+                    <View style={styles.attributeChip}>
+                      <Text style={styles.attributeText}>Size: {item.size}</Text>
+                    </View>
+                  )}
+                  {/* {item.color && (
                 <View style={styles.attributeChip}>
                   <Text style={styles.attributeText}>{item.color}</Text>
                 </View>
               )} */}
+                </View>
+              </TouchableOpacity>
             </View>
-          </TouchableOpacity>
-        </View>
 
-        <View style={styles.itemFooter}>
-          <View style={styles.priceContainer}>
-            {mrp > rsp && (
-              <Text style={styles.itemMrpStriked}>₹{totalMrp.toFixed(2)}</Text>
+            <View style={styles.itemFooter}>
+              <View style={styles.priceContainer}>
+                {mrp > rsp && (
+                  <Text style={styles.itemMrpStriked}>₹{totalMrp.toFixed(2)}</Text>
+                )}
+                <Text style={styles.itemPrice}>₹{displayLineTotal.toFixed(2)}</Text>
+              </View>
+            </View>
+
+            {saveAmount > 0 && (
+              <Text style={styles.itemSavingsTextFull}>
+                You save ₹{saveAmount.toFixed(0)} ({discountPct}% OFF)
+              </Text>
             )}
-            <Text style={styles.itemPrice}>₹{displayLineTotal.toFixed(2)}</Text>
-          </View>
-        </View>
 
-          {saveAmount > 0 && (
-            <Text style={styles.itemSavingsTextFull}>
-              You save ₹{saveAmount.toFixed(0)} ({discountPct}% OFF)
-            </Text>
-          )}
-
-          {/* {item.stock && item.stock <= 5 && (
+            {/* {item.stock && item.stock <= 5 && (
           <View style={styles.stockWarning}>
             <Ionicons name="alert-circle" size={14} color="#F59E0B" />
             <Text style={styles.stockWarningText}>Only {item.stock} left in stock</Text>
           </View>
           )} */}
 
-        {/* Action Buttons Section - Right aligned */}
-        <View style={styles.actionButtonsSection}>
-          {/* Save for Later Button */}
-          <TouchableOpacity 
-            style={[styles.saveForLaterButton, savingToWishlist === item.id && styles.saveForLaterButtonLoading]}
-            onPress={() => handleMoveToWishlist(item)}
-            activeOpacity={0.7}
-            disabled={savingToWishlist === item.id}
-          >
-            {savingToWishlist === item.id ? (
-              <ActivityIndicator size="small" color="#F53F7A" />
-            ) : (
-              <Ionicons name="bookmark-outline" size={14} color="#F53F7A" />
-            )}
-            <Text style={[styles.saveForLaterText, savingToWishlist === item.id && styles.saveForLaterTextLoading]}>
-              {savingToWishlist === item.id ? 'Saving...' : 'Save for later'}
-            </Text>
-          </TouchableOpacity>
+            {/* Action Buttons Section - Right aligned */}
+            <View style={styles.actionButtonsSection}>
+              {/* Save for Later Button */}
+              <TouchableOpacity
+                style={[styles.saveForLaterButton, savingToWishlist === item.id && styles.saveForLaterButtonLoading]}
+                onPress={() => handleMoveToWishlist(item)}
+                activeOpacity={0.7}
+                disabled={savingToWishlist === item.id}
+              >
+                {savingToWishlist === item.id ? (
+                  <ActivityIndicator size="small" color="#F53F7A" />
+                ) : (
+                  <Ionicons name="bookmark-outline" size={14} color="#F53F7A" />
+                )}
+                <Text style={[styles.saveForLaterText, savingToWishlist === item.id && styles.saveForLaterTextLoading]}>
+                  {savingToWishlist === item.id ? 'Saving...' : 'Save for later'}
+                </Text>
+              </TouchableOpacity>
 
-        {/* Reseller Section - Only show checkbox if NOT yet set */}
-        {!item.isReseller && (
-            <TouchableOpacity 
-              style={styles.resellerButton}
-              onPress={() => handleResellerToggle(item)}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="trending-up" size={14} color="#10B981" />
-              <Text style={styles.resellerButtonText}>Reselling this item</Text>
-            </TouchableOpacity>
-        )}
-        </View>
-      </View>
-    </View>
-
-    {/* Earnings Badge - Full Width */}
-    {item.isReseller && item.resellerPrice && (
-      <View style={styles.earningsBadge}>
-        <View style={styles.earningsHeader}>
-          <View style={styles.earningsHeaderLeft}>
-            <Ionicons name="cash-outline" size={16} color="#10B981" />
-            <Text style={styles.earningsHeaderTitle}>Reseller Earnings</Text>
-          </View>
-          <View style={styles.earningsActions}>
-            <TouchableOpacity 
-              style={styles.earningsEditButton}
-              onPress={() => {
-                setSelectedItemForResell(item);
-                setResellerPriceInput(item.resellerPrice.toString());
-                setShowResellerModal(true);
-              }}>
-              <Ionicons name="create-outline" size={14} color="#10B981" />
-              <Text style={styles.earningsEditText}>Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.earningsDeleteButton}
-              onPress={() => handleResellerToggle(item)}>
-              <Ionicons name="trash-outline" size={14} color="#EF4444" />
-            </TouchableOpacity>
-          </View>
-        </View>
-        <View style={styles.earningsBody}>
-          <View style={styles.earningsColumn}>
-            <Text style={styles.earningsLabel}>Selling Price</Text>
-            <Text style={styles.earningsValue}>₹{lineTotal.toFixed(2)}</Text>
-          </View>
-          <View style={styles.earningsColumnDivider} />
-          <View style={styles.earningsColumn}>
-            <Text style={styles.earningsLabel}>Your Profit</Text>
-            <View style={styles.profitValueRow}>
-              <Ionicons name="trending-up" size={14} color="#10B981" />
-              <Text style={styles.earningsProfit}>
-                +₹{resellerProfitAmount.toFixed(2)}
-              </Text>
+              {/* Reseller Section - Only show checkbox if NOT yet set */}
+              {!item.isReseller && (
+                <TouchableOpacity
+                  style={styles.resellerButton}
+                  onPress={() => handleResellerToggle(item)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="trending-up" size={14} color="#10B981" />
+                  <Text style={styles.resellerButtonText}>Reselling this item</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>
+
+        {/* Earnings Badge - Full Width */}
+        {item.isReseller && item.resellerPrice && (
+          <View style={styles.earningsBadge}>
+            <View style={styles.earningsHeader}>
+              <View style={styles.earningsHeaderLeft}>
+                <Ionicons name="cash-outline" size={16} color="#10B981" />
+                <Text style={styles.earningsHeaderTitle}>Reseller Earnings</Text>
+              </View>
+              <View style={styles.earningsActions}>
+                <TouchableOpacity
+                  style={styles.earningsEditButton}
+                  onPress={() => {
+                    setSelectedItemForResell(item);
+                    setResellerPriceInput(item.resellerPrice.toString());
+                    setShowResellerModal(true);
+                  }}>
+                  <Ionicons name="create-outline" size={14} color="#10B981" />
+                  <Text style={styles.earningsEditText}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.earningsDeleteButton}
+                  onPress={() => handleResellerToggle(item)}>
+                  <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={styles.earningsBody}>
+              <View style={styles.earningsColumn}>
+                <Text style={styles.earningsLabel}>Selling Price</Text>
+                <Text style={styles.earningsValue}>₹{lineTotal.toFixed(2)}</Text>
+              </View>
+              <View style={styles.earningsColumnDivider} />
+              <View style={styles.earningsColumn}>
+                <Text style={styles.earningsLabel}>Your Profit</Text>
+                <View style={styles.profitValueRow}>
+                  <Ionicons name="trending-up" size={14} color="#10B981" />
+                  <Text style={styles.earningsProfit}>
+                    +₹{resellerProfitAmount.toFixed(2)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
-    )}
-    </View>
-  );
+    );
   };
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-      
+
       {showCoinCelebration && (
         <View pointerEvents="none" style={styles.coinConfettiOverlay}>
           {coinConfettiAnims.map((anim, index) => {
@@ -2518,7 +2561,7 @@ const Cart = () => {
 
       {cartItems.length === 0 ? (
         // Empty Cart
-        <ScrollView 
+        <ScrollView
           contentContainerStyle={styles.emptyCartContainer}
           showsVerticalScrollIndicator={false}
         >
@@ -2533,8 +2576,8 @@ const Cart = () => {
             <Text style={styles.emptyCartSubtitle}>
               Add items you love to your cart and they will appear here
             </Text>
-            <TouchableOpacity 
-              style={styles.startShoppingButton} 
+            <TouchableOpacity
+              style={styles.startShoppingButton}
               onPress={handleContinueShopping}
             >
               <Text style={styles.startShoppingButtonText}>Start Shopping</Text>
@@ -2546,9 +2589,9 @@ const Cart = () => {
       ) : (
         // Cart with Items
         <>
-          <ScrollView 
+          <ScrollView
             ref={scrollViewRef}
-            style={styles.contentScroll} 
+            style={styles.contentScroll}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={[
               styles.scrollContent,
@@ -2664,7 +2707,7 @@ const Cart = () => {
                         style={[
                           styles.referralRewardButton,
                           (isReferralRewardApplied || referralRewardPotentialDiscount === 0) &&
-                            styles.referralRewardButtonDisabled,
+                          styles.referralRewardButtonDisabled,
                         ]}
                         onPress={handleApplyReferralReward}
                         disabled={isReferralRewardApplied || referralRewardPotentialDiscount === 0}
@@ -2674,8 +2717,8 @@ const Cart = () => {
                           {isReferralRewardApplied
                             ? 'Applied'
                             : referralRewardPotentialDiscount > 0
-                            ? `Apply & Save ₹${referralRewardPotentialDiscount}`
-                            : 'Add items to unlock'}
+                              ? `Apply & Save ₹${referralRewardPotentialDiscount}`
+                              : 'Add items to unlock'}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -2700,7 +2743,7 @@ const Cart = () => {
                             <View style={styles.couponCardText}>
                               <Text style={styles.couponCardCode}>{coupon.code}</Text>
                               <Text style={styles.couponCardDescription} numberOfLines={1}>
-                                {getCouponDescriptionText(coupon.description) || 
+                                {getCouponDescriptionText(coupon.description) ||
                                   (coupon.discount_type === 'fixed'
                                     ? `Flat ₹${coupon.discount_value} off`
                                     : `${coupon.discount_value}% off`) || ''}
@@ -2725,65 +2768,65 @@ const Cart = () => {
                         >
                           <Text style={styles.seeMoreCouponsText}>
                             See {availableCoupons.length - COUPONS_TO_SHOW} more coupons
-                    </Text>
+                          </Text>
                           <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
                         </TouchableOpacity>
                       )}
-                  </View>
+                    </View>
                   )}
                 </>
               )}
 
-          {(eligibleCoinDiscount > 0 || coinDiscountAmount > 0) && (
-            <View
-              style={[
-                styles.couponCoinRow,
-                coinDiscountAmount > 0 && styles.couponCoinRowActive,
-              ]}
-            >
-              <View style={styles.couponCoinLeft}>
-                <View style={styles.couponCoinIcon}>
-                  <Ionicons
-                    name="wallet"
-                    size={16}
-                    color={coinDiscountAmount > 0 ? '#047857' : '#92400E'}
-                  />
-                </View>
-                <View style={styles.couponCoinTextBlock}>
-                  <Text style={styles.couponCoinTitle} numberOfLines={1}>
-                    {coinDiscountAmount > 0
-                      ? `₹${coinDiscountAmount} coin discount applied`
-                      : `Extra ₹${eligibleCoinDiscount} off with coins`}
-                </Text>
-                  <Text style={styles.couponCoinSubtitle} numberOfLines={1}>
-                    {coinDiscountAmount > 0
-                      ? `Remaining coins: ${Math.max(0, userCoinBalance - coinDiscountAmount)}`
-                      : `${userCoinBalance} coins available`}
-                    </Text>
-              </View>
-                </View>
-              <TouchableOpacity
-                style={[
-                  styles.couponCoinButton,
-                  coinDiscountAmount > 0 && styles.couponCoinButtonApplied,
-                ]}
-                onPress={
-                  coinDiscountAmount > 0 ? handleRemoveCoinDiscount : handleApplyCoinDiscount
-                }
-                activeOpacity={0.85}
-                disabled={eligibleCoinDiscount <= 0 && coinDiscountAmount === 0}
-              >
-                <Text
+              {(eligibleCoinDiscount > 0 || coinDiscountAmount > 0) && (
+                <View
                   style={[
-                    styles.couponCoinButtonText,
-                    coinDiscountAmount > 0 && styles.couponCoinButtonTextApplied,
+                    styles.couponCoinRow,
+                    coinDiscountAmount > 0 && styles.couponCoinRowActive,
                   ]}
                 >
-                  {coinDiscountAmount > 0 ? 'Applied' : 'Apply'}
-                </Text>
-              </TouchableOpacity>
-              </View>
-          )}
+                  <View style={styles.couponCoinLeft}>
+                    <View style={styles.couponCoinIcon}>
+                      <Ionicons
+                        name="wallet"
+                        size={16}
+                        color={coinDiscountAmount > 0 ? '#047857' : '#92400E'}
+                      />
+                    </View>
+                    <View style={styles.couponCoinTextBlock}>
+                      <Text style={styles.couponCoinTitle} numberOfLines={1}>
+                        {coinDiscountAmount > 0
+                          ? `₹${coinDiscountAmount} coin discount applied`
+                          : `Extra ₹${eligibleCoinDiscount} off with coins`}
+                      </Text>
+                      <Text style={styles.couponCoinSubtitle} numberOfLines={1}>
+                        {coinDiscountAmount > 0
+                          ? `Remaining coins: ${Math.max(0, userCoinBalance - coinDiscountAmount)}`
+                          : `${userCoinBalance} coins available`}
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.couponCoinButton,
+                      coinDiscountAmount > 0 && styles.couponCoinButtonApplied,
+                    ]}
+                    onPress={
+                      coinDiscountAmount > 0 ? handleRemoveCoinDiscount : handleApplyCoinDiscount
+                    }
+                    activeOpacity={0.85}
+                    disabled={eligibleCoinDiscount <= 0 && coinDiscountAmount === 0}
+                  >
+                    <Text
+                      style={[
+                        styles.couponCoinButtonText,
+                        coinDiscountAmount > 0 && styles.couponCoinButtonTextApplied,
+                      ]}
+                    >
+                      {coinDiscountAmount > 0 ? 'Applied' : 'Apply'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
 
           </ScrollView>
@@ -2793,21 +2836,21 @@ const Cart = () => {
             <View style={styles.footerPriceInfo}>
               <View style={styles.totalPriceLabelRow}>
                 <Text style={styles.footerPriceLabel}>Total Price</Text>
-            </View>
+              </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={styles.footerPriceValue}>₹{finalTotal.toFixed(2)}</Text>
+                <Text style={styles.footerPriceValue}>₹{finalTotal.toFixed(2)}</Text>
                 <TouchableOpacity
                   onPress={() => setShowPriceBreakdownSheet(true)}
                   activeOpacity={0.7}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
                   <Ionicons name="chevron-down" size={18} color="#6B7280" />
-            </TouchableOpacity>
+                </TouchableOpacity>
               </View>
             </View>
-            
+
             <View style={styles.footerButtonsRow}>
-            <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.paymentSelectButton}
                 onPress={() => setShowPaymentModal(true)}
                 activeOpacity={0.9}
@@ -2821,13 +2864,13 @@ const Cart = () => {
                 <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
               </TouchableOpacity>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[
                   styles.checkoutButton,
                   placingOrder && { opacity: 0.7 },
-                ]} 
+                ]}
                 onPress={handlePlaceOrder}
-              activeOpacity={0.8}
+                activeOpacity={0.8}
                 disabled={placingOrder}
               >
                 {placingOrder ? (
@@ -2835,10 +2878,10 @@ const Cart = () => {
                 ) : (
                   <>
                     <Text style={styles.checkoutButtonText}>Place Order</Text>
-              <Ionicons name="arrow-forward" size={20} color="#fff" />
+                    <Ionicons name="arrow-forward" size={20} color="#fff" />
                   </>
                 )}
-            </TouchableOpacity>
+              </TouchableOpacity>
             </View>
           </View>
         </>
@@ -3065,14 +3108,14 @@ const Cart = () => {
                     setResellerPriceInput(text);
                   }}
                   autoFocus={true}
-                      />
-                    </View>
+                />
+              </View>
 
               {resellerPriceInput && selectedItemForResell && (() => {
                 const enteredPrice = parseFloat(resellerPriceInput);
                 const originalPrice = selectedItemForResell.price * selectedItemForResell.quantity;
                 const profit = enteredPrice - originalPrice;
-                
+
                 if (!isNaN(enteredPrice)) {
                   if (enteredPrice <= originalPrice) {
                     return (
@@ -3090,7 +3133,7 @@ const Cart = () => {
                         <Text style={styles.profitPreviewText}>
                           Your Profit: ₹{profit.toFixed(2)}
                         </Text>
-                    </View>
+                      </View>
                     );
                   }
                 }
@@ -3101,22 +3144,22 @@ const Cart = () => {
                 <Ionicons name="information-circle" size={16} color="#666" />
                 <Text style={styles.modalInfoText}>
                   Set a price higher than the original to earn profit when reselling
-                    </Text>
+                </Text>
               </View>
             </View>
 
             <View style={styles.modalActions}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.modalCancelButton}
                 onPress={handleCancelResellerModal}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.modalConfirmButton}
                 onPress={handleConfirmResellerPrice}>
                 <Text style={styles.modalConfirmText}>Confirm</Text>
               </TouchableOpacity>
-                      </View>
+            </View>
           </View>
         </View>
       </Modal>
@@ -3136,8 +3179,8 @@ const Cart = () => {
               <Text style={styles.modalTitle}>Select Size</Text>
               <Text style={styles.modalSubtitle}>
                 Choose a size for the additional item
-                          </Text>
-                      </View>
+              </Text>
+            </View>
 
             <View style={styles.modalBody}>
               <Text style={styles.inputLabel}>Available Sizes</Text>
@@ -3169,12 +3212,12 @@ const Cart = () => {
             </View>
 
             <View style={styles.modalActions}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.modalCancelButton}
                 onPress={() => setShowSizeModal(false)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.modalConfirmButton, styles.sizeModalConfirmButton]}
                 onPress={handleConfirmSizeSelection}>
                 <Text style={styles.modalConfirmText}>Add to Cart</Text>
@@ -3271,17 +3314,17 @@ const Cart = () => {
             {/* Icon */}
             <View style={styles.paymentErrorIconContainer}>
               <View style={styles.paymentErrorIconBg}>
-                <Ionicons 
-                  name={paymentErrorDetails.title.includes('Cancelled') ? 'close-circle' : 'alert-circle'} 
-                  size={48} 
-                  color={paymentErrorDetails.title.includes('Cancelled') ? '#F59E0B' : '#EF4444'} 
+                <Ionicons
+                  name={paymentErrorDetails.title.includes('Cancelled') ? 'close-circle' : 'alert-circle'}
+                  size={48}
+                  color={paymentErrorDetails.title.includes('Cancelled') ? '#F59E0B' : '#EF4444'}
                 />
               </View>
             </View>
 
             {/* Title */}
             <Text style={styles.paymentErrorTitle}>{paymentErrorDetails.title}</Text>
-            
+
             {/* Message */}
             <Text style={styles.paymentErrorMessage}>{paymentErrorDetails.message}</Text>
 
