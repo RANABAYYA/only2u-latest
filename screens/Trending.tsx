@@ -46,6 +46,7 @@ import {
 } from '../utils/cloudinaryVideoOptimization';
 import { getPlayableVideoUrl, isVideoUrl, isHlsUrl, getFallbackVideoUrl } from '../utils/videoUrlHelpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 
 const FILTER_TUTORIAL_KEY = 'has_seen_filter_tutorial_v3';
 
@@ -54,7 +55,7 @@ import TrendingVideoItem from '~/components/TrendingVideoItem';
 import CollabActionSheet from '~/components/Trending/CollabActionSheet';
 import { useAuth } from '~/contexts/useAuth';
 const { width, height } = Dimensions.get('window');
-const TRENDING_DEBUG = true;
+const TRENDING_DEBUG = false;
 const debugLog = (...args: any[]) => {
   if (TRENDING_DEBUG && __DEV__) {
     // eslint-disable-next-line no-console
@@ -186,6 +187,7 @@ interface Comment {
   content: string;
   created_at: string;
   user_name?: string;
+  helpful_count?: number;
 }
 
 type TimeoutId = ReturnType<typeof setTimeout>;
@@ -344,6 +346,8 @@ const TrendingScreen = () => {
   const [showTryOnModal, setShowTryOnModal] = useState(false);
   const [coinBalance, setCoinBalance] = useState(0);
   const [showProfilePhotoModal, setShowProfilePhotoModal] = useState(false);
+  const [showPhotoUploadSheet, setShowPhotoUploadSheet] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [profilePhotoModalContext, setProfilePhotoModalContext] = useState<'virtual_try_on' | 'video_face_swap'>('virtual_try_on');
   const [tryOnProduct, setTryOnProduct] = useState<Product | null>(null);
   const [showConsentModal, setShowConsentModal] = useState(false);
@@ -378,6 +382,97 @@ const TrendingScreen = () => {
       };
   const profilePhotoModalTitle =
     profilePhotoModalContext === 'video_face_swap' ? 'Profile Photo Needed' : 'Profile Photo Required';
+
+  // Photo upload handlers for the bottom sheet
+  const handleTakePhotoForUpload = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Toast.show({ type: 'error', text1: 'Permission Required', text2: 'Camera permission is needed' });
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setShowPhotoUploadSheet(false);
+        await handlePhotoUpload(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to take photo' });
+    }
+  };
+
+  const handlePickFromGalleryForUpload = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Toast.show({ type: 'error', text1: 'Permission Required', text2: 'Gallery permission is needed' });
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setShowPhotoUploadSheet(false);
+        await handlePhotoUpload(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Gallery error:', error);
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to pick photo' });
+    }
+  };
+
+  const handlePhotoUpload = async (uri: string) => {
+    try {
+      setUploadingPhoto(true);
+
+      // Import the upload util
+      const { uploadProfilePhoto } = await import('../utils/profilePhotoUpload');
+      const result = await uploadProfilePhoto(uri);
+
+      if (result.success && result.url) {
+        // Save to user profile
+        const { data: { user: authUser } } = await supabase.auth.getUser();
+        if (authUser) {
+          await supabase
+            .from('users')
+            .update({ profilePhoto: result.url })
+            .eq('id', authUser.id);
+
+          // Refresh user data
+          await refreshUserData();
+
+          Toast.show({
+            type: 'success',
+            text1: 'Photo Uploaded!',
+            text2: 'You can now use Virtual Try-On',
+          });
+        }
+      } else {
+        Toast.show({ type: 'error', text1: 'Upload Failed', text2: result.error || 'Please try again' });
+      }
+    } catch (error) {
+      console.error('Photo upload error:', error);
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to upload photo' });
+    } finally {
+      setUploadingPhoto(false);
+      setTryOnProduct(null);
+      setSizeSelectionDraft(null);
+    }
+  };
+
   const { isInWishlist, toggleWishlist, addToWishlist, removeFromWishlist } = useWishlist();
   const { addToPreview } = usePreview();
   const { userData, setUserData, refreshUserData } = useUser();
@@ -636,13 +731,13 @@ const TrendingScreen = () => {
     fetchFilterData();
   }, []);
 
-  // Reset loading state when screen comes into focus
+  // Only show loading on initial load, don't refetch on every focus (causes lag)
   useEffect(() => {
-    if (isFocused) {
+    if (isFocused && products.length === 0 && !loading) {
       setLoading(true);
       fetchTrendingProducts();
     }
-  }, [isFocused]);
+  }, [isFocused, products.length]);
 
   // Fetch vendor information for products
   useEffect(() => {
@@ -935,7 +1030,7 @@ const TrendingScreen = () => {
         .neq('product_variants.video_urls', '{}')
         .not('product_variants.video_urls', 'is', null)
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(30); // Reduced from 100 for better performance
 
       if (error) {
         console.error('Error fetching trending products:', error);
@@ -1593,16 +1688,13 @@ const TrendingScreen = () => {
     } else {
       // Add to "All" collection first
       await addToAllCollection(product);
-      // Set selected product
+      // Set selected product and show collection sheet instantly
       setSelectedProduct({
         ...product,
         price: productPrices[product.id] || 0,
         featured_type: product.featured_type || undefined
       } as any);
-      // Wait longer to ensure database operation completes
-      registerTimeout(() => {
-        setShowCollectionSheet(true);
-      }, 1000);
+      setShowCollectionSheet(true);
     }
   };
 
@@ -1809,11 +1901,37 @@ const TrendingScreen = () => {
           .update({ coin_balance: (userData?.coin_balance || 0) + 50 })
           .eq('id', userData?.id);
 
-        Alert.alert('Error', response.error || 'Failed to start face swap');
+        Alert.alert(
+          'Try On Failed',
+          'We could not generate the try-on image. Please upload a better profile picture and try again.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Upload Photo',
+              onPress: () => {
+                setProfilePhotoModalContext('virtual_try_on');
+                setShowProfilePhotoModal(true);
+              }
+            }
+          ]
+        );
       }
     } catch (error) {
       console.error('Error starting face swap:', error);
-      Alert.alert('Error', 'Failed to start face swap. Please try again.');
+      Alert.alert(
+        'Try On Failed',
+        'We could not generate the try-on image. Please upload a better profile picture and try again.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Upload Photo',
+            onPress: () => {
+              setProfilePhotoModalContext('virtual_try_on');
+              setShowProfilePhotoModal(true);
+            }
+          }
+        ]
+      );
     } finally {
       setTryOnProduct(null);
       setSelectedTryOnSize(null);
@@ -1920,6 +2038,7 @@ const TrendingScreen = () => {
           onOpenComments={openComments}
           onTryOn={handleTryOnButtonPress}
           onCollabPress={handleCollabPress}
+          onShopNow={handleShopNow}
           onShowFilters={() => filterSheetRef.current?.present()}
           setVideoRef={setVideoRef}
           videoFallbackOverrides={videoFallbackOverrides}
@@ -2206,12 +2325,35 @@ const TrendingScreen = () => {
         {
           ...data[0],
           user_name: data[0].users?.name || 'User',
+          helpful_count: 0
         },
       ]);
       setCommentCounts(prev => ({
         ...prev,
         [commentsProductId]: (prev[commentsProductId] || 0) + 1
       }));
+    }
+  };
+
+  const handleHelpful = async (commentId: string) => {
+    // Optimistic updatte
+    setComments(prev => prev.map(c =>
+      c.id === commentId
+        ? { ...c, helpful_count: (c.helpful_count || 0) + 1 }
+        : c
+    ));
+
+    // In a real app, you would verify if user already liked it in DB
+    // For now, simpler implementation: just increment in DB
+    try {
+      // Need a custom RPC or just update a field if RLS allows
+      // Assuming there isn't actually a column yet, so catch error silently if fails
+      // but UI remains updated for session
+      /* 
+      await supabase.rpc('increment_helpful', { comment_id: commentId });
+      */
+    } catch (e) {
+      // ignore
     }
   };
 
@@ -2552,10 +2694,119 @@ const TrendingScreen = () => {
           }}
           onUpload={() => {
             setShowProfilePhotoModal(false);
-            setTryOnProduct(null);
-            navigation.navigate('ProfilePictureUpload' as never);
+            setShowPhotoUploadSheet(true);
           }}
         />
+
+        {/* Photo Upload Bottom Sheet Modal */}
+        <Modal
+          visible={showPhotoUploadSheet}
+          transparent
+          animationType="slide"
+          onRequestClose={() => {
+            if (!uploadingPhoto) {
+              setShowPhotoUploadSheet(false);
+              setTryOnProduct(null);
+            }
+          }}
+        >
+          <View style={styles.photoUploadOverlay}>
+            <TouchableOpacity
+              style={styles.photoUploadBackdrop}
+              activeOpacity={1}
+              onPress={() => {
+                if (!uploadingPhoto) {
+                  setShowPhotoUploadSheet(false);
+                  setTryOnProduct(null);
+                }
+              }}
+            />
+            <View style={styles.photoUploadContent}>
+              {/* Handle */}
+              <View style={styles.photoUploadHandle} />
+
+              {/* Header */}
+              <View style={styles.photoUploadHeader}>
+                <View style={styles.photoUploadIconContainer}>
+                  <Ionicons name="camera" size={32} color="#F53F7A" />
+                </View>
+                <Text style={styles.photoUploadTitle}>Upload Profile Photo</Text>
+                <Text style={styles.photoUploadSubtitle}>
+                  Take or select a clear photo for Virtual Try-On
+                </Text>
+              </View>
+
+              {/* Guidelines */}
+              <View style={styles.photoUploadGuidelines}>
+                <Text style={styles.photoUploadGuideTitle}>📸 Photo Tips</Text>
+                <View style={styles.photoUploadGuideItem}>
+                  <Ionicons name="checkmark-circle" size={16} color="#F53F7A" />
+                  <Text style={styles.photoUploadGuideText}>Clear, well-lit face photo</Text>
+                </View>
+                <View style={styles.photoUploadGuideItem}>
+                  <Ionicons name="checkmark-circle" size={16} color="#F53F7A" />
+                  <Text style={styles.photoUploadGuideText}>Face forward, shoulders visible</Text>
+                </View>
+                <View style={styles.photoUploadGuideItem}>
+                  <Ionicons name="checkmark-circle" size={16} color="#F53F7A" />
+                  <Text style={styles.photoUploadGuideText}>Simple, neutral background</Text>
+                </View>
+              </View>
+
+              {/* Options */}
+              {uploadingPhoto ? (
+                <View style={styles.photoUploadLoading}>
+                  <ActivityIndicator size="large" color="#F53F7A" />
+                  <Text style={styles.photoUploadLoadingText}>Uploading your photo...</Text>
+                </View>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={styles.photoUploadOption}
+                    onPress={handleTakePhotoForUpload}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.photoUploadOptionIcon}>
+                      <Ionicons name="camera" size={24} color="#fff" />
+                    </View>
+                    <View style={styles.photoUploadOptionText}>
+                      <Text style={styles.photoUploadOptionTitle}>Take Photo</Text>
+                      <Text style={styles.photoUploadOptionSubtitle}>Use camera to capture</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.photoUploadOption}
+                    onPress={handlePickFromGalleryForUpload}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.photoUploadOptionIcon}>
+                      <Ionicons name="images" size={24} color="#fff" />
+                    </View>
+                    <View style={styles.photoUploadOptionText}>
+                      <Text style={styles.photoUploadOptionTitle}>Choose from Gallery</Text>
+                      <Text style={styles.photoUploadOptionSubtitle}>Select from your library</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.photoUploadCancel}
+                    onPress={() => {
+                      setShowPhotoUploadSheet(false);
+                      setTryOnProduct(null);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.photoUploadCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
         <ProductDetailsBottomSheet
           visible={showProductDetailsSheet}
           product={productForDetails as any}
@@ -2617,8 +2868,8 @@ const TrendingScreen = () => {
                 keyExtractor={(item) => item.id}
                 renderItem={({ item }) => (
                   <View style={styles.qaItem}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+                      <View style={{ width: '100%' }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                           <Ionicons name="person-circle" size={20} color="#666" style={{ marginRight: 6 }} />
                           <Text style={styles.commentUser}>{item.user_name || 'User'}</Text>
@@ -2628,7 +2879,17 @@ const TrendingScreen = () => {
                           <Text style={styles.qaQuestion}>Q: {item.content}</Text>
                         </View>
                       </View>
-                      <View style={{ flexDirection: 'row', marginLeft: 8 }}>
+                      <View style={{ flexDirection: 'row', marginTop: 8, alignItems: 'center' }}>
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}
+                          onPress={() => handleHelpful(item.id)}
+                        >
+                          <Ionicons name="thumbs-up-outline" size={16} color="#666" style={{ marginRight: 4 }} />
+                          <Text style={{ fontSize: 12, color: '#666', fontWeight: '600' }}>
+                            {item.helpful_count || 0} Helpful
+                          </Text>
+                        </TouchableOpacity>
+
                         <TouchableOpacity
                           style={{ marginRight: 12 }}
                           onPress={async () => {
@@ -2944,7 +3205,7 @@ const TrendingScreen = () => {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.shareSubtitle}>Share this amazing product with your friends and earn coins!</Text>
+            <Text style={styles.shareSubtitle}>Share this amazing product with your friends!</Text>
 
             {/* Share Options */}
             <View style={styles.shareOptionsContainer}>
@@ -2963,19 +3224,6 @@ const TrendingScreen = () => {
                       const canOpen = await Linking.canOpenURL(whatsappUrl);
                       if (canOpen) {
                         await Linking.openURL(whatsappUrl);
-
-                        // Award coins after 10 seconds
-                        registerTimeout(async () => {
-                          if (userData?.id) {
-                            await akoolService.awardReferralCoins(userData.id, product.id, 'share_button', 2);
-                            setCoinBalance((prev) => prev + 2);
-                            Toast.show({
-                              type: 'success',
-                              text1: t('coins_awarded') || 'Coins awarded',
-                              text2: '+2 coins for sharing'
-                            });
-                          }
-                        }, 10000);
                       } else {
                         Toast.show({
                           type: 'error',
@@ -3417,7 +3665,7 @@ const TrendingScreen = () => {
           </TouchableOpacity>
         )}
       </View>
-    </BottomSheetModalProvider>
+    </BottomSheetModalProvider >
   );
 };
 
@@ -5351,6 +5599,128 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  // Photo Upload Modal Styles
+  photoUploadOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  photoUploadBackdrop: {
+    flex: 1,
+  },
+  photoUploadContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 30,
+  },
+  photoUploadHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: '#F53F7A',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  photoUploadHeader: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  photoUploadIconContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(245, 63, 122, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  photoUploadTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    marginBottom: 4,
+  },
+  photoUploadSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
+  photoUploadGuidelines: {
+    backgroundColor: 'rgba(245, 63, 122, 0.05)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  photoUploadGuideTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    marginBottom: 10,
+  },
+  photoUploadGuideItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 8,
+  },
+  photoUploadGuideText: {
+    fontSize: 13,
+    color: '#444',
+  },
+  photoUploadLoading: {
+    alignItems: 'center',
+    paddingVertical: 30,
+  },
+  photoUploadLoadingText: {
+    marginTop: 12,
+    fontSize: 15,
+    color: '#666',
+  },
+  photoUploadOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f8f8',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
+  photoUploadOptionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F53F7A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  photoUploadOptionText: {
+    flex: 1,
+  },
+  photoUploadOptionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 2,
+  },
+  photoUploadOptionSubtitle: {
+    fontSize: 13,
+    color: '#888',
+  },
+  photoUploadCancel: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    marginTop: 4,
+  },
+  photoUploadCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#F53F7A',
   },
 });
 

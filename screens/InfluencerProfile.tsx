@@ -56,6 +56,7 @@ const InfluencerProfile: React.FC = () => {
   const [influencer, setInfluencer] = useState<Influencer | null>(initialInfluencer || null);
   const [posts, setPosts] = useState<InfluencerPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [contentLoading, setContentLoading] = useState(true);
   const [selectedPost, setSelectedPost] = useState<InfluencerPost | null>(null);
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'products'>('posts');
@@ -69,6 +70,7 @@ const InfluencerProfile: React.FC = () => {
     if (!influencerId) return;
 
     setLoading(true);
+    setContentLoading(true);
     try {
       // Check if this is a sample influencer
       if (influencerId.startsWith('sample_influencer_')) {
@@ -117,6 +119,7 @@ const InfluencerProfile: React.FC = () => {
       Alert.alert('Error', 'Failed to load influencer profile');
     } finally {
       setLoading(false);
+      setContentLoading(false);
     }
   };
 
@@ -510,7 +513,12 @@ const InfluencerProfile: React.FC = () => {
           {/* Posts Tab - Show all videos in grid */}
           {activeTab === 'posts' && (
             <View style={styles.contentSection}>
-              {posts.length === 0 ? (
+              {contentLoading ? (
+                <View style={styles.contentLoadingContainer}>
+                  <ActivityIndicator size="large" color="#F53F7A" />
+                  <Text style={styles.contentLoadingText}>Loading posts...</Text>
+                </View>
+              ) : posts.length === 0 ? (
                 <View style={styles.emptyState}>
                   <Ionicons name="videocam-outline" size={64} color="#DDD" />
                   <Text style={styles.emptyStateTitle}>No Posts Yet</Text>
@@ -533,7 +541,12 @@ const InfluencerProfile: React.FC = () => {
           {/* Products Tab */}
           {activeTab === 'products' && (
             <View style={styles.contentSection}>
-              {influencerProducts.length === 0 ? (
+              {contentLoading ? (
+                <View style={styles.contentLoadingContainer}>
+                  <ActivityIndicator size="large" color="#F53F7A" />
+                  <Text style={styles.contentLoadingText}>Loading products...</Text>
+                </View>
+              ) : influencerProducts.length === 0 ? (
                 <View style={styles.emptyState}>
                   <Ionicons name="storefront-outline" size={64} color="#DDD" />
                   <Text style={styles.emptyStateTitle}>No Products Yet</Text>
@@ -594,6 +607,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#999',
     marginTop: 12,
+  },
+  contentLoadingContainer: {
+    paddingVertical: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contentLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#999',
   },
   errorContainer: {
     flex: 1,

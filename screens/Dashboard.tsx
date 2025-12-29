@@ -35,6 +35,8 @@ import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import Toast from 'react-native-toast-message';
 import { LinearGradient } from 'expo-linear-gradient';
 
+import NewYearSpecials from '~/components/Dashboard/NewYearSpecials';
+
 type DashboardNavigationProp = StackNavigationProp<RootStackParamList>;
 
 const HEADER_HEIGHT = 64;
@@ -125,7 +127,7 @@ const Dashboard = () => {
       return;
     }
 
-    const message = `🎉 Download Only2U app and get ₹100 worth of rewards!\n\nUse my referral code: ${referralCode}\n\n📱 Download Links:\n• Android: https://play.google.com/store/apps/details?id=com.only2u.only2u\n• iOS: https://apps.apple.com/in/app/only2u-virtual-try-on-store/id6753112805\n\nJoin me and start shopping with amazing rewards! 🛍️✨`;
+    const message = `🎉 Download Only2U app and get 100 coins worth of rewards!\n\nUse my referral code: ${referralCode}\n\n📱 Download Links:\n• Android: https://play.google.com/store/apps/details?id=com.only2u.only2u\n• iOS: https://apps.apple.com/in/app/only2u-virtual-try-on-store/id6753112805\n\nJoin me and start shopping with amazing rewards! 🛍️✨`;
     const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
     const whatsappWebUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
 
@@ -2203,8 +2205,8 @@ const Dashboard = () => {
                         <Ionicons name="logo-whatsapp" size={32} color="#fff" />
                       </View>
                       <View style={styles.coinsReferFriendsTextContainer}>
-                        <Text style={styles.coinsEarn100Title}>🎁 Refer & Earn</Text>
-                        <Text style={styles.coinsEarn100Subtitle}>Share on WhatsApp to earn coins</Text>
+                        <Text style={styles.coinsEarn100Title}>🎁 Refer & Earn 100 coins</Text>
+                        <Text style={styles.coinsEarn100Subtitle}>Share on WhatsApp to earn 100 coins</Text>
                       </View>
                       <View style={styles.coinsShareArrow}>
                         <Ionicons name="arrow-forward-circle" size={32} color="rgba(255,255,255,0.9)" />

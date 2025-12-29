@@ -30,6 +30,7 @@
     "eas-cli": "^16.19.3",
     "expo": "53.0.20",
     "expo-av": "~15.1.7",
+    "expo-blur": "^15.0.8",
     "expo-clipboard": "^8.0.7",
     "expo-contacts": "^15.0.10",
     "expo-dev-client": "~5.2.4",
@@ -38,13 +39,16 @@
     "expo-image-manipulator": "^14.0.7",
     "expo-image-picker": "~16.1.4",
     "expo-linear-gradient": "~14.1.5",
+    "expo-linking": "~7.1.7",
     "expo-localization": "^16.1.6",
     "expo-location": "~18.1.6",
     "expo-media-library": "^18.2.0",
+    "expo-secure-store": "~14.2.4",
     "expo-speech-recognition": "^2.1.1",
     "expo-splash-screen": "^31.0.10",
     "expo-status-bar": "~2.2.3",
     "expo-video-thumbnails": "^10.0.7",
+    "expo-web-browser": "~14.2.0",
     "firebase": "^11.10.0",
     "i18next": "^25.3.1",
     "moment": "^2.30.1",
@@ -63,10 +67,7 @@
     "react-native-safe-area-context": "5.4.0",
     "react-native-screens": "~4.11.1",
     "react-native-svg-charts": "^5.4.0",
-    "react-native-toast-message": "^2.3.0",
-    "expo-secure-store": "~14.2.4",
-    "expo-web-browser": "~14.2.0",
-    "expo-linking": "~7.1.7"
+    "react-native-toast-message": "^2.3.0"
   },
   "expo": {
     "doctor": {

@@ -183,7 +183,7 @@ export default function TabLayout() {
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [referralCodeState, setReferralCodeState] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle');
   const [referralCodeMessage, setReferralCodeMessage] = useState('');
-  const [appliedReferralCoupon, setAppliedReferralCoupon] = useState<{ code: string; referralCodeId: string } | null>(null);
+  const [appliedReferralCoupon, setAppliedReferralCoupon] = useState<{ code: string; referralCodeId: string; type?: 'referral' | 'coupon' } | null>(null);
   // Track Supabase auth session directly to avoid profile-loading delays
   useEffect(() => {
     let isMounted = true;
@@ -304,6 +304,26 @@ export default function TabLayout() {
       const validation = await validateReferralCode(trimmed);
 
       if (!validation.isValid || !validation.referralCodeId) {
+        // Fallback: Check if it's a valid coupon code
+        // Users might share their coupon codes (e.g. WELCOME...) or other coupons as referral codes
+        const { data: coupon, error: couponError } = await supabase
+          .from('coupons')
+          .select('id, code, description')
+          .eq('code', trimmed)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (coupon && !couponError) {
+          setReferralCodeState('valid');
+          setReferralCodeMessage('Coupon code applied! You will receive ₹100 off on your first order.');
+          setAppliedReferralCoupon({
+            code: trimmed,
+            referralCodeId: coupon.id,
+            type: 'coupon',
+          });
+          return;
+        }
+
         setReferralCodeState('invalid');
         setReferralCodeMessage(validation.message || 'Invalid or inactive referral code.');
         setAppliedReferralCoupon(null);
@@ -315,6 +335,7 @@ export default function TabLayout() {
       setAppliedReferralCoupon({
         code: trimmed,
         referralCodeId: validation.referralCodeId,
+        type: 'referral',
       });
     } catch (error) {
       console.error('Referral code apply error:', error);
@@ -425,112 +446,68 @@ export default function TabLayout() {
       setVerifying(true);
 
       // 1. Verify OTP locally
-      if (otp.trim() !== generatedOtp && otp.trim() !== '123456') { // Allow 123456 for testing if desired, or remove
-        // Actually, let's strictly enforce generatedOtp unless dev mode.
-        if (otp.trim() !== generatedOtp) {
-          setError('Invalid OTP');
-          setVerifying(false);
-          return;
-        }
+      if (otp.trim() !== generatedOtp) {
+        setError('Invalid OTP');
+        setVerifying(false);
+        return;
       }
 
       const fullPhone = `${countryCode}${trimmed}`;
-      // 2. Auth with Supabase using Phone + Password strategy
-      // We use a fixed secret for this "passwordless" simulation.
-      // Ideally this should be an env var or derived from a secure hash.
-      const MOCK_PASSWORD = `O2U_SECURE_PASS_${fullPhone}_Only2U`;
 
-      // Try signing in
-      const { data, error } = await supabase.auth.signInWithPassword({
-        phone: fullPhone,
-        password: MOCK_PASSWORD,
-      });
-      let authData: any = data;
-      let authError = error;
+      // 2. Check if user with this phone exists in our users table
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('phone', fullPhone)
+        .maybeSingle();
 
-      // If invalid login (likely user doesn't exist or wrong 'password' if we changed logic), try SignUp
-      if (authError && authError.message.includes('Invalid login credentials')) {
-        // Attempt 1: Try to SignUp (New User)
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          phone: fullPhone,
-          password: MOCK_PASSWORD,
+      if (existingUser) {
+        // User exists - sign in anonymously (we'll link by phone in users table)
+        const { data: signInData, error: signInError } = await supabase.auth.signInAnonymously();
+
+        if (signInError) {
+          setError('Login failed. Please try again.');
+          setVerifying(false);
+          return;
+        }
+
+        // Force refresh user data
+        await refreshUserData();
+
+        Toast.show({
+          type: 'success',
+          text1: 'Login Successful',
+          text2: 'Welcome back!',
         });
 
-        if (signUpError) {
-          // If user already exists but password failed, it means they might have signed up differently (e.g. old OTP flow).
-          if (signUpError.message.includes('User already registered')) {
-            console.log('User exists, attempting password reset via Edge Function...');
-
-            // Attempt 2: Call Edge Function to reset password for this verified user
-            const { data: resetData, error: resetError } = await supabase.functions.invoke('reset-password', {
-              body: { phone: fullPhone }
-            });
-
-            if (resetError) {
-              console.error('Reset Password Function Error:', resetError);
-              setError('Authentication failed. Please contact support.');
-              setVerifying(false);
-              return;
-            }
-
-            // Retry SignIn with the now-reset password
-            const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
-              phone: fullPhone,
-              password: MOCK_PASSWORD,
-            });
-
-            if (retryError) {
-              console.error('Retry SignIn Error:', retryError);
-              throw retryError;
-            }
-
-            authData = retryData;
-            authError = null;
-          } else {
-            throw signUpError;
-          }
-        } else {
-          authData = signUpData;
-          authError = null;
-        }
-      } else if (authError) {
-        throw authError;
-      }
-
-      // Success: Supabase establishes session automatically
-      await refreshUserData(); // Force refresh user data immediately
-      hideLoginSheet();
-      resetSheetState();
-      Toast.show({
-        type: 'success',
-        text1: 'Login Successful',
-        text2: 'Welcome back!',
-      });
-
-      // Success: decide whether to show onboarding
-      const { user: authUser } = authData;
-      if (authUser) {
-        const { data: profile, error: profileError } = await supabase
-          .from('users')
-          .select('id')
-          .eq('id', authUser.id)
-          .single();
-
-        if (!profile && profileError && (profileError.code === 'PGRST116' || profileError.details?.includes('Results contain 0 rows'))) {
-          // No profile -> show onboarding sheet
-          hideLoginSheet();
-          setName('');
-          setShowOnboarding(true);
-        } else {
-          // Profile exists -> close login sheet
-          hideLoginSheet();
-        }
-      } else {
         hideLoginSheet();
+        resetSheetState();
+        Keyboard.dismiss();
+      } else {
+        // New user - sign in anonymously and show onboarding
+        const { data: signInData, error: signInError } = await supabase.auth.signInAnonymously();
+
+        if (signInError) {
+          setError('Login failed. Please try again.');
+          setVerifying(false);
+          return;
+        }
+
+        // Store phone temporarily for profile creation
+        // We'll pass it via state to onboarding
+
+        Toast.show({
+          type: 'success',
+          text1: 'OTP Verified!',
+          text2: 'Complete your profile to continue',
+        });
+
+        hideLoginSheet();
+        setName('');
+        setShowOnboarding(true);
+        Keyboard.dismiss();
       }
 
-      resetSheetState();
-      Keyboard.dismiss();
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
@@ -559,8 +536,9 @@ export default function TabLayout() {
         return;
       }
 
-      // Get phone number from auth user
-      const userPhone = authUser.phone || null;
+      // Get phone number from the OTP flow state (since we use anonymous auth)
+      const trimmed = phone.replace(/\D/g, '');
+      const userPhone = trimmed ? `${countryCode}${trimmed}` : null;
 
       const newProfile = {
         id: authUser.id,
@@ -577,26 +555,59 @@ export default function TabLayout() {
       // Handle referral code redemption if one was applied
       if (appliedReferralCoupon && appliedReferralCoupon.referralCodeId) {
         try {
-          // Redeem the referral code - this will record usage and create the welcome coupon
-          const { coupon } = await redeemReferralCode(
-            appliedReferralCoupon.referralCodeId,
-            appliedReferralCoupon.code,
-            authUser.id,
-            authUser.email || undefined,
-            name.trim(),
-            userPhone || undefined
-          );
+          // If it's a standard referral code
+          if (appliedReferralCoupon.type === 'referral' || !appliedReferralCoupon.type) {
+            // Redeem the referral code - this will record usage and create the welcome coupon
+            const { coupon } = await redeemReferralCode(
+              appliedReferralCoupon.referralCodeId,
+              appliedReferralCoupon.code,
+              authUser.id,
+              authUser.email || undefined,
+              name.trim(),
+              userPhone || undefined
+            );
 
-          Toast.show({
-            type: 'success',
-            text1: 'Referral code applied!',
-            text2: '₹100 off coupon added to your account.',
-          });
+            Toast.show({
+              type: 'success',
+              text1: 'Referral code applied!',
+              text2: '₹100 off coupon added to your account.',
+            });
 
-          console.log('[Signup] ✅ Referral code redeemed successfully:', {
-            referralCode: appliedReferralCoupon.code,
-            couponCode: coupon.code,
-          });
+            console.log('[Signup] ✅ Referral code redeemed successfully:', {
+              referralCode: appliedReferralCoupon.code,
+              couponCode: coupon.code,
+            });
+          } else {
+            // It's a coupon code used as referral
+            // 1. Record coupon usage (optional, but good for tracking)
+            const { error: usageError } = await supabase
+              .from('coupon_usage')
+              .insert({
+                coupon_id: appliedReferralCoupon.referralCodeId,
+                user_id: authUser.id,
+                // We don't have an order_id, so we leave it null if allowed, or we might just skip this if not allowed
+                // Assuming it's allowed or we just skip error
+              });
+
+            if (usageError) {
+              console.warn('[Signup] Could not record coupon usage as referral:', usageError);
+            }
+
+            // 2. Give the new user their Welcome Coupon
+            const { createWelcomeCouponForReferral } = await import('~/services/referralCodeService');
+            const coupon = await createWelcomeCouponForReferral(authUser.id, name.trim());
+
+            Toast.show({
+              type: 'success',
+              text1: 'Code applied!',
+              text2: '₹100 off coupon added to your account.',
+            });
+
+            console.log('[Signup] ✅ Coupon code redeemed as referral successfully:', {
+              referralCode: appliedReferralCoupon.code,
+              couponCode: coupon.code,
+            });
+          }
         } catch (couponError: any) {
           console.error('[Signup] ❌ Error redeeming referral code:', couponError);
           // Don't fail the signup if referral redemption fails, just log it
@@ -929,7 +940,7 @@ export default function TabLayout() {
                         style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: '#DCFCE7' }}
                       >
                         <Ionicons name="logo-whatsapp" size={14} color="#25D366" />
-                        <Text style={{ fontSize: 11, color: '#25D366', fontWeight: '700', marginLeft: 4 }}>Open WhatsApp</Text>
+                        <Text style={{ fontSize: 11, color: '#25D366', fontWeight: '700', marginLeft: 4 }}>Open WhatsApp for OTP</Text>
                       </TouchableOpacity>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F4F5F7', borderRadius: 14, paddingHorizontal: 14, paddingVertical: Platform.OS === 'android' ? 8 : 12, borderWidth: 1, borderColor: '#EAECF0' }}>
@@ -958,33 +969,7 @@ export default function TabLayout() {
                   </View>
                 )}
 
-                {/* Google Sign In */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 16 }}>
-                  <View style={{ flex: 1, height: 1, backgroundColor: '#E5E5E5' }} />
-                  <Text style={{ marginHorizontal: 10, color: '#666', fontSize: 13, fontWeight: '600' }}>OR</Text>
-                  <View style={{ flex: 1, height: 1, backgroundColor: '#E5E5E5' }} />
-                </View>
 
-                <TouchableOpacity
-                  style={{
-                    backgroundColor: '#fff',
-                    borderWidth: 1.5,
-                    borderColor: '#EEE',
-                    borderRadius: 14,
-                    paddingVertical: 14,
-                    marginBottom: 10,
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                  onPress={handleGoogleLogin}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="logo-google" size={20} color="#000" style={{ marginRight: 10 }} />
-                    <Text style={{ color: '#000', fontSize: 16, fontWeight: '700' }}>
-                      Sign in with Google
-                    </Text>
-                  </View>
-                </TouchableOpacity>
 
                 {/* Secondary CTAs */}
                 <View style={{ marginTop: 6 }}>
@@ -1010,38 +995,149 @@ export default function TabLayout() {
       {/* Bottom sheet: Onboarding after OTP for new users */}
       <Modal visible={showOnboarding && hasSession} transparent animationType="slide" onRequestClose={() => setShowOnboarding(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
-            <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 18, maxHeight: '82%' }}>
-              <View style={{ alignItems: 'center', marginBottom: 10 }}>
-                <View style={{ width: 44, height: 4, borderRadius: 2, backgroundColor: '#D6D6D6' }} />
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+            <View style={{
+              backgroundColor: '#fff',
+              borderTopLeftRadius: 32,
+              borderTopRightRadius: 32,
+              paddingHorizontal: 24,
+              paddingTop: 16,
+              paddingBottom: 32,
+              maxHeight: '85%'
+            }}>
+              {/* Handle indicator */}
+              <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                <View style={{ width: 48, height: 5, borderRadius: 3, backgroundColor: '#F53F7A' }} />
               </View>
 
-              <View style={{ marginBottom: 8 }}>
-                <Text style={{ fontSize: 20, fontWeight: '900', color: '#1f1f1f' }}>{tt('your_name', 'Your name')}</Text>
-                <Text style={{ marginTop: 4, color: '#666', fontWeight: '500' }}>{tt('enter_name_to_continue', 'Enter your name to continue')}</Text>
+              {/* Header with welcome message */}
+              <View style={{ alignItems: 'center', marginBottom: 28 }}>
+                <View style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 40,
+                  backgroundColor: '#F53F7A',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  marginBottom: 16,
+                  shadowColor: '#F53F7A',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.35,
+                  shadowRadius: 12,
+                  elevation: 8
+                }}>
+                  <Ionicons name="person-add" size={36} color="#fff" />
+                </View>
+                <Text style={{ fontSize: 26, fontWeight: '800', color: '#1a1a1a', marginBottom: 4 }}>
+                  👋 {tt('welcome', 'Welcome!')}
+                </Text>
+                <Text style={{ fontSize: 15, color: '#666', fontWeight: '500', textAlign: 'center', lineHeight: 22 }}>
+                  {tt('enter_name_to_continue', "What should we call you?")}
+                </Text>
               </View>
 
-              <View style={{ maxHeight: '70%' }}>
-                <ScrollView keyboardShouldPersistTaps='handled' contentContainerStyle={{ paddingBottom: 20 }}>
-                  <View style={{ backgroundColor: '#F4F5F7', borderRadius: 12, paddingHorizontal: 12, paddingVertical: Platform.OS === 'android' ? 8 : 10, borderWidth: 1, borderColor: '#EAECF0' }}>
-                    <TextInput value={name} onChangeText={setName} placeholder={tt('name_placeholder', 'John Doe')} placeholderTextColor='#999' style={{ fontSize: 16, color: '#111' }} />
+              <View style={{ maxHeight: '60%' }}>
+                <ScrollView keyboardShouldPersistTaps='handled' contentContainerStyle={{ paddingBottom: 16 }}>
+                  {/* Name input with icon */}
+                  <View style={{ marginBottom: 16 }}>
+                    <Text style={{
+                      fontSize: 11,
+                      fontWeight: '800',
+                      color: '#F53F7A',
+                      marginBottom: 10,
+                      letterSpacing: 1,
+                      textTransform: 'uppercase'
+                    }}>
+                      Your Name
+                    </Text>
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#FAFAFA',
+                      borderRadius: 16,
+                      paddingHorizontal: 16,
+                      paddingVertical: Platform.OS === 'android' ? 4 : 0,
+                      borderWidth: 2,
+                      borderColor: name ? '#F53F7A' : '#E8E8E8',
+                    }}>
+                      <Ionicons name="person-outline" size={22} color={name ? '#F53F7A' : '#999'} style={{ marginRight: 12 }} />
+                      <TextInput
+                        value={name}
+                        onChangeText={setName}
+                        placeholder={tt('name_placeholder', 'Enter your name')}
+                        placeholderTextColor='#999'
+                        style={{
+                          flex: 1,
+                          fontSize: 17,
+                          color: '#1a1a1a',
+                          fontWeight: '600',
+                          paddingVertical: 16,
+                        }}
+                      />
+                      {name.length > 0 && (
+                        <TouchableOpacity onPress={() => setName('')}>
+                          <Ionicons name="close-circle" size={20} color="#ccc" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
 
                   {!!error && (
-                    <View style={{ marginTop: 12, backgroundColor: '#FFF0F3', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FFD6DF' }}>
-                      <Text style={{ color: '#B00020', fontWeight: '900' }}>{tt('error', 'Error')}</Text>
-                      <Text style={{ color: '#B00020', marginTop: 4 }}>{error}</Text>
+                    <View style={{
+                      marginBottom: 16,
+                      backgroundColor: '#FFF0F3',
+                      padding: 16,
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: '#FFD6DF',
+                      flexDirection: 'row',
+                      alignItems: 'center'
+                    }}>
+                      <Ionicons name="alert-circle" size={20} color="#B00020" style={{ marginRight: 10 }} />
+                      <Text style={{ color: '#B00020', fontWeight: '600', flex: 1 }}>{error}</Text>
                     </View>
                   )}
 
-                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16 }}>
-                    <TouchableOpacity disabled={creatingProfile} onPress={handleCreateProfile} style={{ backgroundColor: creatingProfile ? '#F7A3BD' : '#111827', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10 }}>
-                      <Text style={{ color: '#fff', fontWeight: '800' }}>{creatingProfile ? tt('saving', 'Saving...') : tt('save', 'Save')}</Text>
-                    </TouchableOpacity>
-                  </View>
+                  {/* Continue button */}
+                  <TouchableOpacity
+                    disabled={creatingProfile || !name.trim()}
+                    onPress={handleCreateProfile}
+                    activeOpacity={0.8}
+                    style={{
+                      flexDirection: 'row',
+                      backgroundColor: creatingProfile || !name.trim() ? '#F7A3BD' : '#F53F7A',
+                      borderRadius: 16,
+                      paddingVertical: 18,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      shadowColor: '#F53F7A',
+                      shadowOffset: { width: 0, height: 6 },
+                      shadowOpacity: 0.35,
+                      shadowRadius: 10,
+                      elevation: 6
+                    }}
+                  >
+                    {creatingProfile ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 17, marginRight: 8 }}>
+                          {tt('continue', "Let's Go")}
+                        </Text>
+                        <Ionicons name="arrow-forward" size={20} color="#fff" />
+                      </>
+                    )}
+                  </TouchableOpacity>
 
-                  <TouchableOpacity onPress={() => setShowOnboarding(false)} style={{ alignItems: 'center', paddingVertical: 10 }}>
-                    <Text style={{ color: '#6B7280', fontWeight: '800' }}>{tt('skip_for_now', 'Skip for now')}</Text>
+                  {/* Skip link */}
+                  <TouchableOpacity
+                    onPress={() => setShowOnboarding(false)}
+                    style={{ alignItems: 'center', paddingVertical: 16, marginTop: 8 }}
+                    activeOpacity={0.6}
+                  >
+                    <Text style={{ color: '#888', fontWeight: '600', fontSize: 14 }}>
+                      {tt('skip_for_now', 'Skip for now')}
+                    </Text>
                   </TouchableOpacity>
                 </ScrollView>
               </View>

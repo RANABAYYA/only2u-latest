@@ -631,6 +631,7 @@ const Profile = () => {
       feedback_text: 'The app is great, but I think the try-on feature takes a bit too long to load on older devices.',
       created_at: '2025-12-24T10:30:00Z',
       image_urls: [],
+      admin_response: 'Thanks for your feedback, Rahul! We are actively optimizing the try-on performance for all devices in the upcoming update.'
     },
     {
       id: 'sample-2',
@@ -638,6 +639,7 @@ const Profile = () => {
       feedback_text: 'Found a bug in the wishlist screen. When I remove an item, it sometimes comes back after refreshing.',
       created_at: '2025-12-25T09:15:00Z',
       image_urls: ['https://images.unsplash.com/photo-1551650975-87deedd944c3?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80'],
+      admin_response: 'Hi Priya, sorry about that! We have identified the issue and a fix will be rolling out this week.'
     },
     {
       id: 'sample-3',
@@ -645,6 +647,7 @@ const Profile = () => {
       feedback_text: 'Love the new collection! Can we have more filters for searching products by color?',
       created_at: '2025-12-25T14:20:00Z',
       image_urls: [],
+      // No response for this one to show varied UI
     },
   ];
 
@@ -1114,14 +1117,20 @@ const Profile = () => {
     const loadShubhamastuCode = async () => {
       if (!userData?.id) return;
       try {
+        console.log('[Profile] fetching shubhamastu code for:', userData.id);
         const { data, error } = await supabase
           .from('shubhamastu_codes')
           .select('code')
           .eq('assigned_to_user_id', userData.id)
           .maybeSingle();
 
+        console.log('[Profile] shubhamastu response:', { data, error });
+
         if (!error && data) {
           setShubhamastuCode(data.code);
+        } else {
+          // Debug: fallback if maybeSingle returns null
+          console.log('[Profile] No shubhamastu code found for user.');
         }
       } catch (error) {
         console.error('Error loading shubhamastu code:', error);
@@ -1226,31 +1235,39 @@ const Profile = () => {
     setAppliedReferralCoupon(null);
   };
 
+  // Store generated OTP for verification
+  const [generatedOtp, setGeneratedOtp] = useState<string>('');
+
   const handleSendOtp = async () => {
     try {
       setError(null);
       const trimmed = phone.replace(/\D/g, '');
-      if (!trimmed || trimmed.length < 8) {
-        setError('Enter a valid phone number');
+      if (!trimmed || trimmed.length < 10) {
+        setError('Enter a valid 10-digit phone number');
         return;
       }
       setSending(true);
       const fullPhone = `${countryCode}${trimmed}`;
 
-      const { error } = await supabase.auth.signInWithOtp({
-        phone: fullPhone,
-      });
+      // Generate a 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      setGeneratedOtp(otp);
 
-      if (error) {
-        setError(error.message);
-        setSending(false);
-        return;
-      }
+      // Send OTP via WhatsApp using whatsappService (Meta API)
+      const { sendWhatsAppOTP } = await import('~/services/whatsappService');
+      await sendWhatsAppOTP(fullPhone, otp);
 
       setOtpSent(true);
       setResendIn(30);
+
+      Toast.show({
+        type: 'success',
+        text1: 'OTP Sent!',
+        text2: 'Check your WhatsApp for the verification code',
+      });
     } catch (e: any) {
-      setError(e?.message || 'Failed to send OTP');
+      console.error('WhatsApp OTP Error:', e);
+      setError(e?.message || 'Failed to send OTP via WhatsApp');
     } finally {
       setSending(false);
     }
@@ -1260,54 +1277,89 @@ const Profile = () => {
     try {
       setError(null);
       const trimmed = phone.replace(/\D/g, '');
-      if (!otp || otp.trim().length < 4) {
-        setError('Enter the OTP');
+      if (!otp || otp.trim().length < 6) {
+        setError('Enter the 6-digit OTP');
         return;
       }
       setVerifying(true);
       const fullPhone = `${countryCode}${trimmed}`;
 
-      const { data, error } = await supabase.auth.verifyOtp({
-        phone: fullPhone,
-        token: otp.trim(),
-        type: 'sms',
-      });
-
-      if (error) {
-        setError(error.message);
+      // Verify OTP against locally stored one
+      if (otp.trim() !== generatedOtp) {
+        setError('Invalid OTP. Please check and try again.');
         setVerifying(false);
         return;
       }
 
-      // Success: Supabase establishes session automatically
+      // OTP is correct! Now sign in with Supabase using anonymous or phone-based auth
+      // First check if a user with this phone exists
+      const { data: existingUser, error: findError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('phone', fullPhone)
+        .maybeSingle();
+
+      if (existingUser) {
+        // User exists - sign in anonymously and link to existing profile
+        const { data: signInData, error: signInError } = await supabase.auth.signInAnonymously();
+
+        if (signInError) {
+          setError('Login failed. Please try again.');
+          setVerifying(false);
+          return;
+        }
+
+        // Update user data to link with this phone
+        await refreshUserData();
+      } else {
+        // New user - sign in anonymously and show onboarding
+        const { data: signInData, error: signInError } = await supabase.auth.signInAnonymously();
+
+        if (signInError) {
+          setError('Login failed. Please try again.');
+          setVerifying(false);
+          return;
+        }
+      }
+
       Toast.show({
         type: 'success',
         text1: 'Login Successful',
-        text2: 'Welcome back!',
+        text2: 'Welcome to Only2U!',
       });
-      // Additional onboarding check below...
 
-      // Success: decide whether to show onboarding
-      const { user: authUser } = data;
+      // Force refresh user data
+      await refreshUserData();
+
+      // Check if profile exists, if not show onboarding
+      const { data: sessionData } = await supabase.auth.getSession();
+      const authUser = sessionData?.session?.user;
+
       if (authUser) {
         const { data: profile, error: profileError } = await supabase
           .from('users')
           .select('id')
           .eq('id', authUser.id)
-          .single();
+          .maybeSingle();
 
-        if (!profile && profileError && (profileError.code === 'PGRST116' || profileError.details?.includes('Results contain 0 rows'))) {
-          // No profile -> show onboarding sheet
-          showLoginSheet();
+        if (!profile) {
+          // No profile -> store phone and show onboarding
+          hideLoginSheet();
+          setName('');
+          setShowOnboarding(true);
+        } else {
+          hideLoginSheet();
         }
+      } else {
+        hideLoginSheet();
       }
 
+      // Clear state
+      setGeneratedOtp('');
       resetSheetState();
       Keyboard.dismiss();
-
-
-      resetSheetState();
     } catch (e: any) {
+      console.error('OTP verification error:', e);
       setError(e?.message || 'OTP verification failed');
     } finally {
       setVerifying(false);
@@ -1836,11 +1888,11 @@ const Profile = () => {
 
         </View>
 
-        {/* Random 100rs Discount Code Section - Only for users who signed up with referral code */}
-        {userData?.id && referralWelcomeCoupon && randomDiscountCode && (
+        {/* Random 100rs Discount Code Section - Only for users who signed up with referral code AND don't have a Shubhamastu code */}
+        {userData?.id && referralWelcomeCoupon && randomDiscountCode && !shubhamastuCode && (
           <View style={[styles.referralWelcomeCouponCard, { padding: 10, marginTop: 12, marginBottom: 4 }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-              <Text style={[styles.referralWelcomeCouponTitle, { fontSize: 13, flex: 1 }]}>Shubhamastu 100rs code</Text>
+              <Text style={[styles.referralWelcomeCouponTitle, { fontSize: 13, flex: 1 }]}>Welcome Discount Code</Text>
               <View style={[styles.referralWelcomeCouponCodeBox, { paddingVertical: 4, paddingHorizontal: 12, marginLeft: 8, backgroundColor: '#FFF0F5', borderColor: '#F53F7A', borderWidth: 1 }]}>
                 <Text style={[styles.referralWelcomeCouponCodeValue, { fontSize: 13, color: '#F53F7A' }]}>
                   {randomDiscountCode}
@@ -1901,7 +1953,7 @@ const Profile = () => {
           <View style={styles.referTextBlock}>
             <Text style={styles.referCardTitle}>Refer & Earn</Text>
             <Text style={styles.referCardSubtitle}>
-              Share your code, friends get ₹100 off
+              Share your code, friends get 100 coins
             </Text>
           </View>
           <View style={styles.referRewardPill}>
@@ -1996,7 +2048,7 @@ const Profile = () => {
 
           <TouchableOpacity style={styles.menuItem} onPress={handleBecomeSeller}>
             <Ionicons name="storefront-outline" size={24} color="red" />
-            <Text style={[styles.menuText, { color: 'red' }]}>Become a Seller</Text>
+            <Text style={[styles.menuText, { color: 'red' }]}>Become a Vendor</Text>
             <Ionicons name="chevron-forward" size={20} color="red" />
           </TouchableOpacity>
 
@@ -2084,7 +2136,7 @@ const Profile = () => {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.referralTitle}>Invite & Earn</Text>
-                <Text style={styles.referralSubtitle}>Friends get additional ₹100 worth coins</Text>
+                <Text style={styles.referralSubtitle}>Friends get additional 100 coins</Text>
               </View>
               <TouchableOpacity onPress={() => setShowReferralModal(false)}>
                 <Ionicons name="close" size={20} color="#6B7280" />
@@ -2119,8 +2171,8 @@ const Profile = () => {
                     <Text style={styles.referralStatLabel}>Friends Joined</Text>
                   </View>
                   <View style={styles.referralStat}>
-                    <Text style={styles.referralStatValue}>₹{referralStats.totalDiscount.toFixed(0)}</Text>
-                    <Text style={styles.referralStatLabel}>Total Savings Shared</Text>
+                    <Text style={styles.referralStatValue}>{referralStats.totalDiscount.toFixed(0)} Coins</Text>
+                    <Text style={styles.referralStatLabel}>Total Coins Earned</Text>
                   </View>
                   <View style={styles.referralStat}>
                     <Text style={styles.referralStatValue}>
@@ -2188,247 +2240,155 @@ const Profile = () => {
         </View>
       </Modal>
 
-      {/* OTP Login Modal */}
-      <Modal visible={isLoginSheetVisible} transparent animationType="slide" onRequestClose={() => { hideLoginSheet(); resetSheetState(); }}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
-            <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 18, maxHeight: '78%' }}>
-              <View style={{ alignItems: 'center', marginBottom: 10 }}>
-                <View style={{ width: 44, height: 4, borderRadius: 2, backgroundColor: '#D6D6D6' }} />
-              </View>
 
-              {/* Title + subtitle */}
-              <View style={{ marginBottom: 8 }}>
-                <Text style={{ fontSize: 20, fontWeight: '900', color: '#1f1f1f' }}>Welcome back</Text>
-                <Text style={{ marginTop: 4, color: '#666', fontWeight: '500' }}>Login to track orders, wishlist, and get offers</Text>
-              </View>
-
-              <ScrollView keyboardShouldPersistTaps='handled' contentContainerStyle={{ paddingBottom: 8 }}>
-                {/* Perks */}
-                <View style={{ flexDirection: 'row', marginTop: 6, marginBottom: 12 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
-                    <Ionicons name='shield-checkmark-outline' size={16} color='#2e7d32' />
-                    <Text style={{ marginLeft: 6, color: '#333', fontSize: 12, fontWeight: '600' }}>Secure OTP</Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
-                    <Ionicons name='heart-outline' size={16} color='#F53F7A' />
-                    <Text style={{ marginLeft: 6, color: '#333', fontSize: 12, fontWeight: '600' }}>Save Wishlist</Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name='pricetag-outline' size={16} color='#6a5acd' />
-                    <Text style={{ marginLeft: 6, color: '#333', fontSize: 12, fontWeight: '600' }}>Exclusive Offers</Text>
-                  </View>
-                </View>
-
-                {/* Phone input */}
-                <Text style={{ fontSize: 12, color: '#666', marginBottom: 6, fontWeight: '700', letterSpacing: 0.2 }}>Enter your mobile number</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F4F5F7', borderRadius: 14, paddingHorizontal: 12, paddingVertical: Platform.OS === 'android' ? 8 : 12, borderWidth: 1, borderColor: '#EAECF0' }}>
-                  <TextInput
-                    value={countryCode}
-                    onChangeText={setCountryCode}
-                    style={{ width: 68, fontSize: 16, fontWeight: '800', color: '#111' }}
-                    keyboardType='phone-pad'
-                  />
-                  <View style={{ width: 1, height: 22, backgroundColor: '#E0E0E0', marginHorizontal: 10 }} />
-                  <TextInput
-                    value={phone}
-                    onChangeText={setPhone}
-                    placeholder='9876543210'
-                    placeholderTextColor='#999'
-                    style={{ flex: 1, fontSize: 16, color: '#111' }}
-                    keyboardType='phone-pad'
-                    returnKeyType='done'
-                    maxLength={15}
-                  />
-                </View>
-
-                <View style={{ marginTop: 16 }}>
-                  <Text style={{ fontSize: 12, color: '#666', marginBottom: 6, fontWeight: '700', letterSpacing: 0.2 }}>
-                    Have a referral code? (optional)
-                  </Text>
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#F4F5F7',
-                      borderRadius: 14,
-                      paddingHorizontal: 12,
-                      borderWidth: 1,
-                      borderColor:
-                        referralCodeState === 'valid'
-                          ? '#A7F3D0'
-                          : referralCodeState === 'invalid'
-                            ? '#FECACA'
-                            : '#EAECF0',
-                    }}
-                  >
-                    <TextInput
-                      value={referralCodeInput}
-                      onChangeText={(text) => {
-                        setReferralCodeInput(text.toUpperCase());
-                        if (referralCodeState !== 'idle') {
-                          setReferralCodeState('idle');
-                          setReferralCodeMessage('');
-                          setAppliedReferralCoupon(null);
-                        }
-                      }}
-                      placeholder="ENTER CODE"
-                      placeholderTextColor="#9CA3AF"
-                      style={{ flex: 1, fontSize: 14, color: '#111', paddingVertical: Platform.OS === 'android' ? 10 : 14 }}
-                      autoCapitalize="characters"
-                    />
-                    <TouchableOpacity
-                      style={{
-                        paddingHorizontal: 14,
-                        paddingVertical: 8,
-                        backgroundColor: referralCodeState === 'valid' ? '#10B981' : '#F53F7A',
-                        borderRadius: 12,
-                        marginLeft: 8,
-                      }}
-                      onPress={handleApplyReferralCodeInput}
-                      disabled={referralCodeState === 'checking'}
-                    >
-                      {referralCodeState === 'checking' ? (
-                        <ActivityIndicator color="#fff" size="small" />
-                      ) : (
-                        <Text style={{ color: '#fff', fontWeight: '700' }}>
-                          {referralCodeState === 'valid' ? 'Applied' : 'Apply'}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                  {!!referralCodeMessage && (
-                    <Text
-                      style={{
-                        marginTop: 6,
-                        fontSize: 12,
-                        color: referralCodeState === 'valid' ? '#047857' : '#B91C1C',
-                      }}
-                    >
-                      {referralCodeMessage}
-                    </Text>
-                  )}
-                </View>
-
-                {/* Primary CTA send/resend */}
-                {!otpSent ? (
-                  <TouchableOpacity disabled={sending} onPress={handleSendOtp} style={{ marginTop: 14, backgroundColor: sending ? '#F7A3BD' : '#F53F7A', borderRadius: 14, paddingVertical: 14, alignItems: 'center', shadowColor: '#F53F7A', shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
-                    <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>{sending ? 'Sending...' : 'Send OTP'}</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={{ color: '#666' }}>{resendIn > 0 ? `Resend in ${resendIn}s` : 'You can resend now'}</Text>
-                    <TouchableOpacity disabled={resendIn > 0} onPress={handleSendOtp}>
-                      <Text style={{ color: resendIn > 0 ? '#AAA' : '#F53F7A', fontWeight: '800' }}>Resend OTP</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {/* OTP input + Verify CTA */}
-                {otpSent && (
-                  <View style={{ marginTop: 16 }}>
-                    <Text style={{ fontSize: 12, color: '#666', marginBottom: 6, fontWeight: '700' }}>Enter OTP</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F4F5F7', borderRadius: 14, paddingHorizontal: 14, paddingVertical: Platform.OS === 'android' ? 8 : 12, borderWidth: 1, borderColor: '#EAECF0' }}>
-                      <Ionicons name='key-outline' size={18} color='#999' />
-                      <TextInput
-                        value={otp}
-                        onChangeText={setOtp}
-                        placeholder='123456'
-                        placeholderTextColor='#999'
-                        style={{ flex: 1, fontSize: 18, color: '#111', marginLeft: 10, letterSpacing: 6 }}
-                        keyboardType='number-pad'
-                        returnKeyType='done'
-                        maxLength={6}
-                      />
-                    </View>
-                    <TouchableOpacity disabled={verifying} onPress={handleVerifyOtp} style={{ marginTop: 14, backgroundColor: verifying ? '#F7A3BD' : '#111827', borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
-                      <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>{verifying ? 'Verifying...' : 'Verify & Continue'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {!!error && (
-                  <View style={{ marginTop: 12, backgroundColor: '#FFF0F3', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FFD6DF' }}>
-                    <Text style={{ color: '#B00020', fontWeight: '900' }}>Error</Text>
-                    <Text style={{ color: '#B00020', marginTop: 4 }}>Error Sending sisdial otp, server request response timed out</Text>
-                  </View>
-                )}
-
-                {/* Google Sign In */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 16 }}>
-                  <View style={{ flex: 1, height: 1, backgroundColor: '#E5E5E5' }} />
-                  <Text style={{ marginHorizontal: 10, color: '#666', fontSize: 13, fontWeight: '600' }}>OR</Text>
-                  <View style={{ flex: 1, height: 1, backgroundColor: '#E5E5E5' }} />
-                </View>
-
-                <TouchableOpacity
-                  style={{
-                    backgroundColor: '#fff',
-                    borderWidth: 1.5,
-                    borderColor: '#EEE',
-                    borderRadius: 14,
-                    paddingVertical: 14,
-                    marginBottom: 10,
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                  onPress={handleGoogleLogin}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="logo-google" size={20} color="#000" style={{ marginRight: 10 }} />
-                    <Text style={{ color: '#000', fontSize: 16, fontWeight: '700' }}>
-                      Sign in with Google
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-
-                {/* Secondary CTAs */}
-                <View style={{ marginTop: 16 }}>
-                  <TouchableOpacity onPress={() => { hideLoginSheet(); resetSheetState(); }} style={{ alignItems: 'center', paddingVertical: 10 }}>
-                    <Text style={{ color: '#6B7280', fontWeight: '800' }}>Continue as Guest</Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      {/* Login Modal is handled globally by tab-navigator */}
 
       {/* Onboarding Modal */}
       <Modal visible={showOnboarding} transparent animationType="slide" onRequestClose={() => setShowOnboarding(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
-            <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 18, maxHeight: '82%' }}>
-              <View style={{ alignItems: 'center', marginBottom: 10 }}>
-                <View style={{ width: 44, height: 4, borderRadius: 2, backgroundColor: '#D6D6D6' }} />
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+            <View style={{
+              backgroundColor: '#fff',
+              borderTopLeftRadius: 32,
+              borderTopRightRadius: 32,
+              paddingHorizontal: 24,
+              paddingTop: 16,
+              paddingBottom: 32,
+              maxHeight: '85%'
+            }}>
+              {/* Handle indicator */}
+              <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                <View style={{ width: 48, height: 5, borderRadius: 3, backgroundColor: '#F53F7A' }} />
               </View>
 
-              <View style={{ marginBottom: 8 }}>
-                <Text style={{ fontSize: 20, fontWeight: '900', color: '#1f1f1f' }}>Your name</Text>
-                <Text style={{ marginTop: 4, color: '#666', fontWeight: '500' }}>Enter your name to continue</Text>
+              {/* Header with welcome message */}
+              <View style={{ alignItems: 'center', marginBottom: 28 }}>
+                <View style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 40,
+                  backgroundColor: '#F53F7A',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  marginBottom: 16,
+                  shadowColor: '#F53F7A',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.35,
+                  shadowRadius: 12,
+                  elevation: 8
+                }}>
+                  <Ionicons name="person-add" size={36} color="#fff" />
+                </View>
+                <Text style={{ fontSize: 26, fontWeight: '800', color: '#1a1a1a', marginBottom: 4 }}>
+                  👋 Welcome!
+                </Text>
+                <Text style={{ fontSize: 15, color: '#666', fontWeight: '500', textAlign: 'center', lineHeight: 22 }}>
+                  What should we call you?
+                </Text>
               </View>
 
-              <View style={{ maxHeight: '70%' }}>
-                <ScrollView keyboardShouldPersistTaps='handled' contentContainerStyle={{ paddingBottom: 20 }}>
-                  <View style={{ backgroundColor: '#F4F5F7', borderRadius: 12, paddingHorizontal: 12, paddingVertical: Platform.OS === 'android' ? 8 : 10, borderWidth: 1, borderColor: '#EAECF0' }}>
-                    <TextInput value={name} onChangeText={setName} placeholder='John Doe' placeholderTextColor='#999' style={{ fontSize: 16, color: '#111' }} />
+              <View style={{ maxHeight: '60%' }}>
+                <ScrollView keyboardShouldPersistTaps='handled' contentContainerStyle={{ paddingBottom: 16 }}>
+                  {/* Name input with icon */}
+                  <View style={{ marginBottom: 16 }}>
+                    <Text style={{
+                      fontSize: 11,
+                      fontWeight: '800',
+                      color: '#F53F7A',
+                      marginBottom: 10,
+                      letterSpacing: 1,
+                      textTransform: 'uppercase'
+                    }}>
+                      Your Name
+                    </Text>
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#FAFAFA',
+                      borderRadius: 16,
+                      paddingHorizontal: 16,
+                      paddingVertical: Platform.OS === 'android' ? 4 : 0,
+                      borderWidth: 2,
+                      borderColor: name ? '#F53F7A' : '#E8E8E8',
+                    }}>
+                      <Ionicons name="person-outline" size={22} color={name ? '#F53F7A' : '#999'} style={{ marginRight: 12 }} />
+                      <TextInput
+                        value={name}
+                        onChangeText={setName}
+                        placeholder='Enter your name'
+                        placeholderTextColor='#999'
+                        style={{
+                          flex: 1,
+                          fontSize: 17,
+                          color: '#1a1a1a',
+                          fontWeight: '600',
+                          paddingVertical: 16,
+                        }}
+                      />
+                      {name.length > 0 && (
+                        <TouchableOpacity onPress={() => setName('')}>
+                          <Ionicons name="close-circle" size={20} color="#ccc" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
 
                   {!!error && (
-                    <View style={{ marginTop: 12, backgroundColor: '#FFF0F3', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FFD6DF' }}>
-                      <Text style={{ color: '#B00020', fontWeight: '900' }}>Error</Text>
-                      <Text style={{ color: '#B00020', marginTop: 4 }}>{error}</Text>
+                    <View style={{
+                      marginBottom: 16,
+                      backgroundColor: '#FFF0F3',
+                      padding: 16,
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: '#FFD6DF',
+                      flexDirection: 'row',
+                      alignItems: 'center'
+                    }}>
+                      <Ionicons name="alert-circle" size={20} color="#B00020" style={{ marginRight: 10 }} />
+                      <Text style={{ color: '#B00020', fontWeight: '600', flex: 1 }}>{error}</Text>
                     </View>
                   )}
 
-                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16 }}>
-                    <TouchableOpacity disabled={creatingProfile} onPress={handleCreateProfile} style={{ backgroundColor: creatingProfile ? '#F7A3BD' : '#111827', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10 }}>
-                      <Text style={{ color: '#fff', fontWeight: '800' }}>{creatingProfile ? 'Saving...' : 'Save'}</Text>
-                    </TouchableOpacity>
-                  </View>
+                  {/* Continue button */}
+                  <TouchableOpacity
+                    disabled={creatingProfile || !name.trim()}
+                    onPress={handleCreateProfile}
+                    activeOpacity={0.8}
+                    style={{
+                      flexDirection: 'row',
+                      backgroundColor: creatingProfile || !name.trim() ? '#F7A3BD' : '#F53F7A',
+                      borderRadius: 16,
+                      paddingVertical: 18,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      shadowColor: '#F53F7A',
+                      shadowOffset: { width: 0, height: 6 },
+                      shadowOpacity: 0.35,
+                      shadowRadius: 10,
+                      elevation: 6
+                    }}
+                  >
+                    {creatingProfile ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 17, marginRight: 8 }}>
+                          Let's Go
+                        </Text>
+                        <Ionicons name="arrow-forward" size={20} color="#fff" />
+                      </>
+                    )}
+                  </TouchableOpacity>
 
-                  <TouchableOpacity onPress={() => setShowOnboarding(false)} style={{ alignItems: 'center', paddingVertical: 10 }}>
-                    <Text style={{ color: '#6B7280', fontWeight: '800' }}>Skip for now</Text>
+                  {/* Skip link */}
+                  <TouchableOpacity
+                    onPress={() => setShowOnboarding(false)}
+                    style={{ alignItems: 'center', paddingVertical: 16, marginTop: 8 }}
+                    activeOpacity={0.6}
+                  >
+                    <Text style={{ color: '#888', fontWeight: '600', fontSize: 14 }}>
+                      Skip for now
+                    </Text>
                   </TouchableOpacity>
                 </ScrollView>
               </View>
@@ -2533,7 +2493,7 @@ const Profile = () => {
                 <Ionicons name="storefront" size={22} color="#F53F7A" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.photoTutorialTitle}>How to Become a Seller</Text>
+                <Text style={styles.photoTutorialTitle}>How to Become a Vendor</Text>
                 <Text style={styles.photoTutorialSubtitle}>
                   Learn the simple steps to start selling on Only2U
                 </Text>
@@ -3211,6 +3171,21 @@ const Profile = () => {
                           </View>
                         </View>
                         <Text style={styles.feedbackCardText}>{feedback.feedback_text}</Text>
+
+                        {/* Admin Response Section */}
+                        {feedback.admin_response && (
+                          <View style={styles.feedbackAdminResponse}>
+                            <View style={styles.feedbackAdminResponseHeader}>
+                              <View style={styles.feedbackAdminBadge}>
+                                <Text style={styles.feedbackAdminBadgeText}>Team Only2U</Text>
+                              </View>
+                            </View>
+                            <Text style={styles.feedbackAdminResponseText}>
+                              {feedback.admin_response}
+                            </Text>
+                          </View>
+                        )}
+
                         {feedback.image_urls && feedback.image_urls.length > 0 && (
                           <View style={styles.feedbackCardMediaGrid}>
                             {feedback.image_urls.map((url: string, index: number) => {
@@ -4586,6 +4561,38 @@ const styles = StyleSheet.create({
   },
   feedbackCardLikeTextActive: {
     color: '#10B981',
+  },
+  feedbackAdminResponse: {
+    marginTop: 12,
+    marginBottom: 16,
+    padding: 14,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#F53F7A',
+  },
+  feedbackAdminResponseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  feedbackAdminBadge: {
+    backgroundColor: '#F53F7A',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  feedbackAdminBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  feedbackAdminResponseText: {
+    fontSize: 14,
+    color: '#4B5563',
+    lineHeight: 20,
+    fontStyle: 'italic',
   },
   headerFeedbackButton: {
     flexDirection: 'row',

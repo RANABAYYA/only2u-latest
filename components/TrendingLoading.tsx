@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Dimensions, Easing } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+ v import { Ionicons } from '@expo/vector-icons';
 
 const { width, height } = Dimensions.get('window');
 
@@ -9,84 +9,112 @@ interface TrendingLoadingProps {
     visible: boolean;
 }
 
+
+
 export const TrendingLoading = ({ visible }: TrendingLoadingProps) => {
     const fadeAnim = useRef(new Animated.Value(1)).current;
-    const scaleAnim = useRef(new Animated.Value(1)).current;
+    const scaleAnim = useRef(new Animated.Value(0.9)).current;
+    const discoPulse = useRef(new Animated.Value(1)).current;
     const hasShownRef = useRef(false);
-    const isAnimatingRef = useRef(false);
+    const animationsRef = useRef<Animated.CompositeAnimation[]>([]);
 
-    // Multiple dots for the loader
+    // Bouncing dots
     const dot1 = useRef(new Animated.Value(0)).current;
     const dot2 = useRef(new Animated.Value(0)).current;
     const dot3 = useRef(new Animated.Value(0)).current;
 
+    // Stop all animations
+    const stopAllAnimations = () => {
+        animationsRef.current.forEach(anim => anim.stop());
+        animationsRef.current = [];
+    };
+
     useEffect(() => {
         if (!visible) {
-            // Only fade out if we've shown the animation before and it's currently visible
-            if (hasShownRef.current && fadeAnim._value > 0) {
+            // Fade out and stop animations
+            if (hasShownRef.current) {
                 Animated.timing(fadeAnim, {
                     toValue: 0,
-                    duration: 500,
+                    duration: 300,
                     useNativeDriver: true,
-                }).start();
+                }).start(() => {
+                    stopAllAnimations();
+                });
             }
         } else {
-            // Only start animation once - if we've already shown it, don't restart
             if (!hasShownRef.current) {
                 hasShownRef.current = true;
                 fadeAnim.setValue(1);
 
-                // Breathing animation for the main icon
-                Animated.loop(
+                // Logo entrance
+                const entranceAnim = Animated.spring(scaleAnim, {
+                    toValue: 1,
+                    friction: 8,
+                    tension: 40,
+                    useNativeDriver: true,
+                });
+                entranceAnim.start();
+
+                // Disco pulse - simplified
+                const pulseAnim = Animated.loop(
                     Animated.sequence([
-                        Animated.timing(scaleAnim, {
+                        Animated.timing(discoPulse, {
                             toValue: 1.1,
-                            duration: 1500,
-                            easing: Easing.inOut(Easing.ease),
+                            duration: 700,
+                            easing: Easing.inOut(Easing.sin),
                             useNativeDriver: true,
                         }),
-                        Animated.timing(scaleAnim, {
+                        Animated.timing(discoPulse, {
                             toValue: 1,
-                            duration: 1500,
-                            easing: Easing.inOut(Easing.ease),
+                            duration: 700,
+                            easing: Easing.inOut(Easing.sin),
                             useNativeDriver: true,
                         }),
                     ])
-                ).start();
+                );
+                pulseAnim.start();
+                animationsRef.current.push(pulseAnim);
 
-                // Bouncing dots animation
+                // Bouncing dots - simplified
                 const animateDot = (anim: Animated.Value, delay: number) => {
-                    Animated.loop(
+                    const dotAnim = Animated.loop(
                         Animated.sequence([
                             Animated.timing(anim, {
-                                toValue: -10,
-                                duration: 500,
-                                delay: delay,
-                                easing: Easing.inOut(Easing.ease),
+                                toValue: -8,
+                                duration: 400,
+                                delay,
+                                easing: Easing.out(Easing.cubic),
                                 useNativeDriver: true,
                             }),
                             Animated.timing(anim, {
                                 toValue: 0,
-                                duration: 500,
-                                easing: Easing.inOut(Easing.ease),
+                                duration: 400,
+                                easing: Easing.in(Easing.cubic),
                                 useNativeDriver: true,
                             }),
                         ])
-                    ).start();
+                    );
+                    dotAnim.start();
+                    animationsRef.current.push(dotAnim);
                 };
 
                 animateDot(dot1, 0);
-                animateDot(dot2, 200);
-                animateDot(dot3, 400);
+                animateDot(dot2, 150);
+                animateDot(dot3, 300);
             } else {
-                // If already shown, just ensure opacity is 1 if visible becomes true again
-                // (though this shouldn't happen with our new logic)
                 fadeAnim.setValue(1);
             }
         }
+
+        return () => {
+            if (!visible) {
+                stopAllAnimations();
+            }
+        };
     }, [visible]);
 
-    if (!visible && fadeAnim._value === 0) return null;
+    // Don't render anything if not visible (performance)
+    if (!visible && (fadeAnim as any)._value === 0) return null;
 
     return (
         <Animated.View
@@ -96,28 +124,62 @@ export const TrendingLoading = ({ visible }: TrendingLoadingProps) => {
                 !visible && styles.pointerEventsNone
             ]}
         >
+            {/* Pink Theme Background - Simplified */}
             <LinearGradient
-                colors={['#FFFFFF', '#FFF0F5', '#FFE4E1']}
+                colors={['#FF6B9C', '#F53F7A', '#E8306B']}
                 style={styles.gradient}
             >
-                <View style={styles.content}>
-                    <Animated.View style={[styles.iconContainer, { transform: [{ scale: scaleAnim }] }]}>
-                        <LinearGradient
-                            colors={['#F53F7A', '#FF6B9C']}
-                            style={styles.iconBackground}
-                        >
-                            <Ionicons name="sparkles" size={40} color="#FFF" />
-                        </LinearGradient>
+                <Animated.View style={[styles.content, { transform: [{ scale: scaleAnim }] }]}>
+                    {/* Disco Ball */}
+                    <Animated.View
+                        style={[
+                            styles.discoBallContainer,
+                            { transform: [{ scale: discoPulse }] },
+                        ]}
+                    >
+                        <View style={styles.discoBall}>
+                            <LinearGradient
+                                colors={['#FFB6C1', '#F53F7A', '#C72C5C']}
+                                style={styles.discoBallGradient}
+                            >
+                                {/* Simplified disco tiles */}
+                                {Array.from({ length: 3 }).map((_, row) =>
+                                    Array.from({ length: 4 }).map((_, col) => (
+                                        <View
+                                            key={`${row}-${col}`}
+                                            style={[
+                                                styles.discoTile,
+                                                {
+                                                    top: 12 + row * 18,
+                                                    left: 12 + col * 15,
+                                                    opacity: (row + col) % 2 === 0 ? 0.4 : 0.2,
+                                                },
+                                            ]}
+                                        />
+                                    ))
+                                )}
+                            </LinearGradient>
+                        </View>
+
+                        {/* Single sparkle */}
+                        <Ionicons
+                            name="sparkles"
+                            size={16}
+                            color="#fff"
+                            style={styles.sparkle}
+                        />
                     </Animated.View>
 
-                    <Text style={styles.title}>Curating designs for u</Text>
+                    {/* Title */}
+                    <Text style={styles.title}>Loading trends...</Text>
 
-                    <View style={styles.loaderContainer}>
+                    {/* Loading Dots */}
+                    <View style={styles.dotsContainer}>
                         <Animated.View style={[styles.dot, { transform: [{ translateY: dot1 }] }]} />
-                        <Animated.View style={[styles.dot, { transform: [{ translateY: dot2 }] }]} />
+                        <Animated.View style={[styles.dotMiddle, { transform: [{ translateY: dot2 }] }]} />
                         <Animated.View style={[styles.dot, { transform: [{ translateY: dot3 }] }]} />
                     </View>
-                </View>
+                </Animated.View>
             </LinearGradient>
         </Animated.View>
     );
@@ -127,59 +189,73 @@ const styles = StyleSheet.create({
     container: {
         ...StyleSheet.absoluteFillObject,
         zIndex: 9999,
-        justifyContent: 'center',
-        alignItems: 'center',
     },
     pointerEventsNone: {
         pointerEvents: 'none',
     },
     gradient: {
-        width,
-        height,
+        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
     },
     content: {
         alignItems: 'center',
-        justifyContent: 'center',
     },
-    iconContainer: {
-        marginBottom: 30,
-        shadowColor: '#F53F7A',
-        shadowOffset: {
-            width: 0,
-            height: 10,
-        },
-        shadowOpacity: 0.3,
-        shadowRadius: 20,
-        elevation: 10,
+    discoBallContainer: {
+        marginBottom: 25,
+        shadowColor: '#FFD700',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.4,
+        shadowRadius: 15,
+        elevation: 8,
     },
-    iconBackground: {
-        width: 80,
-        height: 80,
-        borderRadius: 40,
-        justifyContent: 'center',
-        alignItems: 'center',
+    discoBall: {
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        overflow: 'hidden',
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.3)',
+    },
+    discoBallGradient: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 35,
+    },
+    discoTile: {
+        position: 'absolute',
+        width: 10,
+        height: 12,
+        backgroundColor: 'rgba(255,255,255,0.3)',
+        borderRadius: 2,
+    },
+    sparkle: {
+        position: 'absolute',
+        top: -8,
+        right: -4,
     },
     title: {
-        color: '#333',
-        fontSize: 22,
+        color: '#fff',
+        fontSize: 20,
         fontWeight: '600',
-        marginBottom: 40,
+        marginBottom: 25,
         letterSpacing: 0.5,
-        fontFamily: 'System',
     },
-    loaderContainer: {
+    dotsContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        height: 20,
+        gap: 8,
     },
     dot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#FFD700',
+    },
+    dotMiddle: {
         width: 10,
         height: 10,
         borderRadius: 5,
-        backgroundColor: '#F53F7A',
-        marginHorizontal: 6,
+        backgroundColor: '#fff',
     },
 });

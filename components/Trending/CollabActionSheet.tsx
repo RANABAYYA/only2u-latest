@@ -68,17 +68,6 @@ const CollabActionSheet = ({
                 </TouchableOpacity>
 
                 <View style={styles.actions}>
-                    {onFollow && (
-                        <TouchableOpacity
-                            style={[styles.actionButton, isFollowing && styles.followingButton]}
-                            onPress={onFollow}
-                        >
-                            <Text style={[styles.actionText, isFollowing && styles.followingText]}>
-                                {isFollowing ? 'Following' : 'Follow'}
-                            </Text>
-                        </TouchableOpacity>
-                    )}
-
                     <TouchableOpacity
                         style={[styles.actionButton, styles.viewButton]}
                         onPress={() => {
@@ -86,7 +75,7 @@ const CollabActionSheet = ({
                             sheetRef.current?.dismiss();
                         }}
                     >
-                        <Ionicons name="arrow-forward" size={16} color="#000" />
+                        <Ionicons name="arrow-forward" size={16} color="#F53F7A" />
                     </TouchableOpacity>
                 </View>
             </View>
@@ -122,8 +111,9 @@ const styles = StyleSheet.create({
         borderRadius: 24,
     },
     indicator: {
-        backgroundColor: '#E5E7EB',
+        backgroundColor: '#F53F7A',
         width: 40,
+        height: 4,
     },
     content: {
         flex: 1,
@@ -133,7 +123,7 @@ const styles = StyleSheet.create({
     title: {
         fontSize: 18,
         fontWeight: '700',
-        color: '#000',
+        color: '#F53F7A',
         marginBottom: 20,
         textAlign: 'center',
     },
@@ -144,11 +134,11 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingVertical: 12,
+        paddingVertical: 14,
     },
     divider: {
         height: 1,
-        backgroundColor: '#F3F4F6',
+        backgroundColor: 'rgba(245, 63, 122, 0.15)',
         marginVertical: 4,
     },
     profileInfo: {
@@ -157,12 +147,12 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     avatar: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
+        width: 52,
+        height: 52,
+        borderRadius: 26,
         marginRight: 12,
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
+        borderWidth: 2,
+        borderColor: '#F53F7A',
     },
     textContainer: {
         justifyContent: 'center',
@@ -170,14 +160,14 @@ const styles = StyleSheet.create({
     },
     name: {
         fontSize: 16,
-        fontWeight: '600',
+        fontWeight: '700',
         color: '#000',
         marginBottom: 2,
     },
     role: {
         fontSize: 12,
-        color: '#6B7280',
-        fontWeight: '500',
+        color: '#F53F7A',
+        fontWeight: '600',
     },
     actions: {
         flexDirection: 'row',
@@ -185,29 +175,36 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     actionButton: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
-        backgroundColor: '#000',
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        borderRadius: 22,
+        backgroundColor: '#F53F7A',
         justifyContent: 'center',
         alignItems: 'center',
+        shadowColor: '#F53F7A',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 3,
     },
     followingButton: {
-        backgroundColor: '#F3F4F6',
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
+        backgroundColor: '#fff',
+        borderWidth: 1.5,
+        borderColor: '#F53F7A',
+        shadowOpacity: 0,
     },
     viewButton: {
-        backgroundColor: '#F3F4F6',
+        backgroundColor: 'rgba(245, 63, 122, 0.1)',
         paddingHorizontal: 12,
+        shadowOpacity: 0,
     },
     actionText: {
         color: '#fff',
-        fontSize: 12,
-        fontWeight: '600',
+        fontSize: 13,
+        fontWeight: '700',
     },
     followingText: {
-        color: '#000',
+        color: '#F53F7A',
     },
 });
 

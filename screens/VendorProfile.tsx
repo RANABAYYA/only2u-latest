@@ -57,19 +57,19 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
-  const [errors, setErrors] = useState<{[key: string]: string}>({});
+  const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   const validateStep = (step: number) => {
-    const newErrors: {[key: string]: string} = {};
-    
+    const newErrors: { [key: string]: string } = {};
+
     if (step === 1) {
       if (!formData.businessName.trim()) newErrors.businessName = 'Business name is required';
       if (!formData.contactName.trim()) newErrors.contactName = 'Contact name is required';
       if (!formData.phone.trim()) newErrors.phone = 'Phone number is required';
       else if (!/^\d{10}$/.test(formData.phone.replace(/\D/g, ''))) newErrors.phone = 'Phone number must be 10 digits';
     }
-    
+
     if (step === 2) {
       if (!formData.city.trim()) newErrors.city = 'City is required';
       if (!formData.state.trim()) newErrors.state = 'State is required';
@@ -80,7 +80,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         newErrors.gstNumber = 'GST number must be 15 characters (e.g., 27ABCDE1234F1Z5)';
       }
     }
-    
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -97,11 +97,11 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
 
   const handleSubmit = async () => {
     if (!validateStep(3)) return;
-    
+
     setIsSubmitting(true);
     try {
       console.log('Submitting application with data:', formData);
-      
+
       // First, try to check if the table exists by querying it
       const { error: tableCheckError } = await supabase
         .from('seller_applications')
@@ -110,7 +110,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
 
       if (tableCheckError) {
         console.log('Table might not exist, error:', tableCheckError);
-        
+
         // If table doesn't exist, store locally and show fallback message
         try {
           const applicationData = {
@@ -123,11 +123,11 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         } catch (storageError) {
           console.error('Error storing application locally:', storageError);
         }
-        
+
         setShowSuccessModal(true);
         return;
       }
-      
+
       // Save application to database
       const { data, error } = await supabase
         .from('seller_applications')
@@ -153,7 +153,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
           hint: error.hint,
           code: error.code
         });
-        
+
         // If it's a table not found error, store locally and show fallback message
         if (error.code === 'PGRST116' || error.message?.includes('relation "seller_applications" does not exist')) {
           // Store application locally as fallback
@@ -168,11 +168,11 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
           } catch (storageError) {
             console.error('Error storing application locally:', storageError);
           }
-          
+
           setShowSuccessModal(true);
           return;
         }
-        
+
         throw new Error(`Database error: ${error.message}`);
       }
 
@@ -183,10 +183,10 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
       setShowSuccessModal(true);
     } catch (error: any) {
       console.error('Error submitting application:', error);
-      const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
+       const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
       Alert.alert(
-        'Error', 
-        `Failed to submit application: ${errorMessage}. Please try again or contact support if the issue persists.`
+        'Error',
+        `Failed to submit application: ${errorMessage}. Please try again o r contact support if the issue persists.`
       );
     } finally {
       setIsSubmitting(false);
@@ -196,13 +196,13 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
   const renderStep1 = () => (
     <View style={styles.formStep}>
       <Text style={styles.stepTitle}>Basic Information</Text>
-      
+
       <View style={styles.inputGroup}>
         <Text style={styles.inputLabel}>Business Name *</Text>
         <TextInput
           style={[styles.textInput, errors.businessName && styles.inputError]}
           value={formData.businessName}
-          onChangeText={(text) => setFormData({...formData, businessName: text})}
+          onChangeText={(text) => setFormData({ ...formData, businessName: text })}
           placeholder="Enter your business name"
         />
         {errors.businessName && <Text style={styles.errorText}>{errors.businessName}</Text>}
@@ -213,7 +213,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         <TextInput
           style={[styles.textInput, errors.contactName && styles.inputError]}
           value={formData.contactName}
-          onChangeText={(text) => setFormData({...formData, contactName: text})}
+          onChangeText={(text) => setFormData({ ...formData, contactName: text })}
           placeholder="Your full name"
         />
         {errors.contactName && <Text style={styles.errorText}>{errors.contactName}</Text>}
@@ -224,7 +224,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         <TextInput
           style={[styles.textInput, errors.phone && styles.inputError]}
           value={formData.phone}
-          onChangeText={(text) => setFormData({...formData, phone: text})}
+          onChangeText={(text) => setFormData({ ...formData, phone: text })}
           placeholder="9876543210"
           keyboardType="phone-pad"
           maxLength={10}
@@ -237,7 +237,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         <TextInput
           style={styles.textInput}
           value={formData.socialMedia}
-          onChangeText={(text) => setFormData({...formData, socialMedia: text})}
+          onChangeText={(text) => setFormData({ ...formData, socialMedia: text })}
           placeholder="Instagram, Facebook handles"
         />
       </View>
@@ -247,14 +247,14 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
   const renderStep2 = () => (
     <View style={styles.formStep}>
       <Text style={styles.stepTitle}>Business Location</Text>
-      
+
       <View style={styles.row}>
         <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
           <Text style={styles.inputLabel}>City *</Text>
           <TextInput
             style={[styles.textInput, errors.city && styles.inputError]}
             value={formData.city}
-            onChangeText={(text) => setFormData({...formData, city: text})}
+            onChangeText={(text) => setFormData({ ...formData, city: text })}
             placeholder="City"
           />
           {errors.city && <Text style={styles.errorText}>{errors.city}</Text>}
@@ -265,7 +265,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
           <TextInput
             style={[styles.textInput, errors.state && styles.inputError]}
             value={formData.state}
-            onChangeText={(text) => setFormData({...formData, state: text})}
+            onChangeText={(text) => setFormData({ ...formData, state: text })}
             placeholder="State"
           />
           {errors.state && <Text style={styles.errorText}>{errors.state}</Text>}
@@ -278,7 +278,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
           <TextInput
             style={[styles.textInput, errors.pincode && styles.inputError]}
             value={formData.pincode}
-            onChangeText={(text) => setFormData({...formData, pincode: text})}
+            onChangeText={(text) => setFormData({ ...formData, pincode: text })}
             placeholder="123456"
             keyboardType="numeric"
             maxLength={6}
@@ -291,7 +291,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
           <TextInput
             style={[styles.textInput, errors.gstNumber && styles.inputError]}
             value={formData.gstNumber}
-            onChangeText={(text) => setFormData({...formData, gstNumber: text.toUpperCase()})}
+            onChangeText={(text) => setFormData({ ...formData, gstNumber: text.toUpperCase() })}
             placeholder="27ABCDE1234F1Z5"
             autoCapitalize="characters"
             maxLength={15}
@@ -312,7 +312,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         <View style={{ width: 24 }} />
       </View>
 
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
@@ -334,14 +334,14 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
                   <Text style={styles.previousButtonText}>Previous</Text>
                 </TouchableOpacity>
               )}
-              
+
               {currentStep < 2 ? (
                 <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
                   <Text style={styles.nextButtonText}>Next</Text>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity 
-                  style={[styles.submitButton, isSubmitting && styles.disabledButton]} 
+                <TouchableOpacity
+                  style={[styles.submitButton, isSubmitting && styles.disabledButton]}
                   onPress={handleSubmit}
                   disabled={isSubmitting}
                 >
@@ -381,7 +381,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
 
             {/* Title */}
             <Text style={styles.successModalTitle}>Application Submitted! 🎉</Text>
-            
+
             {/* Message */}
             <Text style={styles.successModalMessage}>
               Thank you for your interest in becoming a seller! Your application has been received successfully.
@@ -458,10 +458,12 @@ const VendorProfile: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'products'>('products');
   const [vendorProducts, setVendorProducts] = useState<any[]>([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [postsDisplayCount, setPostsDisplayCount] = useState(12); // Initially show 12 items (4 rows)
   const scrollRef = useRef<ScrollView | null>(null);
   const [productsY, setProductsY] = useState(0);
   const [productRatings, setProductRatings] = useState<{ [productId: string]: { rating: number; reviews: number } }>({});
-  
+
   // UGC Actions Sheet
   const ugcActionsSheetRef = useRef<BottomSheet>(null);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
@@ -487,7 +489,7 @@ const VendorProfile: React.FC = () => {
           .from('blocked_users')
           .select(columns)
           .eq('user_id', userData.id);
-        
+
         if (error) {
           if (error.code === 'PGRST204' && supportsVendorNameBlocking) {
             setSupportsVendorNameBlocking(false);
@@ -515,8 +517,9 @@ const VendorProfile: React.FC = () => {
 
   const loadVendorData = async () => {
     if (!vendorId) return;
-    
+
     setLoading(true);
+    setProductsLoading(true);
     try {
       // If it's a mock vendor (from trending screen), use the initial vendor data
       if (vendorId.startsWith('mock_') && initialVendor) {
@@ -536,6 +539,7 @@ const VendorProfile: React.FC = () => {
         setVendorPosts([]);
         setVendorProducts([]);
         setLoading(false);
+        setProductsLoading(false);
         return;
       }
 
@@ -543,7 +547,7 @@ const VendorProfile: React.FC = () => {
       if (vendorData) {
         setVendor(vendorData);
       }
-      
+
       await fetchVendorPosts(vendorId);
       setVendorPosts(vendorPosts.filter(post => post.vendor_id === vendorId));
 
@@ -615,6 +619,7 @@ const VendorProfile: React.FC = () => {
       Alert.alert('Error', 'Failed to load vendor profile');
     } finally {
       setLoading(false);
+      setProductsLoading(false);
     }
   };
 
@@ -628,7 +633,7 @@ const VendorProfile: React.FC = () => {
 
     try {
       const isFollowing = isFollowingVendor(vendor.id);
-      const success = isFollowing 
+      const success = isFollowing
         ? await unfollowVendor(vendor.id)
         : await followVendor(vendor.id);
 
@@ -652,7 +657,7 @@ const VendorProfile: React.FC = () => {
       Toast.show({
         type: 'info',
         text1: 'Login Required',
-      text2: 'Please login to use Face Swap.',
+        text2: 'Please login to use Face Swap.',
       });
       showLoginSheet();
       return;
@@ -675,7 +680,7 @@ const VendorProfile: React.FC = () => {
 
     try {
       Alert.alert('Face Swap', 'Starting face swap process...');
-      
+
       const result = await piAPIVirtualTryOnService.initiateVirtualTryOn({
         userImageUrl,
         productImageUrl,
@@ -713,13 +718,13 @@ const VendorProfile: React.FC = () => {
       const success = isLiked ? await unlikePost(postId) : await likePost(postId);
       if (success) {
         // Update local state
-        setVendorPosts(prev => prev.map(post => 
-          post.id === postId 
-            ? { 
-                ...post, 
-                likes_count: isLiked ? post.likes_count - 1 : post.likes_count + 1,
-                is_liked: !isLiked
-              }
+        setVendorPosts(prev => prev.map(post =>
+          post.id === postId
+            ? {
+              ...post,
+              likes_count: isLiked ? post.likes_count - 1 : post.likes_count + 1,
+              is_liked: !isLiked
+            }
             : post
         ));
       }
@@ -755,7 +760,7 @@ const VendorProfile: React.FC = () => {
       await shareToWhatsApp(message);
 
       // Optionally notify backend about share
-      try { await sharePost(postId); } catch {}
+      try { await sharePost(postId); } catch { }
     } catch (error) {
       console.error('Error sharing post:', error);
       Alert.alert('Error', 'Failed to share post');
@@ -767,7 +772,7 @@ const VendorProfile: React.FC = () => {
   };
 
   const handleOpenSocial = (handle: string, platform: 'instagram' | 'tiktok') => {
-    const url = platform === 'instagram' 
+    const url = platform === 'instagram'
       ? `https://instagram.com/${handle.replace('@', '')}`
       : `https://tiktok.com/@${handle.replace('@', '')}`;
     Linking.openURL(url);
@@ -958,9 +963,9 @@ const VendorProfile: React.FC = () => {
   const renderPostDetail = (post: VendorPost) => (
     <View style={styles.postDetail}>
       <View style={styles.postHeader}>
-        <Image 
-          source={{ uri: vendor?.profile_image_url || 'https://via.placeholder.com/40' }} 
-          style={styles.postProfileImage} 
+        <Image
+          source={{ uri: vendor?.profile_image_url || 'https://via.placeholder.com/40' }}
+          style={styles.postProfileImage}
         />
         <View style={styles.postHeaderInfo}>
           <Text style={styles.postVendorName}>{vendor?.business_name}</Text>
@@ -983,9 +988,9 @@ const VendorProfile: React.FC = () => {
           activeOpacity={0.85}
           onPress={() => handleShopNow(post.product_id!)}
         >
-          <Image 
-            source={{ uri: post.product_images?.[0] || 'https://via.placeholder.com/120' }} 
-            style={styles.postProductImage} 
+          <Image
+            source={{ uri: post.product_images?.[0] || 'https://via.placeholder.com/120' }}
+            style={styles.postProductImage}
           />
           <View style={styles.postProductInfo}>
             <Text style={styles.postProductName} numberOfLines={1}>{post.product_name}</Text>
@@ -997,14 +1002,14 @@ const VendorProfile: React.FC = () => {
       )}
 
       <View style={styles.postActions}>
-        <TouchableOpacity 
+        <TouchableOpacity
           onPress={() => handleLikePost(post.id, post.is_liked || false)}
           style={styles.actionButton}
         >
-          <Ionicons 
-            name={post.is_liked ? "heart" : "heart-outline"} 
-            size={24} 
-            color={post.is_liked ? "#FF3040" : "#000"} 
+          <Ionicons
+            name={post.is_liked ? "heart" : "heart-outline"}
+            size={24}
+            color={post.is_liked ? "#FF3040" : "#000"}
           />
           <Text style={styles.actionText}>{post.likes_count}</Text>
         </TouchableOpacity>
@@ -1014,7 +1019,7 @@ const VendorProfile: React.FC = () => {
           <Text style={styles.actionText}>{post.comments_count}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           onPress={() => handleSharePost(post.id)}
           style={styles.actionButton}
         >
@@ -1046,7 +1051,7 @@ const VendorProfile: React.FC = () => {
       <SafeAreaView style={styles.container}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Vendor not found</Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.retryButton}
             onPress={() => navigation.goBack()}
           >
@@ -1075,11 +1080,11 @@ const VendorProfile: React.FC = () => {
           {/* Profile Info Row */}
           <View style={styles.profileInfoRow}>
             {/* Profile Picture */}
-            <Image 
-              source={{ uri: vendor.profile_image_url || 'https://via.placeholder.com/100' }} 
-              style={styles.profileImage} 
+            <Image
+              source={{ uri: vendor.profile_image_url || 'https://via.placeholder.com/100' }}
+              style={styles.profileImage}
             />
-            
+
             {/* Stats */}
             <View style={styles.statsRow}>
               <TouchableOpacity style={styles.statItem}>
@@ -1122,7 +1127,7 @@ const VendorProfile: React.FC = () => {
           {(vendor.website_url || vendor.instagram_handle || vendor.tiktok_handle) && (
             <View style={styles.socialLinksRow}>
               {vendor.website_url && (
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.socialLinkChip}
                   onPress={() => handleOpenWebsite(vendor.website_url!)}
                 >
@@ -1131,7 +1136,7 @@ const VendorProfile: React.FC = () => {
                 </TouchableOpacity>
               )}
               {vendor.instagram_handle && (
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.socialLinkChip}
                   onPress={() => handleOpenSocial(vendor.instagram_handle!, 'instagram')}
                 >
@@ -1140,7 +1145,7 @@ const VendorProfile: React.FC = () => {
                 </TouchableOpacity>
               )}
               {vendor.tiktok_handle && (
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.socialLinkChip}
                   onPress={() => handleOpenSocial(vendor.tiktok_handle!, 'tiktok')}
                 >
@@ -1153,7 +1158,7 @@ const VendorProfile: React.FC = () => {
 
           {/* Action Buttons */}
           <View style={styles.actionButtonsRow}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[
                 styles.primaryActionButton,
                 isFollowingVendor(vendor.id) && styles.followingButton
@@ -1185,14 +1190,14 @@ const VendorProfile: React.FC = () => {
         {/* Instagram-like Tab Bar */}
         <View style={styles.tabBarContainer}>
           <View style={styles.tabBarInner}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.tabItem, activeTab === 'posts' && styles.activeTabItem]}
               onPress={() => setActiveTab('posts')}
             >
-              <Ionicons 
-                name="grid" 
-                size={20} 
-                color={activeTab === 'posts' ? '#000' : '#999'} 
+              <Ionicons
+                name="grid"
+                size={20}
+                color={activeTab === 'posts' ? '#000' : '#999'}
               />
               <Text style={[styles.tabText, activeTab === 'posts' && styles.activeTabText]}>
                 POSTS
@@ -1200,14 +1205,14 @@ const VendorProfile: React.FC = () => {
               {activeTab === 'posts' && <View style={styles.tabIndicator} />}
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.tabItem, activeTab === 'products' && styles.activeTabItem]}
               onPress={() => setActiveTab('products')}
             >
-              <Ionicons 
-                name="storefront" 
-                size={20} 
-                color={activeTab === 'products' ? '#000' : '#999'} 
+              <Ionicons
+                name="storefront"
+                size={20}
+                color={activeTab === 'products' ? '#000' : '#999'}
               />
               <Text style={[styles.tabText, activeTab === 'products' && styles.activeTabText]}>
                 PRODUCTS
@@ -1222,31 +1227,58 @@ const VendorProfile: React.FC = () => {
           {/* Posts Tab - Show all product images in grid */}
           {activeTab === 'posts' && (
             <View style={styles.postsGrid}>
-              {vendorProducts.length === 0 ? (
+              {productsLoading ? (
+                <View style={styles.contentLoadingContainer}>
+                  <ActivityIndicator size="large" color="#F53F7A" />
+                  <Text style={styles.contentLoadingText}>Loading posts...</Text>
+                </View>
+              ) : vendorProducts.length === 0 ? (
                 <View style={styles.emptyTabState}>
                   <Ionicons name="images-outline" size={64} color="#ddd" />
                   <Text style={styles.emptyTabTitle}>No Products Yet</Text>
                   <Text style={styles.emptyTabSubtitle}>Product images from {vendor.business_name} will appear here</Text>
                 </View>
               ) : (
-                <View style={styles.gridContainer}>
-                  {vendorProducts.map((product) => {
-                    const firstImage = getFirstImage(product);
-                    return (
-                      <TouchableOpacity 
-                        key={product.id} 
-                        style={styles.gridItem}
-                        onPress={() => openProductDetails(product)}
-                      >
-                        <Image 
-                          source={{ uri: firstImage }} 
-                          style={styles.gridImage}
-                          resizeMode="cover"
-                        />
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                <>
+                  <View style={styles.gridContainer}>
+                    {vendorProducts.slice(0, postsDisplayCount).map((product) => {
+                      const firstImage = getFirstImage(product);
+                      return (
+                        <TouchableOpacity
+                          key={product.id}
+                          style={styles.gridItem}
+                          onPress={() => openProductDetails(product)}
+                          activeOpacity={0.8}
+                        >
+                          <Image
+                            source={{ uri: firstImage }}
+                            style={styles.gridImage}
+                            resizeMode="cover"
+                            fadeDuration={300}
+                          />
+                          <View style={styles.gridImageLoadingOverlay}>
+                            <ActivityIndicator size="small" color="#F53F7A" />
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {vendorProducts.length > postsDisplayCount && (
+                    <TouchableOpacity
+                      style={styles.loadMoreButton}
+                      onPress={() => {
+                        const newCount = postsDisplayCount + 12;
+                        setPostsDisplayCount(newCount > vendorProducts.length ? vendorProducts.length : newCount);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.loadMoreText}>
+                        Load More ({vendorProducts.length - postsDisplayCount} remaining)
+                      </Text>
+                      <Ionicons name="chevron-down" size={18} color="#F53F7A" />
+                    </TouchableOpacity>
+                  )}
+                </>
               )}
             </View>
           )}
@@ -1254,7 +1286,12 @@ const VendorProfile: React.FC = () => {
           {/* Products Tab - Category-wise display */}
           {activeTab === 'products' && (
             <ScrollView style={styles.productsContainer} showsVerticalScrollIndicator={false}>
-              {vendorProducts.length === 0 ? (
+              {productsLoading ? (
+                <View style={styles.contentLoadingContainer}>
+                  <ActivityIndicator size="large" color="#F53F7A" />
+                  <Text style={styles.contentLoadingText}>Loading products...</Text>
+                </View>
+              ) : vendorProducts.length === 0 ? (
                 <View style={styles.emptyTabState}>
                   <Ionicons name="cube-outline" size={64} color="#ddd" />
                   <Text style={styles.emptyTabTitle}>No Products Yet</Text>
@@ -1274,48 +1311,48 @@ const VendorProfile: React.FC = () => {
                     }, {} as { [key: string]: any[] })
                   ).map(([categoryName, categoryProducts]) => {
                     // Get category object from first product
-                    const category = categoryProducts[0]?.category || { 
-                      id: categoryProducts[0]?.category_id || '', 
-                      name: categoryName 
+                    const category = categoryProducts[0]?.category || {
+                      id: categoryProducts[0]?.category_id || '',
+                      name: categoryName
                     };
-                    
+
                     return (
-                    <View key={categoryName} style={styles.categorySection}>
-                      {/* Category Header */}
-                      <View style={styles.categoryHeader}>
-                        <Text style={styles.categoryTitle}>{categoryName}</Text>
-                        <TouchableOpacity
-                          style={styles.seeMoreButton}
-                          onPress={() => {
-                            navigation.navigate('Products' as never, { 
-                              category: {
-                                id: category.id || categoryProducts[0]?.category_id || '',
-                                name: categoryName,
-                                description: '',
-                                is_active: true,
-                                created_at: new Date().toISOString(),
-                                updated_at: new Date().toISOString()
-                              },
-                              vendorId: vendor.id
-                            } as never);
-                          }}
-                        >
-                          <Text style={styles.seeMoreText}>See More</Text>
-                          <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
-                        </TouchableOpacity>
+                      <View key={categoryName} style={styles.categorySection}>
+                        {/* Category Header */}
+                        <View style={styles.categoryHeader}>
+                          <Text style={styles.categoryTitle}>{categoryName}</Text>
+                          <TouchableOpacity
+                            style={styles.seeMoreButton}
+                            onPress={() => {
+                              navigation.navigate('Products' as never, {
+                                category: {
+                                  id: category.id || categoryProducts[0]?.category_id || '',
+                                  name: categoryName,
+                                  description: '',
+                                  is_active: true,
+                                  created_at: new Date().toISOString(),
+                                  updated_at: new Date().toISOString()
+                                },
+                                vendorId: vendor.id
+                              } as never);
+                            }}
+                          >
+                            <Text style={styles.seeMoreText}>See More</Text>
+                            <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
+                          </TouchableOpacity>
+                        </View>
+
+                        {/* Horizontal Product List */}
+                        <FlatList
+                          horizontal
+                          data={categoryProducts}
+                          renderItem={({ item }) => renderProductCard(item)}
+                          keyExtractor={(item) => item.id}
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.productsHorizontalList}
+                          ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
+                        />
                       </View>
-                      
-                      {/* Horizontal Product List */}
-                      <FlatList
-                        horizontal
-                        data={categoryProducts}
-                        renderItem={({ item }) => renderProductCard(item)}
-                        keyExtractor={(item) => item.id}
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.productsHorizontalList}
-                        ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
-                      />
-                    </View>
                     );
                   })}
                 </>
@@ -1548,6 +1585,16 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 16,
     color: '#666',
+  },
+  contentLoadingContainer: {
+    paddingVertical: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contentLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#999',
   },
   errorContainer: {
     flex: 1,
@@ -2049,22 +2096,50 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 4,
   },
-  // Grid Styles
   gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    padding: 0,
+    gap: 1,
+  },
+  loadMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    marginTop: 8,
+    marginBottom: 16,
+    backgroundColor: 'rgba(245, 63, 122, 0.1)',
+    borderRadius: 12,
+    marginHorizontal: 16,
+    gap: 8,
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F53F7A',
+  },
+  gridRow: {
+    gap: 1,
+    marginBottom: 1,
   },
   gridItem: {
-    width: width / 3,
-    height: width / 3,
-    position: 'relative',
-    borderWidth: 0.5,
-    borderColor: '#fff',
+    width: (width - 2) / 3,
+    height: (width - 2) / 3,
+    backgroundColor: '#f0f0f0',
   },
   gridImage: {
     width: '100%',
     height: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  gridImageLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    zIndex: -1,
   },
   multipleIndicator: {
     position: 'absolute',

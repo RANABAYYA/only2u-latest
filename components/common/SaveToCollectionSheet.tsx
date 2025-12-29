@@ -58,14 +58,14 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
         is_private: c.is_private,
         item_count: c.collection_products?.[0]?.count || 0,
       }));
-      
+
       // Sort collections to put "All" at the top
       const sortedCollections = collections.sort((a, b) => {
         if (a.name === 'All') return -1;
         if (b.name === 'All') return 1;
         return 0;
       });
-      
+
       setCollections(sortedCollections);
     }
     setLoading(false);
@@ -87,7 +87,7 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
         fetchCollections();
         fetchProductCollections();
       }, 200);
-      
+
       return () => clearTimeout(refreshTimer);
     }
   }, [visible]);
@@ -95,7 +95,7 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
   // Fetch which collections this product is already in
   const fetchProductCollections = async () => {
     if (!product?.id || !userData?.id) return;
-    
+
     try {
       const { data: collectionProducts } = await supabase
         .from('collection_products')
@@ -115,11 +115,11 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
   const handleAddToCollection = async (collectionId: string) => {
     if (!product?.id) return;
     setAddingToCollectionId(collectionId);
-    
+
     // Find collection name for the alert
     const collection = collections.find(c => c.id === collectionId);
     const collectionName = collection?.name || 'Collection';
-    
+
     // First, ensure the "All" collection exists and add product to it
     if (collectionName !== 'All' && userData?.id) {
       try {
@@ -145,7 +145,7 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
             })
             .select()
             .single();
-          
+
           if (newAllCollection) {
             allCollectionId = newAllCollection.id;
           }
@@ -184,12 +184,12 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
     if (!error) {
       // Add collection to the list of collections this product is in
       setProductInCollections([...productInCollections, collectionId]);
-      
+
       // Call the onSaved callback instead of showing toast
       if (onSaved) {
         onSaved(product, collectionName);
       }
-      
+
       // Don't show toast here - the onSaved callback will handle it
     } else {
       Toast.show({
@@ -261,7 +261,7 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
         if (!error) {
           // Update local state
           setProductInCollections([]);
-          
+
           // Remove from wishlist context
           removeFromWishlist(product.id);
 
@@ -309,17 +309,23 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
   // Render collection item (updated)
   const renderCollection = ({ item }: { item: Collection }) => {
     const isProductInCollection = productInCollections.includes(item.id);
-    
+
     return (
       <View style={styles.collectionRow}>
-        <Image source={{ uri: item.image || 'https://via.placeholder.com/44' }} style={styles.collectionImage} />
+        {item.image ? (
+          <Image source={{ uri: item.image }} style={styles.collectionImage} />
+        ) : (
+          <View style={[styles.collectionImage, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF0F5' }]}>
+            <Ionicons name="heart" size={24} color="#F53F7A" />
+          </View>
+        )}
         <View style={{ flex: 1 }}>
           <Text style={styles.collectionName}>{item.name}</Text>
           <Text style={styles.collectionMeta}>
             {isProductInCollection ? 'Already added' : 'Private'}
           </Text>
         </View>
-        <TouchableOpacity 
+        <TouchableOpacity
           onPress={() => {
             if (isProductInCollection) {
               // Show remove confirmation modal
@@ -329,7 +335,7 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
               // Add to collection
               handleAddToCollection(item.id);
             }
-          }} 
+          }}
           disabled={addingToCollectionId === item.id}
         >
           {addingToCollectionId === item.id ? (
@@ -361,15 +367,11 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
       <View style={styles.sheetContent}>
         {/* Header */}
         <View style={styles.headerRow}>
-          <Image
-                            source={{ uri: getFirstSafeImageUrl(product?.image_urls || [product?.image_url]) }}
-            style={styles.productImage}
-          />
           <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>Wishlist</Text>
             <Text style={styles.headerSubtitle}>Private</Text>
           </View>
-          <TouchableOpacity 
+          <TouchableOpacity
             onPress={handleRemoveFromAllCollections}
             activeOpacity={0.7}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -453,8 +455,8 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
               {/* Product Info */}
               {product && (
                 <View style={styles.removeModalProductInfo}>
-                  <Image 
-                    source={{ uri: product.image_urls?.[0] || product.image_url || 'https://via.placeholder.com/80' }} 
+                  <Image
+                    source={{ uri: product.image_urls?.[0] || product.image_url || 'https://via.placeholder.com/80' }}
                     style={styles.removeModalProductImage}
                   />
                   <Text style={styles.removeModalProductName} numberOfLines={2}>
@@ -485,7 +487,7 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
                   style={styles.removeModalRemoveButton}
                   onPress={async () => {
                     if (!collectionToRemoveFrom || !product) return;
-                    
+
                     try {
                       // Remove from database
                       const { error } = await supabase
@@ -500,7 +502,7 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
                         // Update local state
                         const updatedCollections = productInCollections.filter(id => id !== collectionToRemoveFrom.id);
                         setProductInCollections(updatedCollections);
-                        
+
                         // If this was the last collection, remove from wishlist context
                         if (updatedCollections.length === 0) {
                           removeFromWishlist(product.id);
@@ -511,7 +513,7 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
                     } catch (error) {
                       console.error('Error removing from collection:', error);
                     }
-                    
+
                     setShowRemoveModal(false);
                     setCollectionToRemoveFrom(null);
                   }}
@@ -546,8 +548,8 @@ const SaveToCollectionSheet: React.FC<SaveToCollectionSheetProps> = ({ visible, 
               {/* Product Info */}
               {product && (
                 <View style={styles.removeModalProductInfo}>
-                  <Image 
-                    source={{ uri: product.image_urls?.[0] || product.image_url || 'https://via.placeholder.com/80' }} 
+                  <Image
+                    source={{ uri: product.image_urls?.[0] || product.image_url || 'https://via.placeholder.com/80' }}
                     style={styles.removeModalProductImage}
                   />
                   <Text style={styles.removeModalProductName} numberOfLines={2}>

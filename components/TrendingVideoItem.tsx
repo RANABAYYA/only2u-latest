@@ -47,6 +47,7 @@ interface Props {
     onTryOn: (product: any) => void;
     onCollabPress: (product: any) => void;
     onShowFilters: () => void;
+    onShopNow: (product: any) => void;
     setVideoRef: (id: string, ref: Video | null) => void;
     videoFallbackOverrides: Record<string, string>;
     setVideoFallbackOverrides: (overrides: Record<string, string>) => void;
@@ -78,6 +79,7 @@ const TrendingVideoItem = ({
     onTryOn,
     onCollabPress,
     onShowFilters,
+    onShopNow,
     setVideoRef,
     videoFallbackOverrides,
     setVideoFallbackOverrides,
@@ -86,7 +88,40 @@ const TrendingVideoItem = ({
 }: Props) => {
     const navigation = useNavigation<any>();
     const videoOpacity = useRef(new Animated.Value(0)).current;
+
+    // Floating thumbs up state
+    interface AnimationItem {
+        id: number;
+        val: Animated.Value;
+    }
+    const [floatingThumbsUps, setFloatingThumbsUps] = useState<AnimationItem[]>([]);
     const [doubleTapHeartVisible, setDoubleTapHeartVisible] = useState(false);
+
+    // Function to trigger floating thumbs up animation
+    const triggerThumbsUp = () => {
+        const id = Date.now();
+        const val = new Animated.Value(0);
+
+        const newAnim: AnimationItem = { id, val };
+        setFloatingThumbsUps(prev => [...prev, newAnim]);
+
+        Animated.timing(val, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: true,
+        }).start(({ finished }) => {
+            if (finished) {
+                setFloatingThumbsUps(prev => prev.filter(item => item.id !== id));
+            }
+        });
+    };
+
+    const handleLikePress = () => {
+        if (!isLiked) {
+            triggerThumbsUp();
+        }
+        onLike(product.id);
+    };
 
     // Derived state
     const vendorName = product.vendor_name || product.alias_vendor || vendor?.business_name || 'Vendor';
@@ -271,13 +306,51 @@ const TrendingVideoItem = ({
 
             {/* Right Actions */}
             <View style={styles.rightActions}>
-                <TouchableOpacity style={styles.modernActionButton} onPress={() => onLike(product.id)}>
+                <TouchableOpacity style={styles.modernActionButton} onPress={handleLikePress}>
                     <View style={styles.actionIconCircle}>
                         <Ionicons
                             name={isLiked ? 'thumbs-up' : 'thumbs-up-outline'}
                             size={28}
                             color={isLiked ? '#F53F7A' : '#fff'}
                         />
+                        {floatingThumbsUps.map(anim => {
+                            const translateY = anim.val.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [0, -100],
+                            });
+                            const opacity = anim.val.interpolate({
+                                inputRange: [0, 0.5, 1],
+                                outputRange: [1, 1, 0],
+                            });
+                            const scale = anim.val.interpolate({
+                                inputRange: [0, 0.2, 1],
+                                outputRange: [0.5, 1.2, 1],
+                            });
+
+                            return (
+                                <Animated.View
+                                    key={anim.id}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        right: 0,
+                                        bottom: 0,
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        opacity: opacity,
+                                        transform: [
+                                            { translateY: translateY },
+                                            { scale: scale },
+                                            { rotate: '-15deg' }
+                                        ],
+                                    }}
+                                    pointerEvents="none"
+                                >
+                                    <Ionicons name="thumbs-up" size={28} color="#F53F7A" />
+                                </Animated.View>
+                            );
+                        })}
                     </View>
                     <Text style={styles.modernActionText}>Like</Text>
                 </TouchableOpacity>
@@ -306,44 +379,47 @@ const TrendingVideoItem = ({
 
             {/* Bottom Content */}
             <View style={[styles.modernBottomContent, { paddingBottom: Math.max(insets.bottom, 24) + 12 }]}>
-                {/* Unified Vendor & Influencer Pill */}
-                <View style={styles.modernVendorRow}>
-                    <TouchableOpacity
-                        style={styles.collabPill}
-                        activeOpacity={0.9}
-                        onPress={() => onCollabPress(product)}
-                    >
-                        {/* Overlapping Avatars */}
-                        <View style={[styles.avatarContainer, { width: influencer ? 50 : 36 }]}>
+                {/* Vendor/Influencer Row - Clean Design */}
+                <TouchableOpacity
+                    style={styles.vendorInfoRow}
+                    activeOpacity={0.85}
+                    onPress={() => onCollabPress(product)}
+                >
+                    {/* Avatar(s) */}
+                    <View style={styles.avatarStack}>
+                        <Image
+                            source={{ uri: vendor?.profile_image_url || vendor?.profile_photo || DEFAULT_AVATAR }}
+                            style={styles.vendorAvatar}
+                        />
+                        {influencer && (
                             <Image
-                                source={{ uri: vendor?.profile_image_url || vendor?.profile_photo || DEFAULT_AVATAR }}
-                                style={[styles.avatarBase, styles.vendorAvatarZ]}
+                                source={{ uri: influencer.profile_photo || influencer.profile_image_url || DEFAULT_AVATAR }}
+                                style={styles.influencerAvatar}
                             />
-                            {influencer && (
-                                <Image
-                                    source={{ uri: influencer.profile_photo || influencer.profile_image_url || DEFAULT_AVATAR }}
-                                    style={[styles.avatarBase, styles.influencerAvatarZ]}
-                                />
-                            )}
-                        </View>
+                        )}
+                    </View>
 
-                        {/* Text Info */}
-                        <View style={styles.collabTextContainer}>
-                            {influencer ? (
+                    {/* Name & Subtitle */}
+                    <View style={styles.vendorTextBlock}>
+                        <View style={styles.vendorNameRow}>
+                            <Text style={styles.vendorNameText} numberOfLines={1}>{vendorName}</Text>
+                            {influencer && (
                                 <>
-                                    <Text style={styles.collabVendorName} numberOfLines={1}>{vendorName}</Text>
-                                    <Text style={[styles.collabSubtext, { fontSize: 9, opacity: 0.7 }]}>with</Text>
-                                    <Text style={styles.collabInfluencerName} numberOfLines={1}>{influencer.name.split(' ')[0]}</Text>
-                                </>
-                            ) : (
-                                <>
-                                    <Text style={styles.collabVendorName} numberOfLines={1}>{vendorName}</Text>
-                                    <Text style={styles.collabSubtext} numberOfLines={1}>{vendor?.location || 'Official Vendor'}</Text>
+                                    <Text style={styles.vendorCollab}> × </Text>
+                                    <Text style={styles.influencerNameText} numberOfLines={1}>{influencer.name.split(' ')[0]}</Text>
                                 </>
                             )}
                         </View>
-                    </TouchableOpacity>
-                </View>
+                        <Text style={styles.vendorSubtitle} numberOfLines={1}>
+                            {influencer ? 'Brand Collaboration' : (vendor?.location || 'Official Vendor')}
+                        </Text>
+                    </View>
+
+                    {/* Follow/View indicator */}
+                    <View style={styles.viewProfileBtn}>
+                        <Ionicons name="person-add" size={14} color="#fff" />
+                    </View>
+                </TouchableOpacity>
 
                 {/* Price Row */}
                 <View style={styles.modernPriceRow}>
@@ -376,10 +452,10 @@ const TrendingVideoItem = ({
 
                     <TouchableOpacity
                         style={styles.modernBuyButton}
-                        onPress={() => navigation.navigate('ProductDetails', { product })}
+                        onPress={() => onShopNow(product)}
                     >
                         <Text style={styles.modernBuyText}>Shop Now</Text>
-                        <Ionicons name="arrow-forward" size={20} color="#000" style={{ marginLeft: 4 }} />
+                        <Ionicons name="arrow-forward" size={20} color="#fff" style={{ marginLeft: 4 }} />
                     </TouchableOpacity>
                 </View>
             </View>
@@ -470,78 +546,171 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         zIndex: 10,
     },
+    // New clean vendor/influencer layout
+    vendorInfoRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 10,
+        paddingVertical: 4,
+    },
+    avatarStack: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    vendorAvatar: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        borderWidth: 1.5,
+        borderColor: '#fff',
+        backgroundColor: '#333',
+    },
+    influencerAvatar: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        borderWidth: 1.5,
+        borderColor: '#F53F7A',
+        backgroundColor: '#333',
+        marginLeft: -12,
+        zIndex: -1,
+    },
+    vendorTextBlock: {
+        flex: 0,
+        flexShrink: 1,
+        justifyContent: 'center',
+        maxWidth: '60%',
+    },
+    vendorNameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+    },
+    vendorNameText: {
+        color: '#fff',
+        fontSize: 13,
+        fontWeight: '700',
+        textShadowColor: '#000',
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 3,
+    },
+    vendorCollab: {
+        color: '#F53F7A',
+        fontSize: 12,
+        fontWeight: '700',
+        textShadowColor: '#000',
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 2,
+    },
+    influencerNameText: {
+        color: '#F53F7A',
+        fontSize: 13,
+        fontWeight: '700',
+        textShadowColor: '#000',
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 3,
+    },
+    vendorSubtitle: {
+        color: 'rgba(255,255,255,0.85)',
+        fontSize: 11,
+        fontWeight: '500',
+        marginTop: 1,
+        textShadowColor: '#000',
+        textShadowOffset: { width: 0.5, height: 0.5 },
+        textShadowRadius: 2,
+    },
+    viewProfileBtn: {
+        backgroundColor: '#F53F7A',
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 12,
+    },
+    // Keep legacy styles for compatibility
     modernVendorRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 12,
-        // justifyContent: 'space-between', // Removed, using self-contained pill
+        marginBottom: 14,
     },
     collabPill: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(0, 0, 0, 0.65)',
-        borderRadius: 30,
-        padding: 4,
-        paddingRight: 16,
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
+        borderRadius: 28,
+        paddingVertical: 6,
+        paddingLeft: 6,
+        paddingRight: 18,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.15)',
-        maxWidth: '90%',
+        borderColor: 'rgba(255, 255, 255, 0.25)',
+        maxWidth: '92%',
     },
     avatarContainer: {
         flexDirection: 'row',
-        width: 44,
-        height: 36, // Match avatar height approx
+        width: 48,
+        height: 40,
     },
     avatarBase: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
         borderWidth: 2,
-        borderColor: '#000', // Dark border for better separation on dark bg
+        borderColor: '#fff', // White border for clean separation
         position: 'absolute',
     },
     vendorAvatarZ: {
-        zIndex: 2, // Vendor on top? Or Influencer? Let's put secondary on top usually. 
-        // If overlap, first one (vendor) left 0. 
+        zIndex: 2,
         left: 0,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 4,
     },
     influencerAvatarZ: {
         zIndex: 1,
-        left: 20, // Overlap amount
+        left: 24,
+        borderColor: '#F53F7A', // Pink border for influencer
     },
     collabTextContainer: {
-        marginLeft: 18, // Adjust based on avatar width/overlap. 
-        // 1 avatar: need ~40px space. 2 avatars: need ~60px. 
-        // Since avatarContainer width is fixed/small, we need margin to clear it.
-        // If container width is 44, and we have 2 avatars (width ~56 visual), we need margin.
+        marginLeft: 16,
         justifyContent: 'center',
         flex: 1,
     },
     collabVendorName: {
         color: '#fff',
-        fontSize: 12,
+        fontSize: 14,
         fontWeight: '700',
-        marginBottom: 0,
+        marginBottom: 1,
+        textShadowColor: 'rgba(0,0,0,0.3)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 2,
     },
     collabInfluencerName: {
         color: '#fff',
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: '600',
+        textShadowColor: 'rgba(0,0,0,0.3)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 2,
     },
     collabSubtext: {
-        color: '#ccc',
-        fontSize: 10,
+        color: 'rgba(255,255,255,0.8)',
+        fontSize: 11,
+        fontWeight: '500',
     },
     pillFollowButton: {
-        backgroundColor: '#fff',
-        paddingHorizontal: 12,
-        paddingVertical: 5,
-        borderRadius: 14,
+        backgroundColor: '#F53F7A', // Pink follow button
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 16,
         marginLeft: 12,
     },
     pillFollowText: {
-        color: '#000',
-        fontSize: 11,
+        color: '#fff',
+        fontSize: 12,
         fontWeight: '700',
     },
     modernPriceRow: {
@@ -590,38 +759,45 @@ const styles = StyleSheet.create({
     },
     modernTryOnButton: {
         flex: 1,
-        height: 44, // Taller button
-        backgroundColor: 'rgba(255,255,255,0.2)', // Glass effect
-        borderRadius: 22,
+        height: 48,
+        backgroundColor: 'rgba(245, 63, 122, 0.2)', // Pink tinted glass
+        borderRadius: 24,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.4)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(245, 63, 122, 0.6)', // Pink border
+        shadowColor: '#F53F7A',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 6,
+        elevation: 4,
     },
     modernTryOnText: {
         color: '#fff',
-        fontSize: 14,
-        fontWeight: '600',
+        fontSize: 15,
+        fontWeight: '700',
+        letterSpacing: 0.3,
     },
     modernBuyButton: {
-        flex: 1.5, // Wider buy button
-        height: 44,
-        backgroundColor: '#fff',
-        borderRadius: 22,
+        flex: 1.5,
+        height: 48,
+        backgroundColor: '#F53F7A', // App's signature pink
+        borderRadius: 24,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#000',
+        shadowColor: '#F53F7A',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
+        shadowOpacity: 0.4,
+        shadowRadius: 10,
         elevation: 8,
     },
     modernBuyText: {
-        color: '#000',
-        fontSize: 15, // Larger text
+        color: '#fff', // White text on pink background
+        fontSize: 16,
         fontWeight: '700',
+        letterSpacing: 0.5,
     },
     doubleTapHeartContainer: {
         position: 'absolute',

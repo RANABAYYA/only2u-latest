@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, View, Text, Button, Linking, Platform } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, LinkingOptions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import TabNavigator from './tab-navigator';
@@ -52,15 +52,15 @@ const Stack = createNativeStackNavigator();
 
 const Navigation = () => {
   return (
-    <Stack.Navigator 
-      initialRouteName="TabNavigator" 
-      screenOptions={{ 
+    <Stack.Navigator
+      initialRouteName="TabNavigator"
+      screenOptions={{
         headerShown: false,
         animation: 'slide_from_right',
         animationDuration: 250,
         gestureEnabled: true,
         fullScreenGestureEnabled: true,
-        customAnimationOnGesture: true,
+
       }}
     >
       <Stack.Screen name="TabNavigator" component={TabNavigator} />
@@ -94,33 +94,34 @@ const Navigation = () => {
       <Stack.Screen name="Messages" component={MessagesScreen} />
       <Stack.Screen name="ChatThread" component={ChatThread} />
       <Stack.Screen name="FriendSearch" component={FriendSearch} />
+      <Stack.Screen name="ProfilePictureUpload" component={ProfilePictureUpload} />
     </Stack.Navigator>
   );
 };
 
 const AuthFlowScreen = () => {
   const { needsOnboarding } = useAuth();
-  
+
   if (needsOnboarding) {
     console.log('AuthFlow: Showing onboarding');
     return <UserOnboarding />;
   }
-  
+
   console.log('AuthFlow: Showing login');
   return <Login />;
 };
 
 const AuthNavigator = () => {
   return (
-    <Stack.Navigator 
+    <Stack.Navigator
       initialRouteName="AuthFlow"
-      screenOptions={{ 
+      screenOptions={{
         headerShown: false,
         animation: 'slide_from_right',
         animationDuration: 250,
         gestureEnabled: true,
         fullScreenGestureEnabled: true,
-        customAnimationOnGesture: true,
+
       }}
     >
       <Stack.Screen name="Intro" component={Intro} />
@@ -192,8 +193,15 @@ const HandleNavigation = () => {
   return <Navigation key={user ? 'main-navigation' : 'guest-navigation'} />;
 };
 
+export type RootStackParamList = {
+  TabNavigator: undefined;
+  ProductDetails: { productId: string };
+  // Add other routes used in deep linking here if needed
+  [key: string]: any;
+};
+
 export default function RootStack() {
-  const linking = {
+  const linking: LinkingOptions<RootStackParamList> = {
     prefixes: ['only2u://', 'https://only2u.app', 'https://*.only2u.app'],
     config: {
       screens: {
@@ -286,7 +294,7 @@ export default function RootStack() {
   return (
     <Provider>
       <VendorProvider>
-        <NavigationContainer 
+        <NavigationContainer
           linking={linking}
           fallback={<View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator size="large" color="#F53F7A" /></View>}
           onReady={() => {

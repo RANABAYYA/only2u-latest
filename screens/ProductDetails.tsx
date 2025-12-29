@@ -519,7 +519,8 @@ const ProductDetails = () => {
   // Fetch product by ID if only productId is provided
   useEffect(() => {
     const fetchProductById = async () => {
-      if (!productId || product) return; // Don't fetch if product is already provided
+      // Don't fetch if product is already provided AND has category info
+      if ((!productId && !product) || (product && (product as any).category?.name)) return;
 
       try {
         setFetchingProduct(true);
@@ -531,6 +532,7 @@ const ProductDetails = () => {
           .from('products')
           .select(`
             *,
+            category:categories(name),
             product_variants(
               id,
               product_id,
@@ -548,7 +550,7 @@ const ProductDetails = () => {
               size:sizes(id, name)
             )
           `)
-          .eq('id', productId)
+          .eq('id', productId || product?.id)
           .single();
 
         if (error) {
@@ -1680,12 +1682,7 @@ const ProductDetails = () => {
       return;
     }
 
-    // Check coins first before showing any modals
-    if (coinBalance < 50) {
-      setShowCoinsModal(true);
-      return;
-    }
-
+    // Open try-on flow directly - coin check happens inside the modal or when confirming
     if (!hasSeenTryOnTutorial) {
       setShowTryOnTutorialModal(true);
       return;
@@ -1697,7 +1694,6 @@ const ProductDetails = () => {
     hasSeenTryOnTutorial,
     promptLoginForTryOn,
     userData?.id,
-    coinBalance,
   ]);
 
   const handleDismissTryOnTutorial = useCallback(() => {
@@ -3560,16 +3556,18 @@ const ProductDetails = () => {
                   <>
                     {/* Top Row: Try On (Left) & Add to Cart (Right) */}
                     <View style={styles.primaryActionsRow}>
-                      <TouchableOpacity
-                        style={styles.tryOnButtonPro}
-                        onPress={handleTryOnButtonPress}
-                        activeOpacity={0.85}
-                      >
-                        <View style={styles.buttonIconContainer}>
-                          <Ionicons name="camera" size={20} color="#F53F7A" />
-                        </View>
-                        <Text style={styles.tryOnButtonTextPro}>{t('try_on')}</Text>
-                      </TouchableOpacity>
+                      {String((productData.category as any) || '').toLowerCase().trim() !== 'dress material' && (
+                        <TouchableOpacity
+                          style={styles.tryOnButtonPro}
+                          onPress={handleTryOnButtonPress}
+                          activeOpacity={0.85}
+                        >
+                          <View style={styles.buttonIconContainer}>
+                            <Ionicons name="camera" size={20} color="#F53F7A" />
+                          </View>
+                          <Text style={styles.tryOnButtonTextPro}>{t('try_on')}</Text>
+                        </TouchableOpacity>
+                      )}
 
                       <TouchableOpacity
                         style={[

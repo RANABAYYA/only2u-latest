@@ -8,7 +8,6 @@ import {
   ScrollView,
   SafeAreaView,
   ActivityIndicator,
-  Image,
   FlatList,
   TextInput,
   Modal,
@@ -38,7 +37,7 @@ import {
 import { isHlsUrl, getFallbackVideoUrl } from '../utils/videoUrlHelpers';
 import type { Product } from '~/types/product';
 import OverlayLabel from '~/components/overlay';
-import { ImageBackground } from 'expo-image';
+import { Image, ImageBackground } from 'expo-image';
 import { ResizeMode, Video } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import Toast from 'react-native-toast-message';
@@ -51,11 +50,11 @@ import { uploadProfilePhoto, validateImage } from '~/utils/profilePhotoUpload';
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 // Try-on tutorial constants
-const TRYON_TUTORIAL_VIDEO_URL = 'https://res.cloudinary.com/dtt75ypdv/video/upload/v1763566957/productvideos/tryon-tutorial.mov';
+const TRYON_TUTORIAL_VIDEO_URL = 'https://vz-025b9bde-754.b-cdn.net/eee865c8-7e76-4830-b662-00ed3f645d95/playlist.m3u8';
 const TRYON_TUTORIAL_STORAGE_KEY = 'ONLY2U_TRYON_TUTORIAL_SEEN';
 
 // Products view tutorial constants
-const PRODUCTS_VIEW_TUTORIAL_VIDEO_URL = 'https://res.cloudinary.com/dtt75ypdv/video/upload/v1763566957/productvideos/products-view-tutorial.mov'; // Placeholder - replace with actual tutorial video
+const PRODUCTS_VIEW_TUTORIAL_VIDEO_URL = 'https://vz-025b9bde-754.b-cdn.net/b8c6aa4f-3488-4259-8a58-4e7cefaea5d3/playlist.m3u8';
 const PRODUCTS_VIEW_TUTORIAL_STORAGE_KEY = 'ONLY2U_PRODUCTS_VIEW_TUTORIAL_SEEN';
 
 // Size sorting helper functions
@@ -863,7 +862,7 @@ const createSwipeCardStyles = (cardHeight: number, cardIndex: number = 0) => {
 };
 
 // Product Card Swipe Component (moved up for CustomSwipeView to use)
-const ProductCardSwipe = ({
+const ProductCardSwipe = React.memo(({
   product,
   cardHeight,
   cardIndex = 0,
@@ -1820,13 +1819,15 @@ const ProductCardSwipe = ({
 
           {/* Action Buttons */}
           <View style={styles.swipeButtonRow}>
-            <TouchableOpacity
-              style={styles.swipeTryButton}
-              onPress={handleTryOnButtonPress}
-            >
-              <Ionicons name="camera-outline" size={16} color="#F53F7A" />
-              <Text style={styles.swipeTryButtonText}>Try On</Text>
-            </TouchableOpacity>
+            {String(product.category?.name || '').toLowerCase().trim() !== 'dress material' && (
+              <TouchableOpacity
+                style={styles.swipeTryButton}
+                onPress={handleTryOnButtonPress}
+              >
+                <Ionicons name="camera-outline" size={16} color="#F53F7A" />
+                <Text style={styles.swipeTryButtonText}>Try On</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={styles.swipeShopButton}
@@ -1939,10 +1940,10 @@ const ProductCardSwipe = ({
               <Video
                 source={{ uri: TRYON_TUTORIAL_VIDEO_URL }}
                 style={styles.resellTutorialVideo}
-                resizeMode={ResizeMode.CONTAIN}
+                resizeMode={ResizeMode.COVER}
                 shouldPlay
-                useNativeControls
                 isLooping
+                isMuted
               />
             </View>
             <Text style={styles.resellTutorialDescription}>
@@ -2008,6 +2009,24 @@ const ProductCardSwipe = ({
             </TouchableOpacity>
             <Text style={styles.akoolTitle}>👗 Want to see how this outfit looks on you?</Text>
             <Text style={styles.akoolSubtitle}>Try on with Face Swap AI</Text>
+
+            <View style={{
+              width: '100%',
+              height: 180,
+              backgroundColor: '#000',
+              borderRadius: 16,
+              overflow: 'hidden',
+              marginBottom: 16,
+            }}>
+              <Video
+                source={{ uri: TRYON_TUTORIAL_VIDEO_URL }}
+                style={{ width: '100%', height: '100%' }}
+                resizeMode={ResizeMode.COVER}
+                shouldPlay
+                isLooping
+                isMuted
+              />
+            </View>
 
             <View style={styles.tryOnInfoCard}>
               <View style={styles.tryOnInfoHeader}>
@@ -2314,7 +2333,7 @@ const ProductCardSwipe = ({
       </Modal>
     </View>
   );
-};
+});
 
 // Custom Swipe View Component
 const CustomSwipeView = ({
@@ -2363,27 +2382,7 @@ const CustomSwipeView = ({
 
   const onPanGestureEvent = Animated.event(
     [{ nativeEvent: { translationX: translateX, translationY: translateY } }],
-    {
-      useNativeDriver: false,
-      listener: (event: any) => {
-        // Real-time physics updates for CustomSwipeView
-        const { translationX, translationY, velocityX, velocityY } = event.nativeEvent;
-
-        // Enhanced rotation with velocity influence
-        const rotationValue = (translationX / 7) + (velocityX * 0.0015);
-        rotate.setValue(rotationValue);
-
-        // Dynamic scaling with velocity factor
-        const distance = Math.sqrt(translationX * translationX + translationY * translationY);
-        const maxDistance = screenWidth * 0.5;
-        const velocityFactor = Math.min(Math.abs(velocityX) / 800, 0.6);
-        const scaleValue = Math.max(0.9, 1 - (distance / maxDistance) * 0.1 - velocityFactor * 0.05);
-
-        // Subtle vertical movement
-        const verticalOffset = translationY + (velocityX * 0.03);
-        translateY.setValue(verticalOffset);
-      }
-    }
+    { useNativeDriver: true }
   );
 
   const onPanHandlerStateChange = (event: any) => {
@@ -2423,17 +2422,12 @@ const CustomSwipeView = ({
             Animated.timing(translateX, {
               toValue: toValue * 0.6,
               duration: Math.max(200, 280 - momentumFactor * 60),
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
             Animated.timing(translateY, {
               toValue: verticalOffset * 0.7,
               duration: Math.max(200, 280 - momentumFactor * 60),
-              useNativeDriver: false,
-            }),
-            Animated.timing(rotate, {
-              toValue: rotateValue * 0.7,
-              duration: Math.max(200, 280 - momentumFactor * 60),
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
           ]),
           // Final acceleration and fade
@@ -2441,22 +2435,17 @@ const CustomSwipeView = ({
             Animated.timing(translateX, {
               toValue,
               duration: Math.max(150, 220 - momentumFactor * 80),
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
             Animated.timing(translateY, {
               toValue: verticalOffset,
               duration: Math.max(150, 220 - momentumFactor * 80),
-              useNativeDriver: false,
-            }),
-            Animated.timing(rotate, {
-              toValue: rotateValue,
-              duration: Math.max(150, 220 - momentumFactor * 80),
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
             Animated.timing(opacity, {
               toValue: 0,
               duration: Math.max(120, 180 - momentumFactor * 50),
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
           ]),
         ]).start(() => {
@@ -2478,22 +2467,17 @@ const CustomSwipeView = ({
             Animated.timing(translateX, {
               toValue: 0,
               duration: 0,
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
             Animated.timing(translateY, {
               toValue: 0,
               duration: 0,
-              useNativeDriver: false,
-            }),
-            Animated.timing(rotate, {
-              toValue: 0,
-              duration: 0,
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
             Animated.timing(opacity, {
               toValue: 1,
               duration: 0,
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
           ]).start();
         });
@@ -2509,19 +2493,13 @@ const CustomSwipeView = ({
               toValue: 0,
               tension: 550,
               friction: 28,
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
             Animated.spring(translateY, {
               toValue: 0,
               tension: 550,
               friction: 28,
-              useNativeDriver: false,
-            }),
-            Animated.spring(rotate, {
-              toValue: 0,
-              tension: 550,
-              friction: 28,
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
           ]),
           // Subtle settle animation for natural feel
@@ -2530,13 +2508,13 @@ const CustomSwipeView = ({
               toValue: 0,
               tension: 900,
               friction: 35,
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
             Animated.spring(translateY, {
               toValue: 0,
               tension: 900,
               friction: 35,
-              useNativeDriver: false,
+              useNativeDriver: true,
             }),
           ]),
         ]).start();
@@ -2555,8 +2533,8 @@ const CustomSwipeView = ({
     }
   };
 
-  const rotateStr = rotate.interpolate({
-    inputRange: [-25, 0, 25],
+  const rotateStr = translateX.interpolate({
+    inputRange: [-screenWidth, 0, screenWidth],
     outputRange: ['-30deg', '0deg', '30deg'],
     extrapolate: 'clamp',
   });
@@ -2767,6 +2745,10 @@ const Products = () => {
   const isScreenFocused = useIsFocused();
   const { userData } = useUser();
   const [showCoinsModal, setShowCoinsModal] = useState(false);
+
+  // Video ref and state for products view tutorial
+  const productsViewTutorialVideoRef = useRef<Video>(null);
+  const [isProductsViewTutorialVideoPlaying, setIsProductsViewTutorialVideoPlaying] = useState(true);
 
   // Review media viewer state
   const [showReviewMediaViewer, setShowReviewMediaViewer] = useState(false);
@@ -5532,14 +5514,41 @@ const Products = () => {
               </View>
 
               <View style={styles.productsViewTutorialVideoWrapper}>
-                <Video
-                  source={{ uri: PRODUCTS_VIEW_TUTORIAL_VIDEO_URL }}
-                  style={styles.productsViewTutorialVideo}
-                  resizeMode={ResizeMode.COVER}
-                  shouldPlay
-                  useNativeControls
-                  isLooping
-                />
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={async () => {
+                    if (productsViewTutorialVideoRef.current) {
+                      if (isProductsViewTutorialVideoPlaying) {
+                        await productsViewTutorialVideoRef.current.pauseAsync();
+                        setIsProductsViewTutorialVideoPlaying(false);
+                      } else {
+                        await productsViewTutorialVideoRef.current.playAsync();
+                        setIsProductsViewTutorialVideoPlaying(true);
+                      }
+                    }
+                  }}
+                  style={{ width: '100%', height: '100%' }}
+                >
+                  <Video
+                    ref={productsViewTutorialVideoRef}
+                    source={{ uri: PRODUCTS_VIEW_TUTORIAL_VIDEO_URL }}
+                    style={styles.productsViewTutorialVideo}
+                    resizeMode={ResizeMode.COVER}
+                    shouldPlay
+                    isLooping
+                    isMuted
+                  />
+                  {!isProductsViewTutorialVideoPlaying && (
+                    <View style={{
+                      ...StyleSheet.absoluteFillObject,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(0,0,0,0.3)'
+                    }}>
+                      <Ionicons name="play" size={50} color="rgba(255,255,255,0.9)" />
+                    </View>
+                  )}
+                </TouchableOpacity>
               </View>
 
               {/* View Selection Buttons */}
@@ -7326,10 +7335,12 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   onboardingModal: {
-    width: '100%',
+    width: '90%',
+    maxWidth: 480,
     backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
   },
   modalTitle: {
     fontSize: 20,
@@ -8524,7 +8535,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 20,
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 480,
     maxHeight: '90%',
   },
   resellTutorialHeader: {
@@ -8626,7 +8637,8 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   akoolModal: {
-    width: 340,
+    width: '90%',
+    maxWidth: 440,
     backgroundColor: '#fff',
     borderRadius: 18,
     padding: 24,
@@ -9234,7 +9246,7 @@ const styles = StyleSheet.create({
   },
   productsViewTutorialCard: {
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 480,
     backgroundColor: '#fff',
     borderRadius: 20,
     padding: 16,

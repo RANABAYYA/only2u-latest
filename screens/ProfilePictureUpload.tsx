@@ -53,8 +53,9 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 const ProfilePictureUpload = () => {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute();
-  const { userData } = route.params as { userData: any };
-  
+  // userData is optional - when coming from Trending/Profile, it won't be passed
+  const userData = (route.params as { userData?: any } | undefined)?.userData;
+
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [showImagePickerModal, setShowImagePickerModal] = useState(false);
@@ -176,7 +177,7 @@ const ProfilePictureUpload = () => {
 
   const handleContinue = async () => {
     let profilePhotoUrl = null;
-    
+
     if (selectedImage) {
       profilePhotoUrl = await uploadImage(selectedImage);
       if (!profilePhotoUrl) {
@@ -184,154 +185,183 @@ const ProfilePictureUpload = () => {
       }
     }
 
-    // Navigate to user size selection with updated userData
-    navigation.navigate('UserSizeSelection', {
-      userData: {
-        ...userData,
-        profilePhoto: profilePhotoUrl,
-      },
-    });
+    // If userData exists, we're in registration flow - navigate to next screen
+    if (userData) {
+      navigation.navigate('UserSizeSelection', {
+        userData: {
+          ...userData,
+          profilePhoto: profilePhotoUrl,
+        },
+      });
+    } else {
+      // Standalone mode (from Trending/Profile) - save photo to user profile and go back
+      if (profilePhotoUrl) {
+        try {
+          const { data: { user: authUser } } = await supabase.auth.getUser();
+          if (authUser) {
+            await supabase
+              .from('users')
+              .update({ profilePhoto: profilePhotoUrl })
+              .eq('id', authUser.id);
+
+            Toast.show({
+              type: 'success',
+              text1: 'Profile Photo Updated',
+              text2: 'You can now use Virtual Try-On!',
+            });
+          }
+        } catch (error) {
+          console.error('Error saving profile photo:', error);
+        }
+      }
+      navigation.goBack();
+    }
   };
 
   const handleSkip = () => {
-    // Navigate to user size selection without profile photo
-    navigation.navigate('UserSizeSelection', {
-      userData: {
-        ...userData,
-        profilePhoto: null,
-      },
-    });
+    if (userData) {
+      // Registration flow - navigate to next screen without profile photo
+      navigation.navigate('UserSizeSelection', {
+        userData: {
+          ...userData,
+          profilePhoto: null,
+        },
+      });
+    } else {
+      // Standalone mode - just go back
+      navigation.goBack();
+    }
   };
 
   return (
-      <SafeAreaView style={styles.safeArea}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Ionicons name="arrow-back" size={24} color="#fff" />
-          </TouchableOpacity>
-          <View style={styles.logoContainer}>
-            <Only2ULogo size="large" />
-          </View>
+    <SafeAreaView style={styles.safeArea}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+        <View style={styles.logoContainer}>
+          <Only2ULogo size="large" />
         </View>
+      </View>
 
-        {/* Content */}
-        <View style={styles.contentContainer}>
-          <View style={styles.card}>
-            <Text style={styles.title}>{t('upload_profile_picture')}</Text>
-            <Text style={styles.subtitle}>
-              {t('please_upload_a_clear_hd_picture_with_a_white_background_for_the_best_personalized_experience')}
-            </Text>
+      {/* Content */}
+      <View style={styles.contentContainer}>
+        <View style={styles.card}>
+          <Text style={styles.title}>{t('upload_profile_picture')}</Text>
+          <Text style={styles.subtitle}>
+            {t('please_upload_a_clear_hd_picture_with_a_white_background_for_the_best_personalized_experience')}
+          </Text>
 
-            <View style={styles.imageSection}>
-              {/* Reference Image */}
-              <View style={styles.referenceContainer}>
-                <Image
-                  source={require('../assets/reference.jpeg')}
-                  style={styles.referenceImage}
-                />
-                <Text style={styles.referenceLabel}>{t('reference_image')}</Text>
-              </View>
-
-              {/* Upload Area */}
-              <TouchableOpacity 
-                style={styles.uploadContainer}
-                onPress={showImagePickerOptions}
-                disabled={uploading}
-              >
-                {selectedImage ? (
-                  <Image source={{ uri: selectedImage }} style={styles.uploadedImage} />
-                ) : (
-                  <View style={styles.uploadPlaceholder}>
-                    <Ionicons name="camera" size={40} color="#F53F7A" />
-                  </View>
-                )}
-              </TouchableOpacity>
+          <View style={styles.imageSection}>
+            {/* Reference Image */}
+            <View style={styles.referenceContainer}>
+              <Image
+                source={require('../assets/reference.jpeg')}
+                style={styles.referenceImage}
+              />
+              <Text style={styles.referenceLabel}>{t('reference_image')}</Text>
             </View>
 
-            <TouchableOpacity 
-              style={styles.uploadButton}
+            {/* Upload Area */}
+            <TouchableOpacity
+              style={styles.uploadContainer}
               onPress={showImagePickerOptions}
               disabled={uploading}
             >
-              <Ionicons name="cloud-upload-outline" size={20} color="#F53F7A" />
-              <Text style={styles.uploadButtonText}>
-                {uploading ? t('uploading') : t('upload')}
-              </Text>
+              {selectedImage ? (
+                <Image source={{ uri: selectedImage }} style={styles.uploadedImage} />
+              ) : (
+                <View style={styles.uploadPlaceholder}>
+                  <Ionicons name="camera" size={40} color="#F53F7A" />
+                </View>
+              )}
             </TouchableOpacity>
+          </View>
 
-            <TouchableOpacity 
-              style={styles.continueButton}
-              onPress={handleContinue}
-              disabled={uploading}
-            >
-              <Text style={styles.continueButtonText}>{t('continue')}</Text>
-              <Ionicons name="arrow-forward" size={20} color="#fff" />
-            </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.uploadButton}
+            onPress={showImagePickerOptions}
+            disabled={uploading}
+          >
+            <Ionicons name="cloud-upload-outline" size={20} color="#F53F7A" />
+            <Text style={styles.uploadButtonText}>
+              {uploading ? t('uploading') : t('upload')}
+            </Text>
+          </TouchableOpacity>
 
-            {/* <TouchableOpacity 
+          <TouchableOpacity
+            style={styles.continueButton}
+            onPress={handleContinue}
+            disabled={uploading}
+          >
+            <Text style={styles.continueButtonText}>{t('continue')}</Text>
+            <Ionicons name="arrow-forward" size={20} color="#fff" />
+          </TouchableOpacity>
+
+          {/* <TouchableOpacity 
               style={styles.skipButton}
               onPress={handleSkip}
               disabled={uploading}
             >
               <Text style={styles.skipButtonText}>Skip for now</Text>
             </TouchableOpacity> */}
-          </View>
         </View>
+      </View>
 
-        <Modal
-          visible={showImagePickerModal}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setShowImagePickerModal(false)}
+      <Modal
+        visible={showImagePickerModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowImagePickerModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowImagePickerModal(false)}
         >
-          <TouchableOpacity 
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setShowImagePickerModal(false)}
-          >
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>{t('upload_profile_picture')}</Text>
-                <TouchableOpacity onPress={() => setShowImagePickerModal(false)}>
-                  <Ionicons name="close" size={24} color="#666" />
-                </TouchableOpacity>
-              </View>
-              
-              <TouchableOpacity 
-                style={styles.modalOption}
-                onPress={takePhoto}
-              >
-                <View style={styles.modalOptionIcon}>
-                  <Ionicons name="camera" size={28} color="#F53F7A" />
-                </View>
-                <View style={styles.modalOptionTextContainer}>
-                  <Text style={styles.modalOptionTitle}>{t('take_photo')}</Text>
-                  <Text style={styles.modalOptionSubtitle}>Use camera to take a new photo</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.modalOption}
-                onPress={pickFromGallery}
-              >
-                <View style={styles.modalOptionIcon}>
-                  <Ionicons name="images" size={28} color="#F53F7A" />
-                </View>
-                <View style={styles.modalOptionTextContainer}>
-                  <Text style={styles.modalOptionTitle}>{t('choose_from_gallery')}</Text>
-                  <Text style={styles.modalOptionSubtitle}>Select from your photo library</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{t('upload_profile_picture')}</Text>
+              <TouchableOpacity onPress={() => setShowImagePickerModal(false)}>
+                <Ionicons name="close" size={24} color="#666" />
               </TouchableOpacity>
             </View>
-          </TouchableOpacity>
-        </Modal>
-      </SafeAreaView>
+
+            <TouchableOpacity
+              style={styles.modalOption}
+              onPress={takePhoto}
+            >
+              <View style={styles.modalOptionIcon}>
+                <Ionicons name="camera" size={28} color="#F53F7A" />
+              </View>
+              <View style={styles.modalOptionTextContainer}>
+                <Text style={styles.modalOptionTitle}>{t('take_photo')}</Text>
+                <Text style={styles.modalOptionSubtitle}>Use camera to take a new photo</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#ccc" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalOption}
+              onPress={pickFromGallery}
+            >
+              <View style={styles.modalOptionIcon}>
+                <Ionicons name="images" size={28} color="#F53F7A" />
+              </View>
+              <View style={styles.modalOptionTextContainer}>
+                <Text style={styles.modalOptionTitle}>{t('choose_from_gallery')}</Text>
+                <Text style={styles.modalOptionSubtitle}>Select from your photo library</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#ccc" />
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </SafeAreaView>
   );
 };
 
