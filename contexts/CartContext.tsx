@@ -61,16 +61,21 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const parsed = JSON.parse(savedCart);
         const normalized = Array.isArray(parsed)
           ? parsed.map((item: any) => {
-              const productIdFromData =
-                item.productId ||
-                (typeof item.sku === 'string' ? item.sku : undefined) ||
-                (typeof item.id === 'string' ? item.id.split('-')[0] : undefined) ||
-                '';
-              return {
-                ...item,
-                productId: productIdFromData,
-              };
-            })
+            // Extract UUID safely from composite ID using Regex
+            const uuidMatch = item.id?.match(/^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/);
+            const extractedUuid = uuidMatch ? uuidMatch[1] : undefined;
+
+            const productIdFromData =
+              item.productId ||
+              (typeof item.sku === 'string' ? item.sku : undefined) ||
+              extractedUuid || // Use robust extraction instead of split
+              item.id; // Fallback to ID as is if not UUID-like
+
+            return {
+              ...item,
+              productId: productIdFromData,
+            };
+          })
           : [];
         setCartItems(normalized);
       }
@@ -90,19 +95,21 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addToCart = (item: Omit<CartItem, 'id'> & { id?: string }) => {
     const { id: providedId, ...rest } = item as any;
     const resolvedProductId = rest.productId || rest.sku;
+
     if (!resolvedProductId) {
       console.warn('addToCart called without productId or sku', rest);
     }
 
+    // Use UUID-safe composite ID generation
     const cartId =
       (typeof providedId === 'string' && providedId.length > 0
         ? providedId
-        : `${resolvedProductId || Date.now()}-${rest.size}-${rest.color}`) as string;
+        : `${resolvedProductId || Date.now().toString()}-${rest.size || 'N/A'}-${rest.color || 'N/A'}`) as string;
 
     const newItem: CartItem = {
       ...rest,
       id: cartId,
-      productId: resolvedProductId || cartId,
+      productId: resolvedProductId, // PRIORITIZE existing productId, do NOT fallback to composite ID
     };
 
     setCartItems(prevItems => {
@@ -114,12 +121,12 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Item already exists, update quantity
         const updatedItems = [...prevItems];
         const newQuantity = updatedItems[existingItemIndex].quantity + newItem.quantity;
-        
+
         // Don't exceed stock
         if (newQuantity <= newItem.stock) {
           updatedItems[existingItemIndex].quantity = newQuantity;
         }
-        
+
         return updatedItems;
       } else {
         // Add new item
@@ -133,7 +140,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateQuantity = (id: string, quantity: number) => {
-    setCartItems(prevItems => 
+    setCartItems(prevItems =>
       prevItems.map(item => {
         if (item.id === id) {
           const newQuantity = Math.min(quantity, item.stock);
@@ -165,9 +172,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const toggleReseller = (id: string, isReseller: boolean) => {
-    setCartItems(prevItems => 
-      prevItems.map(item => 
-        item.id === id 
+    setCartItems(prevItems =>
+      prevItems.map(item =>
+        item.id === id
           ? { ...item, isReseller, resellerPrice: isReseller ? item.price : undefined }
           : item
       )
@@ -175,9 +182,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateResellerPrice = (id: string, price: number) => {
-    setCartItems(prevItems => 
-      prevItems.map(item => 
-        item.id === id 
+    setCartItems(prevItems =>
+      prevItems.map(item =>
+        item.id === id
           ? { ...item, resellerPrice: price }
           : item
       )

@@ -1,5 +1,6 @@
 import express from 'express';
 import { pool } from '../config/database';
+import { formatDate } from '../utils/formatters';
 
 const router = express.Router();
 
@@ -57,14 +58,17 @@ const router = express.Router();
  */
 router.get('/', async (req, res, next) => {
   try {
-    const { q, status, page = 1, limit = 50 } = req.query;
+    const { q, status, page = 1, limit = 50 } = req.query as Record<string, string>;
     const offset = (Number(page) - 1) * Number(limit);
     const values: any[] = [];
     let where = 'WHERE 1=1';
 
     if (status) {
-      values.push(status);
-      where += ` AND status = $${values.length}`;
+      const isActive = status === 'active' ? true : status === 'inactive' ? false : undefined;
+      if (typeof isActive === 'boolean') {
+        values.push(isActive);
+        where += ` AND is_active = $${values.length}`;
+      }
     }
     if (q) {
       values.push(`%${q}%`);
@@ -73,20 +77,55 @@ router.get('/', async (req, res, next) => {
 
     values.push(Number(limit), offset);
     const { rows } = await pool.query(
-      `SELECT * FROM customers ${where} ORDER BY created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
+      `SELECT id, name, email, phone, is_active, created_at, updated_at, location FROM users ${where} ORDER BY created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
       values
     );
+    const mapped = rows.map((r: any) => ({
+      customer_id: r.id, // Changed key to match Odoo req if needed, or keep id
+      name: r.name,
+      email: r.email,
+      phone: r.phone,
+      billing_address: r.location ? {
+        // Assuming location is stored as "Street, City, State, Zip" string for now, or just mapping to street
+        // Since we don't have structured address, we provide what we have
+        street: r.location,
+        city: "",
+        state: "",
+        zip: "",
+        country: "India"
+      } : {
+        street: "",
+        city: "",
+        state: "",
+        zip: "",
+        country: ""
+      },
+      shipping_address: r.location ? {
+        street: r.location,
+        city: "",
+        state: "",
+        zip: "",
+        country: "India"
+      } : {
+        street: "",
+        city: "",
+        state: "",
+        zip: "",
+        country: ""
+      },
+      status: r.is_active ? 'active' : 'inactive',
+      created_at: formatDate(r.created_at),
+      updated_at: formatDate(r.updated_at),
+    }));
 
-    // Get total count
     const countValues = values.slice(0, -2);
-    const countQuery = `SELECT COUNT(*) FROM customers ${where}`;
-    const countResult = await pool.query(countQuery, countValues);
+    const countResult = await pool.query(`SELECT COUNT(*) FROM users ${where}`, countValues);
     const total = parseInt(countResult.rows[0].count);
 
     res.json({
       success: true,
       data: {
-        customers: rows,
+        customers: mapped,
         pagination: {
           page: Number(page),
           limit: Number(limit),
@@ -138,7 +177,10 @@ router.get('/', async (req, res, next) => {
  */
 router.get('/:id', async (req, res, next) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id]);
+    const { rows } = await pool.query(
+      'SELECT id, name, email, phone, is_active, created_at, updated_at, location FROM users WHERE id = $1',
+      [req.params.id]
+    );
     if (!rows[0]) {
       return res.status(404).json({
         success: false,
@@ -146,7 +188,46 @@ router.get('/:id', async (req, res, next) => {
         error: { code: 'NOT_FOUND', message: 'Customer not found' },
       });
     }
-    res.json({ success: true, data: rows[0], error: null });
+    const r = rows[0];
+    res.json({
+      success: true,
+      data: {
+        customer_id: r.id,
+        name: r.name,
+        email: r.email,
+        phone: r.phone,
+        billing_address: r.location ? {
+          street: r.location,
+          city: "",
+          state: "",
+          zip: "",
+          country: "India"
+        } : {
+          street: "",
+          city: "",
+          state: "",
+          zip: "",
+          country: ""
+        },
+        shipping_address: r.location ? {
+          street: r.location,
+          city: "",
+          state: "",
+          zip: "",
+          country: "India"
+        } : {
+          street: "",
+          city: "",
+          state: "",
+          zip: "",
+          country: ""
+        },
+        status: r.is_active ? 'active' : 'inactive',
+        created_at: formatDate(r.created_at),
+        updated_at: formatDate(r.updated_at),
+      },
+      error: null,
+    });
   } catch (err) {
     next(err);
   }
@@ -206,7 +287,7 @@ router.get('/:id', async (req, res, next) => {
  */
 router.post('/', async (req, res, next) => {
   try {
-    const { name, email, phone, billing_address, shipping_address } = req.body;
+    const { name, email, phone } = req.body;
 
     if (!name || !phone) {
       return res.status(400).json({
@@ -217,16 +298,30 @@ router.post('/', async (req, res, next) => {
     }
 
     const { rows } = await pool.query(
-      `INSERT INTO customers (name, email, phone, billing_address, shipping_address)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [name, email || null, phone, billing_address || null, shipping_address || null]
+      `INSERT INTO users (name, email, phone, is_active)
+       VALUES ($1, $2, $3, TRUE)
+       RETURNING id, name, email, phone, is_active, created_at, updated_at`,
+      [name, email || null, phone]
     );
 
-    res.status(201).json({ success: true, data: rows[0], error: null });
+    const r = rows[0];
+    res.status(201).json({
+      success: true,
+      data: {
+        id: r.id,
+        name: r.name,
+        email: r.email,
+        phone: r.phone,
+        billing_address: null,
+        shipping_address: null,
+        status: r.is_active ? 'active' : 'inactive',
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      },
+      error: null,
+    });
   } catch (err: any) {
     if (err.code === '23505') {
-      // Unique constraint violation
       return res.status(409).json({
         success: false,
         data: null,
@@ -286,20 +381,22 @@ router.post('/', async (req, res, next) => {
  */
 router.put('/:id', async (req, res, next) => {
   try {
-    const { name, email, phone, billing_address, shipping_address, status } = req.body;
+    const { name, email, phone, status } = req.body;
+    const isActive =
+      typeof status === 'string'
+        ? status === 'active'
+        : undefined;
 
     const { rows } = await pool.query(
-      `UPDATE customers
+      `UPDATE users
        SET name = COALESCE($1, name),
            email = COALESCE($2, email),
            phone = COALESCE($3, phone),
-           billing_address = COALESCE($4, billing_address),
-           shipping_address = COALESCE($5, shipping_address),
-           status = COALESCE($6, status),
+           is_active = COALESCE($4, is_active),
            updated_at = now()
-       WHERE id = $7
-       RETURNING *`,
-      [name, email, phone, billing_address, shipping_address, status, req.params.id]
+       WHERE id = $5
+       RETURNING id, name, email, phone, is_active, created_at, updated_at`,
+      [name, email, phone, typeof isActive === 'boolean' ? isActive : null, req.params.id]
     );
 
     if (!rows[0]) {
@@ -310,7 +407,22 @@ router.put('/:id', async (req, res, next) => {
       });
     }
 
-    res.json({ success: true, data: rows[0], error: null });
+    const r = rows[0];
+    res.json({
+      success: true,
+      data: {
+        id: r.id,
+        name: r.name,
+        email: r.email,
+        phone: r.phone,
+        billing_address: null,
+        shipping_address: null,
+        status: r.is_active ? 'active' : 'inactive',
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      },
+      error: null,
+    });
   } catch (err) {
     next(err);
   }
@@ -338,7 +450,8 @@ router.put('/:id', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `UPDATE customers SET status = 'inactive', updated_at = now() WHERE id = $1 RETURNING *`,
+      `UPDATE users SET is_active = FALSE, updated_at = now() WHERE id = $1
+       RETURNING id, name, email, phone, is_active, created_at, updated_at`,
       [req.params.id]
     );
 
@@ -350,11 +463,25 @@ router.delete('/:id', async (req, res, next) => {
       });
     }
 
-    res.json({ success: true, data: rows[0], error: null });
+    const r = rows[0];
+    res.json({
+      success: true,
+      data: {
+        id: r.id,
+        name: r.name,
+        email: r.email,
+        phone: r.phone,
+        billing_address: null,
+        shipping_address: null,
+        status: r.is_active ? 'active' : 'inactive',
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      },
+      error: null,
+    });
   } catch (err) {
     next(err);
   }
 });
 
 export default router;
-

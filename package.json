@@ -1,6 +1,6 @@
 {
   "name": "only2u",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "scripts": {
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -67,7 +67,9 @@
     "react-native-safe-area-context": "5.4.0",
     "react-native-screens": "~4.11.1",
     "react-native-svg-charts": "^5.4.0",
-    "react-native-toast-message": "^2.3.0"
+    "react-native-toast-message": "^2.3.0",
+    "expo-notifications": "~0.31.4",
+    "expo-device": "~7.1.4"
   },
   "expo": {
     "doctor": {

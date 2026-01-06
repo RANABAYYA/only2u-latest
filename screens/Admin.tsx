@@ -169,6 +169,13 @@ const Admin = () => {
       icon: 'settings-outline',
       onPress: () => navigation.navigate('SettingsManagement' as never),
     },
+    {
+      id: 10,
+      title: 'Push Notifications',
+      subtitle: 'Send notifications to all users',
+      icon: 'notifications-outline',
+      onPress: () => navigation.navigate('PushNotifications' as never),
+    },
   ];
 
   const formatCurrency = (amount: number) => {

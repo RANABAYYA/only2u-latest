@@ -21,8 +21,23 @@ const options: swaggerJsdoc.Options = {
         url: 'https://api.only2u.app/api',
         description: 'Production server',
       },
+      {
+        url: 'https://only2u-api-145183647466.asia-south1.run.app/api',
+        description: 'Cloud Run (asia-south1 - Mumbai)',
+      },
+      {
+        url: 'https://only2u-api-ijnh7vwv5a-el.a.run.app/api',
+        description: 'Cloud Run (regional URL)',
+      },
     ],
     components: {
+      securitySchemes: {
+        ApiKeyAuth: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-API-Key',
+        },
+      },
       schemas: {
         ErrorResponse: {
           type: 'object',
@@ -379,6 +394,51 @@ const options: swaggerJsdoc.Options = {
             },
           },
         },
+        Order: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            user_id: { type: 'string', format: 'uuid', nullable: true },
+            order_number: { type: 'string' },
+            status: { type: 'string' },
+            payment_status: { type: 'string' },
+            payment_method: { type: 'string', nullable: true },
+            payment_id: { type: 'string', nullable: true },
+            subtotal: { type: 'number', nullable: true },
+            tax_amount: { type: 'number', nullable: true },
+            shipping_amount: { type: 'number', nullable: true },
+            discount_amount: { type: 'number', nullable: true },
+            total_amount: { type: 'number' },
+            shipping_address: { nullable: true },
+            billing_address: { nullable: true },
+            customer_name: { type: 'string', nullable: true },
+            customer_email: { type: 'string', nullable: true },
+            customer_phone: { type: 'string', nullable: true },
+            notes: { type: 'string', nullable: true },
+            tracking_number: { type: 'string', nullable: true },
+            created_at: { type: 'string', format: 'date-time' },
+            updated_at: { type: 'string', format: 'date-time' },
+            shipped_at: { type: 'string', format: 'date-time', nullable: true },
+            delivered_at: { type: 'string', format: 'date-time', nullable: true },
+          },
+        },
+        OrderItem: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            order_id: { type: 'string', format: 'uuid' },
+            product_id: { type: 'string', format: 'uuid', nullable: true },
+            product_name: { type: 'string' },
+            product_sku: { type: 'string', nullable: true },
+            product_image: { type: 'string', format: 'uri', nullable: true },
+            size: { type: 'string', nullable: true },
+            color: { type: 'string', nullable: true },
+            quantity: { type: 'integer' },
+            unit_price: { type: 'number' },
+            total_price: { type: 'number' },
+            created_at: { type: 'string', format: 'date-time' },
+          },
+        },
         PaginationMeta: {
           type: 'object',
           properties: {
@@ -398,9 +458,14 @@ const options: swaggerJsdoc.Options = {
         },
       },
     },
+    security: [{ ApiKeyAuth: [] }],
   },
-  apis: ['./src/routes/*.ts', './src/server.ts'], // Paths to files containing OpenAPI definitions
+  apis: [
+    './dist/routes/*.js',
+    './dist/server.js',
+    './src/routes/*.ts',
+    './src/server.ts',
+  ],
 };
 
 export const swaggerSpec = swaggerJsdoc(options);
-

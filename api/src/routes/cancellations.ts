@@ -91,6 +91,22 @@ router.get('/', async (req, res, next) => {
       error: null,
     });
   } catch (err) {
+    const code = (err as any)?.code;
+    if (code === '42P01') {
+      return res.json({
+        success: true,
+        data: {
+          cancellations: [],
+          pagination: {
+            page: Number(req.query.page) || 1,
+            limit: Number(req.query.limit) || 50,
+            total: 0,
+            totalPages: 0,
+          },
+        },
+        error: null,
+      });
+    }
     next(err);
   }
 });
@@ -155,6 +171,14 @@ router.get('/:id', async (req, res, next) => {
       error: null,
     });
   } catch (err) {
+    const code = (err as any)?.code;
+    if (code === '42P01') {
+      return res.status(404).json({
+        success: false,
+        data: null,
+        error: { code: 'NOT_CONFIGURED', message: 'Cancellations table not configured' },
+      });
+    }
     next(err);
   }
 });
@@ -409,4 +433,3 @@ router.post('/:id/reject', async (req, res, next) => {
 });
 
 export default router;
-

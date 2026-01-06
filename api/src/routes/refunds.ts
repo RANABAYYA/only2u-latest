@@ -1,6 +1,7 @@
 import express from 'express';
 import { pool } from '../config/database';
 import { v4 as uuidv4 } from 'uuid';
+import { formatDate } from '../utils/formatters';
 
 const router = express.Router();
 
@@ -86,10 +87,17 @@ router.get('/', async (req, res, next) => {
     }
 
     values.push(Number(limit), offset);
+
+
     const { rows } = await pool.query(
       `SELECT * FROM refunds ${where} ORDER BY refund_date DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
       values
     );
+
+    const mapped = rows.map((r: any) => ({
+      ...r,
+      refund_date: formatDate(r.refund_date),
+    }));
 
     const countValues = values.slice(0, -2);
     const countResult = await pool.query(`SELECT COUNT(*) FROM refunds ${where}`, countValues);
@@ -98,7 +106,7 @@ router.get('/', async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        refunds: rows,
+        refunds: mapped,
         pagination: {
           page: Number(page),
           limit: Number(limit),
@@ -109,6 +117,22 @@ router.get('/', async (req, res, next) => {
       error: null,
     });
   } catch (err) {
+    const code = (err as any)?.code;
+    if (code === '42P01') {
+      return res.json({
+        success: true,
+        data: {
+          refunds: [],
+          pagination: {
+            page: Number(req.query.page) || 1,
+            limit: Number(req.query.limit) || 50,
+            total: 0,
+            totalPages: 0,
+          },
+        },
+        error: null,
+      });
+    }
     next(err);
   }
 });
@@ -153,6 +177,14 @@ router.get('/:id', async (req, res, next) => {
     }
     res.json({ success: true, data: rows[0], error: null });
   } catch (err) {
+    const code = (err as any)?.code;
+    if (code === '42P01') {
+      return res.status(404).json({
+        success: false,
+        data: null,
+        error: { code: 'NOT_CONFIGURED', message: 'Refunds table not configured' },
+      });
+    }
     next(err);
   }
 });
@@ -368,4 +400,3 @@ router.post('/:id/mark-failed', async (req, res, next) => {
 });
 
 export default router;
-

@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, FlatList, Dimensions, ActivityIndicator, Linking, Alert, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useIsFocused } from '@react-navigation/native';
 import { useWishlist } from '~/contexts/WishlistContext';
 import { usePreview } from '~/contexts/PreviewContext';
 import { useNotifications } from '~/contexts/NotificationsContext';
@@ -27,6 +27,7 @@ interface Collection {
 const Wishlist = () => {
   const navigation = useNavigation();
   const route = useRoute();
+  const isFocused = useIsFocused();
   const { wishlist, removeFromWishlist, clearWishlist, markAllAsRead: markWishlistAsRead, unreadCount: wishlistUnreadCount } = useWishlist();
   const { previewProducts, removeFromPreview } = usePreview();
   const { notifications, removeNotification, markAllRead } = useNotifications();
@@ -60,7 +61,7 @@ const Wishlist = () => {
   React.useEffect(() => {
     const fetchCollectionsWithCovers = async () => {
       if (!userData?.id) return;
-      
+
       setLoadingCollections(true);
       try {
         // Get all collections for this user
@@ -132,7 +133,7 @@ const Wishlist = () => {
           if (b.name === 'All') return 1;
           return 0;
         });
-        
+
         setCollections(sortedCollections);
 
         // Also build the product -> collection map for individual products view
@@ -155,17 +156,17 @@ const Wishlist = () => {
     };
 
     fetchCollectionsWithCovers();
-  }, [userData?.id, wishlist]);
+  }, [userData?.id, wishlist, isFocused]);
 
   // Real counts for badges - use unread counts from contexts
-  const regularWishlistItems = React.useMemo(() => 
-    wishlist.filter(item => 
+  const regularWishlistItems = React.useMemo(() =>
+    wishlist.filter(item =>
       !item.isPersonalized && !productCollections[item.id]
     ), [wishlist, productCollections, refreshKey]
   );
-  
+
   // Use unreadCount from context instead of total item count
-  const notificationsCount = React.useMemo(() => 
+  const notificationsCount = React.useMemo(() =>
     notifications.filter(n => n.unread).length,
     [notifications, refreshKey]
   );
@@ -221,12 +222,12 @@ const Wishlist = () => {
   // Render collection folder (Instagram-style)
   const renderCollectionFolder = ({ item }: { item: Collection }) => {
     const folderSize = (width - 48) / 2; // 2 columns with padding
-    
+
     return (
       <TouchableOpacity
         style={[styles.collectionFolder, { width: folderSize }]}
         onPress={() => {
-          (navigation as any).navigate('CollectionDetails', { 
+          (navigation as any).navigate('CollectionDetails', {
             collectionId: item.id,
             collectionName: item.name
           });
@@ -288,7 +289,7 @@ const Wishlist = () => {
   };
 
   const renderWishlistItem = ({ item }: any) => (
-    <TouchableOpacity 
+    <TouchableOpacity
       style={styles.productCard}
       onPress={() => {
         // Transform wishlist item to match ProductDetails expected format
@@ -312,7 +313,7 @@ const Wishlist = () => {
     >
       <View style={styles.imageContainer}>
         <Image source={{ uri: getFirstSafeProductImage(item) }} style={styles.productImage} />
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.wishlistButton}
           onPress={() => {
             setItemToRemove(item);
@@ -352,7 +353,7 @@ const Wishlist = () => {
       // If this is a face swap notification with productId and resultImages, navigate to preview
       if (item.productId && item.resultImages) {
         // Find the preview item matching this productId
-        let previewItem = previewProducts.find((p: any) => 
+        let previewItem = previewProducts.find((p: any) =>
           p.originalProductId === item.productId || p.id.includes(item.productId)
         );
 
@@ -395,7 +396,7 @@ const Wishlist = () => {
 
         if (previewItem) {
           // Navigate to PersonalizedProductResult screen
-          (navigation as any).navigate('PersonalizedProductResult', { 
+          (navigation as any).navigate('PersonalizedProductResult', {
             product: {
               id: previewItem.id,
               name: previewItem.name,
@@ -408,7 +409,7 @@ const Wishlist = () => {
               originalProductImage: previewItem.originalProductImage || item.image,
             }
           });
-          
+
           // Mark notification as read
           markAllRead();
         } else {
@@ -425,7 +426,7 @@ const Wishlist = () => {
     };
 
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.notificationCard}
         onPress={handleNotificationPress}
         activeOpacity={item.productId ? 0.7 : 1}
@@ -453,13 +454,13 @@ const Wishlist = () => {
   const renderPreviewItem = ({ item }: any) => {
     const isVideo = item.video_urls && item.video_urls.length > 0;
     const isVideoPreview = item.isVideoPreview;
-    
+
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.previewCard}
         onPress={() => {
           // Navigate to PersonalizedProductResult screen
-          (navigation as any).navigate('PersonalizedProductResult', { 
+          (navigation as any).navigate('PersonalizedProductResult', {
             product: {
               id: item.id,
               name: item.name,
@@ -477,9 +478,9 @@ const Wishlist = () => {
         <View style={styles.previewImageContainer}>
           {isVideo ? (
             <>
-              <Image 
-                source={{ uri: item.originalProductImage || getFirstSafeImageUrl(item.image_urls || [item.image_url]) }} 
-                style={styles.previewImage} 
+              <Image
+                source={{ uri: item.originalProductImage || getFirstSafeImageUrl(item.image_urls || [item.image_url]) }}
+                style={styles.previewImage}
               />
               <View style={styles.videoOverlay}>
                 <Ionicons name="play-circle" size={40} color="rgba(255, 255, 255, 0.9)" />
@@ -492,9 +493,9 @@ const Wishlist = () => {
               const primary = ordered && ordered.length > 1 ? ordered[0] : (ordered?.[0] || null);
               const url = getSafeImageUrl(primary || (item.image_urls?.[1] || item.image_urls?.[0] || item.image_url));
               return (
-                <Image 
-                  source={{ uri: url }} 
-                  style={styles.previewImage} 
+                <Image
+                  source={{ uri: url }}
+                  style={styles.previewImage}
                 />
               );
             })()
@@ -509,14 +510,14 @@ const Wishlist = () => {
               <Text style={styles.previewBadgeText}>Personalized</Text>
             </View>
             <Text style={styles.previewTimestamp}>
-              {item.faceSwapDate ? 
+              {item.faceSwapDate ?
                 new Date(item.faceSwapDate).toLocaleDateString('en-US', {
                   month: 'short',
                   day: 'numeric',
                   year: 'numeric',
                   hour: '2-digit',
                   minute: '2-digit'
-                }) : 
+                }) :
                 new Date().toLocaleDateString('en-US', {
                   month: 'short',
                   day: 'numeric'
@@ -531,7 +532,7 @@ const Wishlist = () => {
             )}
           </View>
         </View>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.previewDeleteButton}
           onPress={(e) => {
             e.stopPropagation();
@@ -550,10 +551,10 @@ const Wishlist = () => {
     switch (activeTab) {
       case 'wishlist':
         // Filter out personalized items AND items that are in any collection
-        const regularWishlistItems = wishlistSafe.filter(item => 
+        const regularWishlistItems = wishlistSafe.filter(item =>
           !item.isPersonalized && !productCollections[item.id]
         );
-        
+
         if (loadingCollections) {
           return (
             <View style={styles.loadingContainer}>
@@ -562,7 +563,7 @@ const Wishlist = () => {
             </View>
           );
         }
-        
+
         if (collections.length === 0 && regularWishlistItems.length === 0) {
           return (
             <View style={styles.emptyContainer}>
@@ -571,7 +572,7 @@ const Wishlist = () => {
               </View>
               <Text style={styles.emptyTitle}>{t('no_wishlist_items') || 'Your wishlist is empty'}</Text>
               <Text style={styles.emptySubtitle}>{t('add_products_to_wishlist') || 'Start saving your favorite products to see them here'}</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.emptyActionButton}
                 onPress={() => (navigation as any).navigate('Home', { screen: 'Dashboard' })}
               >
@@ -580,7 +581,7 @@ const Wishlist = () => {
             </View>
           );
         }
-        
+
         return (
           <FlatList
             data={regularWishlistItems}
@@ -651,7 +652,7 @@ const Wishlist = () => {
             </View>
             <Text style={styles.emptyTitle}>No Personalized Products</Text>
             <Text style={styles.emptySubtitle}>Try face swap to create personalized product previews</Text>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.emptyActionButton}
               onPress={() => (navigation as any).navigate('Home', { screen: 'Dashboard' })}
             >
@@ -682,20 +683,20 @@ const Wishlist = () => {
           <Ionicons name="arrow-back" size={24} color="#333" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('your_collections')}</Text>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.headerMarkAll}
           onPress={async () => {
             // Mark wishlist as read
             await markWishlistAsRead();
-            
+
             // Also mark all notifications as read
             if (markAllRead) {
               await markAllRead();
             }
-            
+
             // Force immediate re-render
             setRefreshKey(prev => prev + 1);
-            
+
             Toast.show({
               type: 'success',
               text1: 'Success',
@@ -707,12 +708,12 @@ const Wishlist = () => {
           <Text style={styles.headerMarkAllText}>{t('mark_all_as_read')}</Text>
         </TouchableOpacity>
       </View>
-      
+
       {/* Tabs */}
       <View style={styles.tabs}>
         {TABS.map(renderTab)}
       </View>
-      
+
       {/* Content */}
       {renderContent()}
 
@@ -738,8 +739,8 @@ const Wishlist = () => {
             {/* Product Info */}
             {itemToRemove && (
               <View style={styles.modalProductInfo}>
-                <Image 
-                  source={{ uri: getFirstSafeProductImage(itemToRemove) }} 
+                <Image
+                  source={{ uri: getFirstSafeProductImage(itemToRemove) }}
                   style={styles.modalProductImage}
                 />
                 <Text style={styles.modalProductName} numberOfLines={2}>
@@ -770,13 +771,13 @@ const Wishlist = () => {
                 style={styles.modalRemoveButton}
                 onPress={async () => {
                   if (!itemToRemove) return;
-                  
+
                   // Close modal
                   setShowRemoveModal(false);
-                  
+
                   // Remove from wishlist
                   removeFromWishlist(itemToRemove.id);
-                  
+
                   // Remove from database
                   if (userData?.id) {
                     await supabase
@@ -784,7 +785,7 @@ const Wishlist = () => {
                       .delete()
                       .match({ product_id: itemToRemove.id });
                   }
-                  
+
                   // Show success toast
                   Toast.show({
                     type: 'success',
@@ -792,7 +793,7 @@ const Wishlist = () => {
                     text2: itemToRemove.name,
                     position: 'top',
                   });
-                  
+
                   // Clear item
                   setItemToRemove(null);
                 }}
@@ -809,9 +810,9 @@ const Wishlist = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#f8f9fa' 
+  container: {
+    flex: 1,
+    backgroundColor: '#f8f9fa'
   },
   header: {
     flexDirection: 'row',
@@ -822,23 +823,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  headerBack: { 
-    padding: 4, 
-    marginRight: 8 
+  headerBack: {
+    padding: 4,
+    marginRight: 8
   },
-  headerTitle: { 
-    flex: 1, 
-    fontSize: 22, 
-    fontWeight: '700', 
-    color: '#222' 
+  headerTitle: {
+    flex: 1,
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#222'
   },
-  headerMarkAll: { 
-    padding: 4 
+  headerMarkAll: {
+    padding: 4
   },
-  headerMarkAllText: { 
-    color: '#F53F7A', 
-    fontWeight: '600', 
-    fontSize: 15 
+  headerMarkAllText: {
+    color: '#F53F7A',
+    fontWeight: '600',
+    fontSize: 15
   },
   tabs: {
     flexDirection: 'row',
@@ -881,15 +882,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: 6,
   },
-  tabBadgeText: { 
-    color: '#fff', 
-    fontWeight: 'bold', 
-    fontSize: 11 
+  tabBadgeText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 11
   },
-  
+
   // Product List Styles (same as Products screen)
-  productList: { 
-    padding: 8 
+  productList: {
+    padding: 8
   },
   productCard: {
     width: (width - 32) / 2,
@@ -977,10 +978,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 2,
   },
-  
+
   // Notification List Styles
-  notificationList: { 
-    padding: 8 
+  notificationList: {
+    padding: 8
   },
   notificationCard: {
     flexDirection: 'row',
@@ -1004,27 +1005,27 @@ const styles = StyleSheet.create({
     marginRight: 12,
     backgroundColor: '#eee',
   },
-  notificationContent: { 
-    flex: 1 
+  notificationContent: {
+    flex: 1
   },
-  notificationTitle: { 
-    fontSize: 16, 
-    fontWeight: '600', 
-    color: '#111', 
-    marginBottom: 2 
+  notificationTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111',
+    marginBottom: 2
   },
-  notificationSubtitle: { 
-    fontSize: 13, 
-    color: '#444', 
-    marginBottom: 4 
+  notificationSubtitle: {
+    fontSize: 13,
+    color: '#444',
+    marginBottom: 4
   },
-  notificationTime: { 
-    fontSize: 12, 
-    color: '#888' 
+  notificationTime: {
+    fontSize: 12,
+    color: '#888'
   },
-  notificationDelete: { 
-    padding: 6, 
-    marginLeft: 8 
+  notificationDelete: {
+    padding: 6,
+    marginLeft: 8
   },
   unreadDot: {
     position: 'absolute',
@@ -1035,10 +1036,10 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#F53F7A',
   },
-  
+
   // Preview List Styles
-  previewList: { 
-    padding: 8 
+  previewList: {
+    padding: 8
   },
   previewCard: {
     flexDirection: 'row',
@@ -1081,19 +1082,19 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 2,
   },
-  previewContent: { 
-    flex: 1 
+  previewContent: {
+    flex: 1
   },
-  previewTitle: { 
-    fontSize: 16, 
-    fontWeight: '600', 
-    color: '#111', 
-    marginBottom: 2 
+  previewTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111',
+    marginBottom: 2
   },
-  previewSubtitle: { 
-    fontSize: 13, 
-    color: '#444', 
-    marginBottom: 8 
+  previewSubtitle: {
+    fontSize: 13,
+    color: '#444',
+    marginBottom: 8
   },
   previewMetaRow: {
     flexDirection: 'row',
@@ -1134,24 +1135,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#3B82F6',
   },
-  
-  emptyContainer: { 
-    flex: 1, 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    padding: 32 
+
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32
   },
-  emptyTitle: { 
-    fontSize: 20, 
-    fontWeight: '700', 
-    color: '#222', 
-    marginTop: 16 
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#222',
+    marginTop: 16
   },
-  emptySubtitle: { 
-    fontSize: 15, 
-    color: '#888', 
-    marginTop: 6, 
-    textAlign: 'center' 
+  emptySubtitle: {
+    fontSize: 15,
+    color: '#888',
+    marginTop: 6,
+    textAlign: 'center'
   },
   emptyIconContainer: {
     backgroundColor: '#FFF5F7',
@@ -1213,7 +1214,7 @@ const styles = StyleSheet.create({
   previewDeleteButton: {
     padding: 8,
   },
-  
+
   // Collections Section Styles
   loadingContainer: {
     flex: 1,

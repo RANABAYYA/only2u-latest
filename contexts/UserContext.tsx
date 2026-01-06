@@ -273,7 +273,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .from('users')
         .select('*')
         .eq('id', targetUserId)
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.error('[USER_CONTEXT] ❌ Error refreshing user data:', error);

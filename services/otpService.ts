@@ -33,8 +33,8 @@ class OtpService {
   ): Promise<{ success: boolean; otpId?: string; error?: string }> {
     try {
       // Clean mobile number (remove spaces, ensure + prefix)
-      const cleanMobileNo = mobileNo.trim().startsWith('+')
-        ? mobileNo.trim()
+      const cleanMobileNo = mobileNo.trim().startsWith('+') 
+        ? mobileNo.trim() 
         : `+${mobileNo.trim()}`;
 
       // Build URL with query parameters
@@ -47,9 +47,9 @@ class OtpService {
       });
 
       const url = `${this.baseUrl}//generateOtp.jsp?${params.toString()}`;
-
+      
       console.log('[OTP Service] Generating OTP for:', cleanMobileNo);
-
+      
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -65,7 +65,7 @@ class OtpService {
       }
 
       const data: GenerateOtpResponse = await response.json();
-
+      
       if (data.result === 'success') {
         console.log('[OTP Service] OTP generated successfully, OTP ID:', data.otpld);
         return {
@@ -101,8 +101,8 @@ class OtpService {
   ): Promise<{ success: boolean; error?: string }> {
     try {
       // Clean mobile number
-      const cleanMobileNo = mobileNo.trim().startsWith('+')
-        ? mobileNo.trim()
+      const cleanMobileNo = mobileNo.trim().startsWith('+') 
+        ? mobileNo.trim() 
         : `+${mobileNo.trim()}`;
 
       // Clean OTP (remove spaces, ensure it's numeric)
@@ -127,9 +127,9 @@ class OtpService {
       }
 
       const url = `${this.baseUrl}//validateOtpApi.jsp?${params.toString()}`;
-
+      
       console.log('[OTP Service] Verifying OTP for:', cleanMobileNo);
-
+      
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -145,7 +145,7 @@ class OtpService {
       }
 
       const data: VerifyOtpResponse = await response.json();
-
+      
       if (data.result === 'success') {
         console.log('[OTP Service] OTP verified successfully');
         return {

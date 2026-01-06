@@ -185,27 +185,6 @@ export const redeemReferralCode = async (
     // Create welcome coupon
     const coupon = await createWelcomeCouponForReferral(userId, userName);
 
-    // Try to assign special reward if applicable
-    try {
-      const { data: rewardData, error: rewardError } = await supabase.functions.invoke(
-        'assign-special-reward',
-        {
-          body: {
-            referralCode,
-            userId,
-          },
-        }
-      );
-
-      if (rewardError) {
-        console.error('[ReferralCode] Error calling assign-special-reward:', rewardError);
-      } else {
-        console.log('[ReferralCode] Special reward check result:', rewardData);
-      }
-    } catch (e) {
-      console.error('[ReferralCode] Exception calling assign-special-reward:', e);
-    }
-
     console.log('[ReferralCode] ✅ Referral code redeemed successfully');
 
     return { coupon };

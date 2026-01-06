@@ -1181,11 +1181,21 @@ const ProductDetails = () => {
       });
       setAvailableSizes(sortedSizes);
 
-      // Set default color selection if available (but not size - user must select size)
+      // Check if we have only one size and it is "no size" (case insensitive)
+      const isNoSizeProduct = sortedSizes.length === 1 &&
+        sortedSizes[0].name.toLowerCase() === 'no size';
+
+      // Set default color selection if available (but not size - user must select size unless it is "no size")
       if (availableColorsArray.length > 0 && !selectedColor) {
         setSelectedColor(availableColorsArray[0].id);
       }
-      // Size selection is now required - no auto-selection
+
+      // Auto-select size if it is "no size"
+      if (isNoSizeProduct && !selectedSize) {
+        setSelectedSize(sortedSizes[0].id);
+        console.log('✅ Auto-selected "no size":', sortedSizes[0].id);
+      }
+      // Otherwise Size selection is required - no auto-selection
 
       // Set default variant if no variant is selected (prioritize M size, then first variant with images)
       if (variantsData.length > 0 && !selectedVariant) {
@@ -1565,13 +1575,23 @@ const ProductDetails = () => {
     const selectedColorData = availableColors.find((c) => c.id === selectedColor);
     const selectedSizeData = availableSizes.find((s) => s.id === selectedSize);
 
+    // Determine the best image to show in cart (Variant Image > Product Image > Fallback)
+    const variantImage = selectedVariant?.image_urls?.[0];
+    const productImage = productData.image_urls?.[0] || productData.image;
+    const bestImage = variantImage || productImage || '';
+
+    // Construct image list (Variant images + Product images)
+    const variantImages = selectedVariant?.image_urls || [];
+    const productImages = productData.image_urls || (productData.image ? [productData.image] : []);
+    const mergedImages = [...new Set([...variantImages, ...productImages])];
+
     addToCart({
       productId: productData.id,
       variantId: selectedVariant?.id || null,
       name: productData.name,
       price: selectedVariant?.price || productData.price,
-      image: productData.image_urls?.[0] || '', // Required by CartItem type, but display uses image_urls
-      image_urls: productData.image_urls || [],
+      image: bestImage,
+      image_urls: mergedImages,
       size: selectedSizeData?.name || selectedSize,
       color: selectedColorData?.name || selectedColor || 'N/A',
       quantity: quantityToAdd,
@@ -3470,7 +3490,7 @@ const ProductDetails = () => {
             {/* Product Options & Actions Section */}
             <View style={styles.productOptionsSection}>
               {/* Size Selection */}
-              {availableSizes.length > 0 && (
+              {availableSizes.length > 0 && !(availableSizes.length === 1 && availableSizes[0].name.toLowerCase() === 'no size') && (
                 <Animated.View
                   style={[
                     styles.optionSection,

@@ -299,7 +299,38 @@ const CollectionDetails = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              // First delete all products from this collection
+              // 1. Get all products in this collection first
+              const { data: productsInCollection } = await supabase
+                .from('collection_products')
+                .select('product_id')
+                .eq('collection_id', collectionId);
+
+              if (productsInCollection && productsInCollection.length > 0) {
+                const productIds = productsInCollection.map(p => p.product_id);
+
+                // 2. Remove from "All" collection (if exists)
+                const { data: allCollection } = await supabase
+                  .from('collections')
+                  .select('id')
+                  .eq('user_id', userData?.id)
+                  .eq('name', 'All')
+                  .single();
+
+                if (allCollection) {
+                  await supabase
+                    .from('collection_products')
+                    .delete()
+                    .eq('collection_id', allCollection.id)
+                    .in('product_id', productIds);
+                }
+
+                // 3. Update local Wishlist Context (state & AsyncStorage)
+                productIds.forEach(id => {
+                  removeFromWishlist(id);
+                });
+              }
+
+              // 4. Delete all products links from this collection
               const { error: deleteProductsError } = await supabase
                 .from('collection_products')
                 .delete()
@@ -307,7 +338,7 @@ const CollectionDetails = () => {
 
               if (deleteProductsError) throw deleteProductsError;
 
-              // Then delete the collection itself
+              // 5. Finally delete the collection itself
               const { error: deleteCollectionError } = await supabase
                 .from('collections')
                 .delete()
@@ -320,7 +351,7 @@ const CollectionDetails = () => {
               navigation.goBack();
 
               // Show success message
-              Alert.alert('Success', 'Collection deleted successfully');
+              Alert.alert('Success', 'Collection and its items deleted successfully');
             } catch (error) {
               console.error('Error deleting collection:', error);
               Alert.alert('Error', 'Failed to delete collection. Please try again.');
@@ -335,6 +366,7 @@ const CollectionDetails = () => {
     if (!itemToRemove) return;
 
     try {
+      // 1. Remove from this collection
       const { error } = await supabase
         .from('collection_products')
         .delete()
@@ -345,6 +377,27 @@ const CollectionDetails = () => {
 
       if (error) throw error;
 
+      // 2. Also remove from "All" collection if it exists
+      const { data: allCollection } = await supabase
+        .from('collections')
+        .select('id')
+        .eq('user_id', userData?.id)
+        .eq('name', 'All')
+        .single();
+
+      if (allCollection) {
+        await supabase
+          .from('collection_products')
+          .delete()
+          .match({
+            collection_id: allCollection.id,
+            product_id: itemToRemove.id,
+          });
+      }
+
+      // 3. Remove from global wishlist context (so "All Items" updates)
+      removeFromWishlist(itemToRemove.id);
+
       // Update local state
       setProducts(products.filter(p => p.id !== itemToRemove.id));
 
@@ -353,7 +406,7 @@ const CollectionDetails = () => {
       setItemToRemove(null);
 
       // Show success message
-      Alert.alert('Success', 'Item removed from collection');
+      Alert.alert('Success', 'Item removed from wishlist');
     } catch (error) {
       console.error('Error removing from collection:', error);
       Alert.alert('Error', 'Failed to remove item from collection');

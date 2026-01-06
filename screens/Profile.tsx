@@ -101,27 +101,11 @@ const Profile = () => {
     });
   }, [userData, user]);
 
-  // Auto-detect missing profile for logged-in users
+  // Auto-detect missing profile logic moved to global TabNavigator to avoid conflicts
   useEffect(() => {
-    const checkProfileStatus = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user && !userData && !user) {
-        // We have a session but no profile data in context. Check DB directly.
-        const { data: profile, error } = await supabase
-          .from('users')
-          .select('id')
-          .eq('id', session.user.id)
-          .single();
-
-        // If no profile found, trigger onboarding
-        if (!profile && (!error || error.code === 'PGRST116')) {
-          console.log('[Profile] Session exists but no profile. Triggering onboarding.');
-          setShowOnboarding(true);
-        }
-      }
-    };
-    checkProfileStatus();
-  }, [userData, user]);
+    // This effect previously triggered onboarding if profile was missing
+    // Removed to prevent race conditions with login flow
+  }, []);
 
   useEffect(() => {
     let animation: Animated.CompositeAnimation | null = null;
@@ -2102,11 +2086,13 @@ const Profile = () => {
             <Ionicons name="chevron-forward" size={20} color="red" />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={24} color="red" />
-            <Text style={[styles.menuText, { color: 'red' }]}>{t('logout')}</Text>
-            <Ionicons name="chevron-forward" size={20} color="red" />
-          </TouchableOpacity>
+          {(userData || user) && (
+            <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
+              <Ionicons name="log-out-outline" size={24} color="red" />
+              <Text style={[styles.menuText, { color: 'red' }]}>{t('logout')}</Text>
+              <Ionicons name="chevron-forward" size={20} color="red" />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Contact Support Button */}
@@ -2381,15 +2367,7 @@ const Profile = () => {
                   </TouchableOpacity>
 
                   {/* Skip link */}
-                  <TouchableOpacity
-                    onPress={() => setShowOnboarding(false)}
-                    style={{ alignItems: 'center', paddingVertical: 16, marginTop: 8 }}
-                    activeOpacity={0.6}
-                  >
-                    <Text style={{ color: '#888', fontWeight: '600', fontSize: 14 }}>
-                      Skip for now
-                    </Text>
-                  </TouchableOpacity>
+
                 </ScrollView>
               </View>
             </View>

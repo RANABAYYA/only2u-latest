@@ -7,6 +7,7 @@ interface AuthContextType {
   loading: boolean;
   needsOnboarding: boolean;
   setNeedsOnboarding: (needs: boolean) => void;
+  refreshAuthUser: () => Promise<void>;
 }
 
 const AuthContext = React.createContext<AuthContextType | null>(null);
@@ -35,7 +36,7 @@ export function Provider(props: { children: React.ReactNode }) {
           .select('*')
           .eq('id', session.user.id)
           .single();
-        
+
         if (userData) {
           setUser(userData);
           setNeedsOnboarding(false);
@@ -64,7 +65,7 @@ export function Provider(props: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('Auth state change:', event, session?.user?.id);
-        
+
         if (event === 'SIGNED_IN' && session?.user) {
           // Fetch user profile data
           const { data: userData, error } = await supabase
@@ -72,9 +73,9 @@ export function Provider(props: { children: React.ReactNode }) {
             .select('*')
             .eq('id', session.user.id)
             .single();
-          
+
           console.log('User data fetch result:', userData, error);
-          
+
           if (userData) {
             setUser(userData);
             setNeedsOnboarding(false);
@@ -109,6 +110,32 @@ export function Provider(props: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Imperative function to refresh user data after login/signup
+  const refreshAuthUser = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: userData, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        if (userData && !error) {
+          setUser(userData);
+          setNeedsOnboarding(false);
+          console.log('[useAuth] refreshAuthUser: User set:', userData.id);
+        } else if (!userData) {
+          // Profile doesn't exist yet
+          setNeedsOnboarding(true);
+          setUser(null);
+        }
+      }
+    } catch (error) {
+      console.error('[useAuth] refreshAuthUser error:', error);
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -117,6 +144,7 @@ export function Provider(props: { children: React.ReactNode }) {
         loading,
         needsOnboarding,
         setNeedsOnboarding,
+        refreshAuthUser,
       }}>
       {props.children}
     </AuthContext.Provider>

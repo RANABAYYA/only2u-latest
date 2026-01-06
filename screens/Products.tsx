@@ -1695,7 +1695,8 @@ const ProductCardSwipe = React.memo(({
                       shouldPlay={index === currentIndex && isScreenFocused}
                       isLooping
                       resizeMode={ResizeMode.COVER}
-                      isMuted={isVideoMuted}
+                      isMuted={false}
+                      useNativeControls={true}
                       onError={(error) => {
                         console.error('Products screen video error:', error);
                         // Extract error code - handle both object and string errors
@@ -5536,7 +5537,8 @@ const Products = () => {
                     resizeMode={ResizeMode.COVER}
                     shouldPlay
                     isLooping
-                    isMuted
+                    isMuted={false}
+                    useNativeControls={true}
                   />
                   {!isProductsViewTutorialVideoPlaying && (
                     <View style={{

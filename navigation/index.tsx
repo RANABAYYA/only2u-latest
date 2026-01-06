@@ -48,6 +48,8 @@ import MessagesScreen from '~/screens/Messages';
 import ChatThread from '~/screens/ChatThread';
 import FriendSearch from '~/screens/FriendSearch';
 
+import PushNotifications from '~/screens/PushNotifications';
+
 const Stack = createNativeStackNavigator();
 
 const Navigation = () => {
@@ -95,6 +97,7 @@ const Navigation = () => {
       <Stack.Screen name="ChatThread" component={ChatThread} />
       <Stack.Screen name="FriendSearch" component={FriendSearch} />
       <Stack.Screen name="ProfilePictureUpload" component={ProfilePictureUpload} />
+      <Stack.Screen name="PushNotifications" component={PushNotifications} />
     </Stack.Navigator>
   );
 };

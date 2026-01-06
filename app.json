@@ -20,7 +20,14 @@
       "expo-image-picker",
       "expo-av",
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#ffffff"
+        }
+      ]
     ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",

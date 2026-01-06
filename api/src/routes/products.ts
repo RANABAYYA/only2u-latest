@@ -1,5 +1,6 @@
 import express from 'express';
 import { pool } from '../config/database';
+import { formatDate } from '../utils/formatters';
 
 const router = express.Router();
 
@@ -91,8 +92,23 @@ router.get('/', async (req, res, next) => {
     }
 
     values.push(Number(limit), offset);
+
     const { rows } = await pool.query(
-      `SELECT * FROM products ${where} ORDER BY created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
+      `
+      SELECT p.*,
+             v.sku, v.price, v.mrp_price, v.rsp_price, v.cost_price, v.discount_percentage,
+             c.name as category_name
+      FROM products p
+      LEFT JOIN (
+        SELECT DISTINCT ON (product_id) *
+        FROM product_variants
+        ORDER BY product_id, created_at ASC
+      ) v ON v.product_id = p.id
+      LEFT JOIN categories c ON p.category_id = c.id
+      ${where}
+      ORDER BY p.created_at DESC
+      LIMIT $${values.length - 1} OFFSET $${values.length}
+      `,
       values
     );
 
@@ -100,10 +116,39 @@ router.get('/', async (req, res, next) => {
     const countResult = await pool.query(`SELECT COUNT(*) FROM products ${where}`, countValues);
     const total = parseInt(countResult.rows[0].count);
 
+    const mapped = rows.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      category_id: r.category_id,
+      category_name: r.category_name,
+      sku: r.sku || null,
+      is_active: r.is_active,
+      featured_type: r.featured_type,
+      image_urls: r.image_urls,
+      video_urls: r.video_urls,
+      discount_percentage: r.discount_percentage || 0,
+      like_count: r.like_count,
+      mrp_price: r.mrp_price || r.base_price,
+      rsp_price: r.rsp_price,
+      return_policy: r.return_policy,
+      display_order: 0, // Placeholder
+      display_order_within_feature: 0, // Placeholder
+      replacement_policy_days: 7, // Default
+      tax_type: 'inclusive',
+      tax_rate: 0,
+      streaming_video_id: null,
+      influencer_id: null,
+      fabric_id: null,
+      created_at: formatDate(r.created_at),
+      updated_at: formatDate(r.updated_at),
+    }));
+
+
     res.json({
       success: true,
       data: {
-        products: rows,
+        products: mapped,
         pagination: {
           page: Number(page),
           limit: Number(limit),

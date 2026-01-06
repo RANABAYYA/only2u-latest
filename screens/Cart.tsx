@@ -30,6 +30,7 @@ import { createDraftOrder, type DraftOrderItem } from '~/utils/draftOrders';
 import { supabase } from '~/utils/supabase';
 import { ResellerService } from '~/services/resellerService';
 import RazorpayService from '~/services/razorpayService';
+import { getSafeImageUrl } from '~/utils/imageUtils';
 
 type PaymentMethod = 'cod' | 'razorpay' | 'upi' | 'card' | 'wallet' | 'paylater';
 
@@ -2317,14 +2318,14 @@ const Cart = () => {
             <TouchableOpacity
               onPress={() => {
                 (navigation as any).navigate('ProductDetails', {
-                  productId: item.sku || item.id,
+                  productId: item.productId,
                   product: productForDetails,
                 });
               }}
               activeOpacity={0.9}
               style={styles.itemImageContainer}
             >
-              <Image source={{ uri: item.image }} style={styles.itemImage} />
+              <Image source={{ uri: getSafeImageUrl(item.image || item.image_urls?.[0]) }} style={styles.itemImage} />
             </TouchableOpacity>
 
             <View style={styles.imageQuantityWrapper}>
@@ -2354,7 +2355,7 @@ const Cart = () => {
                 style={styles.itemNameContainer}
                 onPress={() => {
                   (navigation as any).navigate('ProductDetails', {
-                    productId: item.sku || item.id,
+                    productId: item.productId,
                     product: productForDetails,
                   });
                 }}
@@ -2400,38 +2401,40 @@ const Cart = () => {
           </View>
           )} */}
 
-            {/* Action Buttons Section - Right aligned */}
-            <View style={styles.actionButtonsSection}>
-              {/* Save for Later Button */}
-              <TouchableOpacity
-                style={[styles.saveForLaterButton, savingToWishlist === item.id && styles.saveForLaterButtonLoading]}
-                onPress={() => handleMoveToWishlist(item)}
-                activeOpacity={0.7}
-                disabled={savingToWishlist === item.id}
-              >
-                {savingToWishlist === item.id ? (
-                  <ActivityIndicator size="small" color="#F53F7A" />
-                ) : (
-                  <Ionicons name="bookmark-outline" size={14} color="#F53F7A" />
-                )}
-                <Text style={[styles.saveForLaterText, savingToWishlist === item.id && styles.saveForLaterTextLoading]}>
-                  {savingToWishlist === item.id ? 'Saving...' : 'Save for later'}
-                </Text>
-              </TouchableOpacity>
 
-              {/* Reseller Section - Only show checkbox if NOT yet set */}
-              {!item.isReseller && (
-                <TouchableOpacity
-                  style={styles.resellerButton}
-                  onPress={() => handleResellerToggle(item)}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="trending-up" size={14} color="#10B981" />
-                  <Text style={styles.resellerButtonText}>Reselling this item</Text>
-                </TouchableOpacity>
-              )}
-            </View>
           </View>
+        </View>
+
+        {/* Action Buttons Section - Footer */}
+        <View style={styles.actionButtonsSection}>
+          {/* Save for Later Button */}
+          <TouchableOpacity
+            style={[styles.saveForLaterButton, savingToWishlist === item.id && styles.saveForLaterButtonLoading]}
+            onPress={() => handleMoveToWishlist(item)}
+            activeOpacity={0.7}
+            disabled={savingToWishlist === item.id}
+          >
+            {savingToWishlist === item.id ? (
+              <ActivityIndicator size="small" color="#F53F7A" />
+            ) : (
+              <Ionicons name="bookmark-outline" size={14} color="#F53F7A" />
+            )}
+            <Text style={[styles.saveForLaterText, savingToWishlist === item.id && styles.saveForLaterTextLoading]}>
+              {savingToWishlist === item.id ? 'Saving...' : 'Save for later'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Reseller Section - Only show checkbox if NOT yet set */}
+          {!item.isReseller && (
+            <TouchableOpacity
+              style={styles.resellerButton}
+              onPress={() => handleResellerToggle(item)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="trending-up" size={14} color="#10B981" />
+              <Text style={styles.resellerButtonText}>Reselling this item</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Earnings Badge - Full Width */}
@@ -4742,6 +4745,7 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#f0f0f0',
+    paddingHorizontal: 14,
   },
   saveForLaterButton: {
     flexDirection: 'row',

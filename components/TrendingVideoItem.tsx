@@ -225,8 +225,8 @@ const TrendingVideoItem = ({
                                 resizeMode={ResizeMode.COVER}
                                 shouldPlay={isActive && videoState.isPlaying}
                                 isLooping
-                                isMuted={videoState.isMuted}
-                                useNativeControls={false} // Custom controls
+                                isMuted={false} // Default unmuted
+                                useNativeControls={false} // Enable native controls
                                 progressUpdateIntervalMillis={1000}
                                 onLoad={() => {
                                     setVideoReady(product.id, true);
