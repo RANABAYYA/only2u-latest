@@ -1,0 +1,54 @@
+{
+  "cli": {
+    "version": ">= 16.12.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Debug"
+      },
+      "env": {
+        "ANDROID_HOME": "/Users/nischal/Library/Android/sdk",
+        "ANDROID_SDK_ROOT": "/Users/nischal/Library/Android/sdk"
+      }
+    },
+    "preview": {
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Release"
+      },
+      "distribution": "internal",
+      "env": {
+        "ANDROID_HOME": "/Users/nischal/Library/Android/sdk",
+        "ANDROID_SDK_ROOT": "/Users/nischal/Library/Android/sdk"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Release"
+      },
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {
+        "ios": {
+          "ascAppId": "6753112805"
+        }
+      }
+  }
+}
