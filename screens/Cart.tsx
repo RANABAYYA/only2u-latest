@@ -1807,6 +1807,7 @@ const Cart = () => {
         vendor_name: item.vendor_name,
         category: item.category,
         variants: item.variants || [],
+        description: item.description,
       });
 
       // Show success toast

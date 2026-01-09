@@ -48,6 +48,7 @@ const CollectionDetails = () => {
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [itemToRemove, setItemToRemove] = useState<any>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showDeleteSuccessModal, setShowDeleteSuccessModal] = useState(false);
 
   useEffect(() => {
     if (collectionId) {
@@ -343,14 +344,9 @@ const CollectionDetails = () => {
 
       if (deleteCollectionError) throw deleteCollectionError;
 
-      // Close modal and navigate back
+      // Close modal and show success confirmation
       setShowDeleteModal(false);
-      navigation.goBack();
-
-      // Show success message
-      setTimeout(() => {
-        Alert.alert('Success', 'Collection and its items deleted successfully');
-      }, 300);
+      setShowDeleteSuccessModal(true);
     } catch (error) {
       console.error('Error deleting collection:', error);
       setShowDeleteModal(false);
@@ -742,6 +738,42 @@ const CollectionDetails = () => {
                 <Text style={styles.deleteModalDeleteText}>Delete</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete Success Modal */}
+      <Modal
+        visible={showDeleteSuccessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowDeleteSuccessModal(false);
+          navigation.goBack();
+        }}
+      >
+        <View style={styles.successModalOverlay}>
+          <View style={styles.successModalContainer}>
+            <View style={styles.successModalIconContainer}>
+              <View style={styles.successModalCheckCircle}>
+                <Ionicons name="checkmark" size={40} color="#F53F7A" />
+              </View>
+            </View>
+
+            <Text style={styles.successModalTitle}>Success</Text>
+            <Text style={styles.successModalMessage}>Collection and its items deleted successfully</Text>
+
+            <TouchableOpacity
+              style={styles.successModalPrimaryButton}
+              onPress={() => {
+                setShowDeleteSuccessModal(false);
+                navigation.goBack();
+              }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="arrow-forward" size={18} color="#FFF" />
+              <Text style={styles.successModalPrimaryButtonText}>Continue</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1214,6 +1246,75 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   deleteModalDeleteText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  // Success Modal Styles
+  successModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  successModalContainer: {
+    width: '85%',
+    maxWidth: 340,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 15,
+    gap: 12,
+  },
+  successModalIconContainer: {
+    marginBottom: 8,
+  },
+  successModalCheckCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#FFF0F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#F53F7A',
+  },
+  successModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    textAlign: 'center',
+  },
+  successModalMessage: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 20,
+    paddingHorizontal: 8,
+  },
+  successModalPrimaryButton: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    backgroundColor: '#F53F7A',
+    shadowColor: '#F53F7A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  successModalPrimaryButtonText: {
     fontSize: 16,
     fontWeight: '700',
     color: '#fff',
