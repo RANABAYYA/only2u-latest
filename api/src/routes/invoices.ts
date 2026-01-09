@@ -95,10 +95,51 @@ router.get('/', async (req, res, next) => {
     const countResult = await pool.query(`SELECT COUNT(*) FROM invoices ${where}`, countValues);
     const total = parseInt(countResult.rows[0].count);
 
+    // Aggregate invoice lines (join products for code/name)
+    const invoiceIds = rows.map(r => r.id);
+    let linesByInvoice: Record<string, any[]> = {};
+    if (invoiceIds.length > 0) {
+      const itemsQuery = `
+        SELECT ii.invoice_id,
+               p.sku AS product_code,
+               p.name AS product_name,
+               ii.quantity,
+               ii.unit_price,
+               ii.discount_amount AS discount,
+               ii.tax_amount AS tax,
+               (ii.unit_price * ii.quantity - ii.discount_amount) AS subtotal
+        FROM invoice_items ii
+        JOIN products p ON p.id = ii.product_id
+        WHERE ii.invoice_id = ANY($1::uuid[])
+      `;
+      const itemsRes = await pool.query(itemsQuery, [invoiceIds]);
+      for (const row of itemsRes.rows) {
+        const key = row.invoice_id;
+        if (!linesByInvoice[key]) linesByInvoice[key] = [];
+        linesByInvoice[key].push({
+          product_code: row.product_code,
+          product_name: row.product_name,
+          quantity: Number(row.quantity),
+          unit_price: Number(row.unit_price),
+          discount: Number(row.discount || 0),
+          tax: Number(row.tax || 0),
+          subtotal: Number(row.subtotal || 0),
+        });
+      }
+    }
+
+    // Map response format to include required fields
+    const formatted = rows.map((inv: any) => ({
+      ...inv,
+      invoice_no: inv.invoice_no ?? inv.invoice_number ?? null,
+      partner_id: String(inv.customer_id),
+      invoice_lines: linesByInvoice[inv.id] || [],
+    }));
+
     res.json({
       success: true,
       data: {
-        invoices: rows,
+        invoices: formatted,
         pagination: {
           page: Number(page),
           limit: Number(limit),
@@ -175,13 +216,37 @@ router.get('/:id', async (req, res, next) => {
       });
     }
 
-    const itemsResult = await pool.query('SELECT * FROM invoice_items WHERE invoice_id = $1', [req.params.id]);
+    const itemsResult = await pool.query(
+      `SELECT p.sku AS product_code,
+              p.name AS product_name,
+              ii.quantity,
+              ii.unit_price,
+              ii.discount_amount AS discount,
+              ii.tax_amount AS tax,
+              (ii.unit_price * ii.quantity - ii.discount_amount) AS subtotal
+       FROM invoice_items ii
+       JOIN products p ON p.id = ii.product_id
+       WHERE ii.invoice_id = $1`,
+      [req.params.id]
+    );
 
     res.json({
       success: true,
       data: {
-        invoice: invoiceResult.rows[0],
-        items: itemsResult.rows,
+        invoice: {
+          ...invoiceResult.rows[0],
+          invoice_no: invoiceResult.rows[0].invoice_no ?? invoiceResult.rows[0].invoice_number ?? null,
+          partner_id: String(invoiceResult.rows[0].customer_id),
+        },
+        invoice_lines: itemsResult.rows.map((row: any) => ({
+          product_code: row.product_code,
+          product_name: row.product_name,
+          quantity: Number(row.quantity),
+          unit_price: Number(row.unit_price),
+          discount: Number(row.discount || 0),
+          tax: Number(row.tax || 0),
+          subtotal: Number(row.subtotal || 0),
+        })),
       },
       error: null,
     });
