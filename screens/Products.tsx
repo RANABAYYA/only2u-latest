@@ -342,7 +342,7 @@ const TinderCard = ({
   index,
   onSwipe,
   productPrices,
-  productRatings,
+  ratingData,
   getUserPrice,
   isInWishlist,
   removeFromWishlist,
@@ -537,8 +537,8 @@ const TinderCard = ({
       price: userPrice,
       originalPrice: hasDiscount ? originalPrice : undefined,
       discount: Math.max(...(product.variants?.map((v: any) => v.discount_percentage || 0) || [0])),
-      rating: productRatings[product.id]?.rating || 0,
-      reviews: productRatings[product.id]?.reviews || 0,
+      rating: ratingData?.rating || 0,
+      reviews: ratingData?.reviews || 0,
       image: getFirstSafeProductImage(product),
       image_urls: getProductImages(product),
       video_urls: product.video_urls || [],
@@ -875,7 +875,7 @@ const ProductCardSwipe = React.memo(({
   setShowCollectionSheet,
   addToAllCollection,
   getUserPrice,
-  productRatings,
+  ratingData,
   openReviewsSheet,
   isScreenFocused,
 }: {
@@ -891,7 +891,7 @@ const ProductCardSwipe = React.memo(({
   setShowCollectionSheet: (show: boolean) => void;
   addToAllCollection: (product: Product) => void;
   getUserPrice: (product: Product) => number;
-  productRatings: { [productId: string]: { rating: number; reviews: number } };
+  ratingData: { rating: number; reviews: number };
   openReviewsSheet: (product: Product) => void;
   isScreenFocused: boolean;
 }) => {
@@ -902,7 +902,6 @@ const ProductCardSwipe = React.memo(({
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const videoRef = useRef<any>(null);
   const wasPlayingBeforeBlurRef = useRef(true);
-  const ratingData = productRatings[product.id] ?? { rating: 0, reviews: 0 };
 
   // Reset media index to 0 when product changes (when swiping to a new card)
   useEffect(() => {
@@ -1783,6 +1782,11 @@ const ProductCardSwipe = React.memo(({
               <View style={styles.swipeInfoRatingBadge}>
                 <Ionicons name="star" size={14} color="#FFD600" />
                 <Text style={styles.swipeInfoRatingText}>{ratingData.rating.toFixed(1)}</Text>
+                {ratingData.reviews > 0 && (
+                  <Text style={[styles.swipeInfoRatingText, { marginLeft: 4, fontWeight: '500', color: '#666', fontSize: 11 }]}>
+                    ({ratingData.reviews})
+                  </Text>
+                )}
               </View>
             </TouchableOpacity>
           </View>
@@ -2334,6 +2338,22 @@ const ProductCardSwipe = React.memo(({
       </Modal>
     </View>
   );
+}, (prevProps, nextProps) => {
+  // Custom comparison for React.memo
+  // Return true if props are equal (skip re-render), false if different (trigger re-render)
+
+  // Check rating data directly
+  if (prevProps.ratingData?.rating !== nextProps.ratingData?.rating ||
+    prevProps.ratingData?.reviews !== nextProps.ratingData?.reviews) {
+    return false; // Props are different, re-render
+  }
+
+  // Check other important props
+  if (prevProps.product.id !== nextProps.product.id) return false;
+  if (prevProps.cardHeight !== nextProps.cardHeight) return false;
+  if (prevProps.isScreenFocused !== nextProps.isScreenFocused) return false;
+
+  return true; // Props are equal, skip re-render
 });
 
 // Custom Swipe View Component
@@ -2596,7 +2616,7 @@ const CustomSwipeView = ({
               setShowCollectionSheet={setShowCollectionSheet}
               addToAllCollection={addToAllCollection}
               getUserPrice={getUserPrice}
-              productRatings={productRatings}
+              ratingData={productRatings[String(product.id)] ?? { rating: 0, reviews: 0 }}
               openReviewsSheet={openReviewsSheet}
               isScreenFocused={isScreenFocused}
             />
@@ -2637,7 +2657,7 @@ const CustomSwipeView = ({
             setShowCollectionSheet={setShowCollectionSheet}
             addToAllCollection={addToAllCollection}
             getUserPrice={getUserPrice}
-            productRatings={productRatings}
+            ratingData={productRatings[String(products[currentIndex]?.id)] ?? { rating: 0, reviews: 0 }}
             openReviewsSheet={openReviewsSheet}
             isScreenFocused={isScreenFocused}
           />
@@ -2825,24 +2845,10 @@ const Products = () => {
     setRightSwipeCount(newCount);
     console.log('Right swipe count:', newCount);
 
+    // If already in wishlist, do nothing - keep it in wishlist
     if (isInWishlist(product.id)) {
-      removeFromWishlist(product.id);
-      if (userData?.id) {
-        // Remove from all collections by finding collections owned by this user
-        const { data: userCollections } = await supabase
-          .from('collections')
-          .select('id')
-          .eq('user_id', userData.id);
-
-        if (userCollections && userCollections.length > 0) {
-          const collectionIds = userCollections.map(c => c.id);
-          await supabase
-            .from('collection_products')
-            .delete()
-            .in('collection_id', collectionIds)
-            .eq('product_id', product.id);
-        }
-      }
+      // Item is already in wishlist, no action needed
+      return;
     } else {
       addToWishlist({
         ...product,
@@ -3482,28 +3488,63 @@ const Products = () => {
     try {
       if (productIds.length === 0) return;
 
+      // Convert all product IDs to strings for consistent handling
+      const stringProductIds = productIds.map(id => String(id));
+
       const { data, error } = await supabase
         .from('product_reviews')
         .select('product_id, rating')
-        .in('product_id', productIds);
+        .in('product_id', stringProductIds);
 
       if (error) {
         console.error('Error fetching product ratings:', error);
         return;
       }
 
+      console.log('📊 Fetched reviews data:', data?.length || 0, 'reviews for', stringProductIds.length, 'products');
+
       // Calculate average rating and count for each product
       const ratings: { [productId: string]: { rating: number; reviews: number } } = {};
 
-      productIds.forEach((productId) => {
-        const productReviews = data?.filter((review) => review.product_id === productId) || [];
-        const totalRating = productReviews.reduce((sum, review) => sum + review.rating, 0);
-        const averageRating = productReviews.length > 0 ? totalRating / productReviews.length : 0;
+      // Group reviews by product_id (using string conversion for consistent matching)
+      const reviewsByProduct: { [key: string]: number[] } = {};
+
+      // Initialize all products with empty arrays
+      stringProductIds.forEach(id => {
+        reviewsByProduct[id] = [];
+      });
+
+      // Group the fetched reviews
+      if (data && data.length > 0) {
+        data.forEach((review) => {
+          const reviewProductId = String(review.product_id);
+          if (reviewsByProduct[reviewProductId]) {
+            reviewsByProduct[reviewProductId].push(review.rating);
+          } else {
+            // Try to find a matching product ID (handles edge cases like leading zeros, etc.)
+            const matchingKey = stringProductIds.find(id => String(id) === reviewProductId);
+            if (matchingKey) {
+              reviewsByProduct[matchingKey].push(review.rating);
+            }
+          }
+        });
+      }
+
+      // Calculate ratings for each product
+      stringProductIds.forEach((productId) => {
+        const productReviewRatings = reviewsByProduct[productId] || [];
+        const totalRating = productReviewRatings.reduce((sum, rating) => sum + rating, 0);
+        const averageRating = productReviewRatings.length > 0 ? totalRating / productReviewRatings.length : 0;
 
         ratings[productId] = {
           rating: averageRating,
-          reviews: productReviews.length,
+          reviews: productReviewRatings.length,
         };
+
+        // Debug log for products with reviews
+        if (productReviewRatings.length > 0) {
+          console.log(`📊 Product ${productId}: ${productReviewRatings.length} reviews, avg rating: ${averageRating.toFixed(1)}`);
+        }
       });
 
       setProductRatings((prev) => ({ ...prev, ...ratings }));
@@ -3847,8 +3888,8 @@ const Products = () => {
         });
       } else if (sortBy === 'rating') {
         sortedData = [...filteredData].sort((a, b) => {
-          const ratingA = productRatings[a.id]?.rating || (a.rating as number) || 0;
-          const ratingB = productRatings[b.id]?.rating || (b.rating as number) || 0;
+          const ratingA = productRatings[String(a.id)]?.rating || (a.rating as number) || 0;
+          const ratingB = productRatings[String(b.id)]?.rating || (b.rating as number) || 0;
           return sortOrder === 'asc' ? ratingA - ratingB : ratingB - ratingA;
         });
       } else if (sortBy === 'like_count') {
@@ -3969,7 +4010,7 @@ const Products = () => {
       product.variants?.reduce((sum, variant) => sum + (variant.quantity || 0), 0) || 0;
 
     // Get rating data for badge
-    const ratingData = productRatings[product.id] ?? { rating: 0, reviews: 0 };
+    const ratingData = productRatings[String(product.id)] ?? { rating: 0, reviews: 0 };
 
     return (
       <TouchableOpacity
@@ -3984,8 +4025,8 @@ const Products = () => {
             discount: Math.max(
               ...(product.variants?.map((v: any) => v.discount_percentage || 0) || [0])
             ),
-            rating: productRatings[product.id]?.rating || 0, // Real rating from product_reviews
-            reviews: productRatings[product.id]?.reviews || 0, // Real review count from product_reviews
+            rating: productRatings[String(product.id)]?.rating || 0, // Real rating from product_reviews
+            reviews: productRatings[String(product.id)]?.reviews || 0, // Real review count from product_reviews
             image: getFirstSafeProductImage(product),
             image_urls: getProductImages(product),
             video_urls: product.video_urls || [],
@@ -4124,8 +4165,13 @@ const Products = () => {
               <View style={styles.reviewsContainer}>
                 <Ionicons name="star" size={12} color="#FFD600" style={{ marginRight: 2 }} />
                 <Text style={styles.reviews}>
-                  {productRatings[product.id]?.rating?.toFixed(1) || '0.0'}
+                  {productRatings[String(product.id)]?.rating?.toFixed(1) || '0.0'}
                 </Text>
+                {ratingData.reviews > 0 && (
+                  <Text style={[styles.reviews, { marginLeft: 4, fontWeight: '500', color: '#666' }]}>
+                    ({ratingData.reviews})
+                  </Text>
+                )}
               </View>
             </View>
           </View>
@@ -4158,8 +4204,8 @@ const Products = () => {
       price: userPrice,
       originalPrice: hasDiscount ? originalPrice : undefined,
       discount: Math.max(...(product.variants?.map((v: any) => v.discount_percentage || 0) || [0])),
-      rating: productRatings[product.id]?.rating || 0,
-      reviews: productRatings[product.id]?.reviews || 0,
+      rating: productRatings[String(product.id)]?.rating || 0,
+      reviews: productRatings[String(product.id)]?.reviews || 0,
       image: getFirstSafeProductImage(product),
       image_urls: getProductImages(product),
       video_urls: product.video_urls || [],
@@ -4193,7 +4239,7 @@ const Products = () => {
   };
 
   const renderItem = ({ item }: { item: Product }) => {
-    const ratingData = productRatings[item.id] ?? { rating: 0, reviews: 0 };
+    const ratingData = productRatings[String(item.id)] ?? { rating: 0, reviews: 0 };
     const vendorName = item.vendor_name || item.alias_vendor || 'Only2U';
 
     const RatingBadge = ({ style }: { style?: any }) => (
@@ -4264,7 +4310,7 @@ const Products = () => {
                 index={index}
                 onSwipe={handleTinderSwipe}
                 productPrices={productPrices}
-                productRatings={productRatings}
+                ratingData={productRatings[String(product.id)] ?? { rating: 0, reviews: 0 }}
                 getUserPrice={getUserPrice}
                 isInWishlist={isInWishlist}
                 removeFromWishlist={removeFromWishlist}
@@ -4425,6 +4471,7 @@ const Products = () => {
               });
             }}>
             <CustomSwipeView
+              key={`swipe-${Object.keys(productRatings).length}`}
               products={products}
               cardHeight={cardHeight}
               onSwipeRight={handleSwipeRight}
@@ -4460,6 +4507,7 @@ const Products = () => {
               windowSize={10}
               initialNumToRender={10}
               updateCellsBatchingPeriod={50}
+              extraData={productRatings}
               key={`'normal'}`} // Force re-render on layout change
             />
           </KeyboardAvoidingView>
@@ -4705,7 +4753,11 @@ const Products = () => {
           actionText={notificationTitle.includes('🎉') ? 'View' : undefined}
           onActionPress={notificationTitle.includes('🎉') ? () => {
             setNotificationVisible(false);
-            (navigation as any).navigate('TabNavigator', { screen: 'Wishlist' });
+            // Navigate to Home tab first, then to Wishlist screen within the HomeStack
+            (navigation as any).navigate('TabNavigator', {
+              screen: 'Home',
+              params: { screen: 'Wishlist' }
+            });
           } : undefined}
         />
 
@@ -5159,10 +5211,12 @@ const Products = () => {
                   <View style={styles.reviewsRatingRow}>
                     <Ionicons name="star" size={16} color="#FFD600" />
                     <Text style={styles.reviewsAverageRating}>
-                      {(productRatings[selectedProductForReviews.id]?.rating || 0).toFixed(1)}
+                      {productReviews.length > 0
+                        ? (productReviews.reduce((sum, r) => sum + r.rating, 0) / productReviews.length).toFixed(1)
+                        : '0.0'}
                     </Text>
                     <Text style={styles.reviewsTotalCount}>
-                      ({productRatings[selectedProductForReviews.id]?.reviews || 0} reviews)
+                      ({productReviews.length} reviews)
                     </Text>
                   </View>
                 </View>
@@ -5255,7 +5309,7 @@ const Products = () => {
                           (navigation as any).navigate('AllReviews', {
                             productId: selectedProductForReviews?.id,
                             productName: selectedProductForReviews?.name,
-                            averageRating: productRatings[selectedProductForReviews?.id || '']?.rating || 0,
+                            averageRating: productRatings[String(selectedProductForReviews?.id || '')]?.rating || 0,
                             totalReviews: productReviews.length,
                             reviews: productReviews,
                           });

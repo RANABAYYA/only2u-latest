@@ -20,6 +20,8 @@ import { Video, ResizeMode } from 'expo-av';
 import { useInfluencer, Influencer, InfluencerPost } from '~/contexts/InfluencerContext';
 import { useAuth } from '~/contexts/useAuth';
 import { useLoginSheet } from '~/contexts/LoginSheetContext';
+import type { Category } from '~/types/product';
+import { supabase } from '~/utils/supabase';
 import Toast from 'react-native-toast-message';
 
 const { width } = Dimensions.get('window');
@@ -61,6 +63,8 @@ const InfluencerProfile: React.FC = () => {
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'products'>('posts');
   const [influencerProducts, setInfluencerProducts] = useState<any[]>([]);
+  const [postsDisplayCount, setPostsDisplayCount] = useState(12);
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
 
   useEffect(() => {
     loadInfluencerData();
@@ -110,6 +114,17 @@ const InfluencerProfile: React.FC = () => {
         await fetchInfluencerPosts(influencerId);
         setPosts(influencerPosts.filter(post => post.influencer_id === influencerId));
 
+        // Fetch global categories sorted by display_order
+        const { data: catData } = await supabase
+          .from('categories')
+          .select('*')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true, nullsFirst: false });
+
+        if (catData) {
+          setAllCategories(catData);
+        }
+
         // Fetch products associated with this influencer
         const products = await fetchProductsByInfluencerId(influencerId);
         setInfluencerProducts(products);
@@ -141,7 +156,17 @@ const InfluencerProfile: React.FC = () => {
       return;
     }
 
-    if (!user) {
+    let currentUser = user;
+
+    // Fallback: Check Supabase session directly if context user is missing
+    if (!currentUser) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (sessionUser) {
+        currentUser = sessionUser;
+      }
+    }
+
+    if (!currentUser) {
       Toast.show({
         type: 'info',
         text1: 'Login Required',
@@ -193,7 +218,17 @@ const InfluencerProfile: React.FC = () => {
       return;
     }
 
-    if (!user) {
+    let currentUser = user;
+
+    // Fallback: Check Supabase session directly if context user is missing
+    if (!currentUser) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (sessionUser) {
+        currentUser = sessionUser;
+      }
+    }
+
+    if (!currentUser) {
       Toast.show({
         type: 'info',
         text1: 'Login Required',
@@ -235,6 +270,74 @@ const InfluencerProfile: React.FC = () => {
       console.error('Error opening WhatsApp:', error);
       Alert.alert('Error', 'Unable to open WhatsApp for sharing.');
     }
+  };
+
+  // Helper functions for Product Card
+  const getSmallestPrice = (product: any) => {
+    if (product.product_variants && product.product_variants.length > 0) {
+      // Find variant with lowest price
+      return Math.min(...product.product_variants.map((v: any) => v.price));
+    }
+    return 0;
+  };
+
+  const getFirstImage = (product: any) => {
+    if (product.image_urls && product.image_urls.length > 0) return product.image_urls[0];
+    if (product.product_variants && product.product_variants.length > 0) {
+      const v = product.product_variants.find((v: any) => v.image_urls && v.image_urls.length > 0);
+      if (v) return v.image_urls[0];
+    }
+    return 'https://via.placeholder.com/150';
+  };
+
+
+
+  const renderProductCard = (product: any) => {
+    const price = getSmallestPrice(product);
+    const discountPct = Math.max(...(product?.product_variants?.map((v: any) => v.discount_percentage || 0) || [0]));
+    const hasDiscount = discountPct > 0;
+    const originalPrice = hasDiscount ? price / (1 - discountPct / 100) : undefined;
+
+    // Use rating if available, else 0
+    const rating = product.rating || 0;
+
+    const firstImage = getFirstImage(product);
+    const brandLabel = product.vendor_name || 'Only2U';
+
+    return (
+      <TouchableOpacity
+        key={product.id}
+        style={styles.productCard}
+        activeOpacity={0.85}
+        onPress={() => navigation.navigate('ProductDetails' as never, { product } as never)}
+      >
+        {hasDiscount && (
+          <View style={styles.discountBadge}>
+            <Text style={styles.discountBadgeText}>{Math.round(discountPct)}% OFF</Text>
+          </View>
+        )}
+        <Image source={{ uri: firstImage }} style={styles.productImage} />
+        <Text style={styles.brandName} numberOfLines={1}>{brandLabel}</Text>
+        <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
+        <View style={styles.priceContainer}>
+          <View style={styles.priceInfo}>
+            {hasDiscount && (
+              <Text style={styles.originalPrice}>₹{(originalPrice || 0).toFixed(0)}</Text>
+            )}
+            <Text style={styles.price}>₹{price?.toFixed(0)}</Text>
+          </View>
+          <View style={styles.discountAndRatingRow}>
+            {hasDiscount && (
+              <Text style={styles.discountPercentage}>{Math.round(discountPct)}% OFF</Text>
+            )}
+            <View style={styles.reviewsContainer}>
+              <Ionicons name="star" size={12} color="#FFD600" style={{ marginRight: 2 }} />
+              <Text style={styles.reviews}>{rating.toFixed(1)}</Text>
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
   };
 
   const handlePostPress = (post: InfluencerPost) => {
@@ -510,30 +613,61 @@ const InfluencerProfile: React.FC = () => {
 
         {/* Tab Content */}
         <View style={styles.tabContent}>
-          {/* Posts Tab - Show all videos in grid */}
+          {/* Posts Tab -          {/* Posts Tab - Show all product images in grid */}
           {activeTab === 'posts' && (
-            <View style={styles.contentSection}>
+            <View style={styles.postsGrid}>
               {contentLoading ? (
                 <View style={styles.contentLoadingContainer}>
                   <ActivityIndicator size="large" color="#F53F7A" />
                   <Text style={styles.contentLoadingText}>Loading posts...</Text>
                 </View>
-              ) : posts.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Ionicons name="videocam-outline" size={64} color="#DDD" />
-                  <Text style={styles.emptyStateTitle}>No Posts Yet</Text>
-                  <Text style={styles.emptyStateSubtitle}>Videos from {influencer?.name || 'this influencer'} will appear here</Text>
+              ) : influencerProducts.length === 0 ? (
+                <View style={styles.emptyTabState}>
+                  <Ionicons name="images-outline" size={64} color="#ddd" />
+                  <Text style={styles.emptyTabTitle}>No Products Yet</Text>
+                  <Text style={styles.emptyTabSubtitle}>Product images from {influencer?.name} will appear here</Text>
                 </View>
               ) : (
-                <FlatList
-                  data={posts}
-                  renderItem={renderPost}
-                  keyExtractor={(item) => item.id}
-                  numColumns={3}
-                  scrollEnabled={false}
-                  contentContainerStyle={styles.postsGrid}
-                  columnWrapperStyle={styles.postsRow}
-                />
+                <>
+                  <View style={styles.gridContainer}>
+                    {influencerProducts.slice(0, postsDisplayCount).map((product) => {
+                      const firstImage = getFirstImage(product);
+                      return (
+                        <TouchableOpacity
+                          key={product.id}
+                          style={styles.gridItem}
+                          onPress={() => navigation.navigate('ProductDetails' as never, { product } as never)}
+                          activeOpacity={0.8}
+                        >
+                          <Image
+                            source={{ uri: firstImage }}
+                            style={styles.gridImage}
+                            resizeMode="cover"
+                            fadeDuration={300}
+                          />
+                          <View style={styles.gridImageLoadingOverlay}>
+                            <ActivityIndicator size="small" color="#F53F7A" />
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {influencerProducts.length > postsDisplayCount && (
+                    <TouchableOpacity
+                      style={styles.loadMoreButton}
+                      onPress={() => {
+                        const newCount = postsDisplayCount + 12;
+                        setPostsDisplayCount(newCount > influencerProducts.length ? influencerProducts.length : newCount);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.loadMoreText}>
+                        Load More ({influencerProducts.length - postsDisplayCount} remaining)
+                      </Text>
+                      <Ionicons name="chevron-down" size={18} color="#F53F7A" />
+                    </TouchableOpacity>
+                  )}
+                </>
               )}
             </View>
           )}
@@ -553,34 +687,81 @@ const InfluencerProfile: React.FC = () => {
                   <Text style={styles.emptyStateSubtitle}>Products promoted by {influencer?.name || 'this influencer'} will appear here</Text>
                 </View>
               ) : (
-                <FlatList
-                  data={influencerProducts}
-                  renderItem={({ item }) => {
-                    const price = item.product_variants?.[0]?.price || 0;
-                    const imageUrl = item.image_urls?.[0] || item.product_variants?.[0]?.image_urls?.[0];
-                    return (
-                      <TouchableOpacity
-                        style={styles.productItem}
-                        onPress={() => navigation.navigate('ProductDetails' as never, { product: item } as never)}
-                      >
-                        <Image
-                          source={{ uri: imageUrl || 'https://via.placeholder.com/150' }}
-                          style={styles.productImage}
-                          resizeMode="cover"
-                        />
-                        <View style={styles.productInfo}>
-                          <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
-                          <Text style={styles.productPrice}>₹{price.toFixed(2)}</Text>
+                <>
+                  {/* Group products by category */}
+                  {(() => {
+                    // Group products
+                    const grouped = influencerProducts.reduce((acc, product) => {
+                      const categoryName = product.category?.name || 'Other';
+                      const categoryId = product.category_id || 'other';
+                      if (!acc[categoryName]) {
+                        acc[categoryName] = {
+                          products: [],
+                          id: categoryId
+                        };
+                      }
+                      acc[categoryName].products.push(product);
+                      return acc;
+                    }, {} as { [key: string]: { products: any[], id: string } });
+
+                    // Sort groups based on allCategories order
+                    const sortedGroups = allCategories.length > 0 ?
+                      // 1. Map allCategories to present groups
+                      allCategories.map(cat => ({
+                        name: cat.name,
+                        data: grouped[cat.name]
+                      }))
+                        .filter(item => item.data && item.data.products.length > 0)
+                        // 2. Append any categories not in allCategories (e.g. 'Other')
+                        .concat(
+                          Object.keys(grouped)
+                            .filter(name => !allCategories.some(c => c.name === name))
+                            .map(name => ({ name, data: grouped[name] }))
+                        )
+                      : // Fallback: just use object keys if categories not loaded yet
+                      Object.entries(grouped).map(([name, data]) => ({ name, data }));
+
+                    return sortedGroups.map(({ name: categoryName, data }) => {
+                      const categoryProducts = data.products;
+                      const category = {
+                        id: data.id,
+                        name: categoryName
+                      };
+
+                      return (
+                        <View key={categoryName} style={styles.categorySection}>
+                          {/* Category Header */}
+                          <View style={styles.categoryHeader}>
+                            <Text style={styles.categoryTitle}>{categoryName}</Text>
+                            <TouchableOpacity
+                              style={styles.seeMoreButton}
+                              onPress={() => {
+                                // Optional: Add logic to see all products in this category for this influencer
+                                // For now just navigate to generic products screen or do nothing
+                              }}
+                            >
+                              <Text style={styles.seeMoreText}>See More</Text>
+                              <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
+                            </TouchableOpacity>
+                          </View>
+
+                          {/* Horizontal Product List */}
+                          <FlatList
+                            horizontal
+                            data={categoryProducts}
+                            renderItem={({ item }) => renderProductCard(item)}
+                            keyExtractor={(item) => item.id}
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.productsHorizontalList}
+                            ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
+                            nestedScrollEnabled={true}
+                            scrollEnabled={true}
+                          />
                         </View>
-                      </TouchableOpacity>
-                    );
-                  }}
-                  keyExtractor={(item) => item.id}
-                  numColumns={2}
-                  scrollEnabled={false}
-                  contentContainerStyle={styles.productsGrid}
-                  columnWrapperStyle={styles.productsRow}
-                />
+                      );
+                    });
+                  })()}
+                </>
               )}
             </View>
           )}
@@ -596,7 +777,207 @@ const InfluencerProfile: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0F0F0',
+  },
+  // New Styles for Product Cards and Categories
+  categorySection: {
+    marginBottom: 24,
+  },
+  categoryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  categoryTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111',
+  },
+  seeMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  seeMoreText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F53F7A',
+    marginRight: 2,
+  },
+  productsHorizontalList: {
+    paddingHorizontal: 8,
+  },
+  productCard: {
+    width: 138,
+    marginHorizontal: 2,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#eee',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+    position: 'relative',
+  },
+  discountBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    backgroundColor: '#F53F7A',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    zIndex: 1,
+  },
+  discountBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  productImage: {
+    width: '100%',
+    height: 160,
+    resizeMode: 'cover',
+  },
+  brandName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1a1a1a',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    textTransform: 'uppercase',
+  },
+  productName: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#666',
+    paddingHorizontal: 12,
+    paddingTop: 2,
+    lineHeight: 16,
+  },
+  priceContainer: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    paddingTop: 6,
+  },
+  priceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  price: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1a1a',
+  },
+  originalPrice: {
+    fontSize: 12,
+    color: '#94a3b8',
+    textDecorationLine: 'line-through',
+  },
+  discountPercentage: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#F53F7A',
+    backgroundColor: 'rgba(245, 63, 122, 0.12)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  discountAndRatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 6,
+  },
+  reviewsContainer: {
+    backgroundColor: '#fff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 12,
+    gap: 4,
+  },
+  reviews: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#333',
+  },
+  // Grid Styles from VendorProfile
+  postsGrid: {
+    flex: 1,
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 1,
+  },
+  gridItem: {
+    width: (width - 6) / 3,
+    height: (width - 6) / 3,
+    backgroundColor: '#f0f0f0',
+  },
+  gridImage: {
+    width: '100%',
+    height: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  gridImageLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    zIndex: -1,
+  },
+  loadMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    marginTop: 8,
+    marginBottom: 16,
+    backgroundColor: 'rgba(245, 63, 122, 0.1)',
+    borderRadius: 12,
+    marginHorizontal: 16,
+    gap: 8,
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F53F7A',
+  },
+  emptyTabState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 40,
+  },
+  emptyTabTitle: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#333',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyTabSubtitle: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   loadingContainer: {
     flex: 1,

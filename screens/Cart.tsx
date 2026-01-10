@@ -585,7 +585,7 @@ const Cart = () => {
       const quantity = item.requestedQuantity || item.quantity || 1;
       const lineTotal =
         item.isReseller && item.resellerPrice
-          ? item.resellerPrice
+          ? item.resellerPrice * quantity // Trat resellerPrice as Unit Price
           : item.price * quantity;
       const unitPrice = lineTotal / quantity;
 
@@ -670,7 +670,7 @@ const Cart = () => {
 
     const orderItemSubtotal = orderItems.reduce((sum, item) => {
       if (item.isReseller && item.resellerPrice) {
-        return sum + item.resellerPrice;
+        return sum + (item.resellerPrice * (item.quantity || 1)); // Treat as Unit Price
       }
       const { rsp } = getItemPricing(item);
       return sum + (rsp * (item.quantity || 1));
@@ -685,7 +685,7 @@ const Cart = () => {
     }, 0);
     const resellerTotal = orderItems.reduce((sum, item) => {
       if (item.isReseller && item.resellerPrice) {
-        return sum + item.resellerPrice;
+        return sum + (item.resellerPrice * (item.quantity || 1)); // Treat as Unit Price
       }
       const { rsp } = getItemPricing(item);
       return sum + (rsp * (item.quantity || 1));
@@ -739,10 +739,12 @@ const Cart = () => {
       const { rsp } = getItemPricing(item);
       const baseUnitPrice = rsp || 0;
       const baseTotal = baseUnitPrice * quantity;
-      const resellerTotalOverride =
-        item.isReseller && item.resellerPrice ? item.resellerPrice : null;
+
+      const resellerUnitPrice = item.isReseller && item.resellerPrice ? item.resellerPrice : null;
+      const resellerTotalOverride = resellerUnitPrice ? resellerUnitPrice * quantity : null;
+
       const totalPrice = resellerTotalOverride ?? baseTotal;
-      const unitPrice = resellerTotalOverride ? totalPrice / quantity : baseUnitPrice;
+      const unitPrice = resellerUnitPrice ?? baseUnitPrice;
 
       let productId: string | null = null;
       if (isValidUUID(item.productId)) {
@@ -766,15 +768,15 @@ const Cart = () => {
       }
 
       if (item.isReseller && productId) {
-        const resellerTotalLine = resellerTotalOverride ?? baseTotal;
-        const resellerUnitPrice = resellerTotalLine / quantity;
+        const resellerTotalLine = resellerTotalOverride ?? baseTotal; // This is now correct (Unit * Qty)
+        const resellerUnitPriceVal = resellerUnitPrice ?? baseUnitPrice;
         const marginAmount = resellerTotalLine - baseTotal;
         resellerOrderItems.push({
           productId,
           variantId,
           quantity,
           baseUnitPrice,
-          resellerUnitPrice,
+          resellerUnitPrice: resellerUnitPriceVal,
           baseTotal,
           resellerTotal: resellerTotalLine,
           marginAmount,
@@ -2063,7 +2065,8 @@ const Cart = () => {
     : false;
   const payableSubtotal = Math.max(0, subtotal - totalSavingsFromIncentives);
   const finalTotal = payableSubtotal + deliveryCharge;
-  const coinsEarned = Math.round(subtotalRspBase * 0.10);
+  // Coins earned based on final payable amount (after all discounts including coin redemption)
+  const coinsEarned = Math.round(payableSubtotal * 0.10);
   const combinedSavings = Math.max(0, savings + totalSavingsFromIncentives);
   const eligibleCoinDiscount = useMemo(() => {
     if (cartItems.length === 0 || subtotal <= 0 || userCoinBalance <= 0) return 0;

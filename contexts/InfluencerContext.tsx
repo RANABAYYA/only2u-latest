@@ -202,13 +202,18 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
 
   // Follow influencer
   const followInfluencer = async (influencerId: string): Promise<boolean> => {
-    if (!user) return false;
+    let userId = user?.id;
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (!sessionUser) return false;
+      userId = sessionUser.id;
+    }
 
     try {
       const { error } = await supabase
         .from('influencer_follows')
         .insert({
-          follower_id: user.id,
+          follower_id: userId,
           influencer_id: influencerId
         });
 
@@ -224,13 +229,18 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
 
   // Unfollow influencer
   const unfollowInfluencer = async (influencerId: string): Promise<boolean> => {
-    if (!user) return false;
+    let userId = user?.id;
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (!sessionUser) return false;
+      userId = sessionUser.id;
+    }
 
     try {
       const { error } = await supabase
         .from('influencer_follows')
         .delete()
-        .eq('follower_id', user.id)
+        .eq('follower_id', userId)
         .eq('influencer_id', influencerId);
 
       if (error) throw error;
@@ -250,13 +260,18 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
 
   // Like post
   const likePost = async (postId: string): Promise<boolean> => {
-    if (!user) return false;
+    let userId = user?.id;
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (!sessionUser) return false;
+      userId = sessionUser.id;
+    }
 
     try {
       const { error } = await supabase
         .from('influencer_post_likes')
         .insert({
-          user_id: user.id,
+          user_id: userId,
           post_id: postId
         });
 
@@ -278,13 +293,18 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
 
   // Unlike post
   const unlikePost = async (postId: string): Promise<boolean> => {
-    if (!user) return false;
+    let userId = user?.id;
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (!sessionUser) return false;
+      userId = sessionUser.id;
+    }
 
     try {
       const { error } = await supabase
         .from('influencer_post_likes')
         .delete()
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .eq('post_id', postId);
 
       if (error) throw error;
@@ -352,6 +372,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
         .from('products')
         .select(`
           *,
+          category:categories(name),
           product_variants (
             price,
             image_urls

@@ -66,7 +66,7 @@ export function Provider(props: { children: React.ReactNode }) {
       async (event, session) => {
         console.log('Auth state change:', event, session?.user?.id);
 
-        if (event === 'SIGNED_IN' && session?.user) {
+        if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') && session?.user) {
           // Fetch user profile data
           const { data: userData, error } = await supabase
             .from('users')

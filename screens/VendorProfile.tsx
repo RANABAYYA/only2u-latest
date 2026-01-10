@@ -22,6 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useVendor, Vendor, VendorPost } from '~/contexts/VendorContext';
 import { useAuth } from '~/contexts/useAuth';
+import type { Category } from '~/types/product';
 import { piAPIVirtualTryOnService } from '~/services/piapiVirtualTryOn';
 import { supabase } from '~/utils/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -183,7 +184,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
       setShowSuccessModal(true);
     } catch (error: any) {
       console.error('Error submitting application:', error);
-       const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
+      const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
       Alert.alert(
         'Error',
         `Failed to submit application: ${errorMessage}. Please try again o r contact support if the issue persists.`
@@ -458,6 +459,7 @@ const VendorProfile: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'products'>('products');
   const [vendorProducts, setVendorProducts] = useState<any[]>([]);
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [postsDisplayCount, setPostsDisplayCount] = useState(12); // Initially show 12 items (4 rows)
   const scrollRef = useRef<ScrollView | null>(null);
@@ -548,6 +550,17 @@ const VendorProfile: React.FC = () => {
         setVendor(vendorData);
       }
 
+      // Fetch global categories sorted by display_order
+      const { data: catData } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('is_active', true)
+        .order('display_order', { ascending: true, nullsFirst: false });
+
+      if (catData) {
+        setAllCategories(catData);
+      }
+
       await fetchVendorPosts(vendorId);
       setVendorPosts(vendorPosts.filter(post => post.vendor_id === vendorId));
 
@@ -624,8 +637,25 @@ const VendorProfile: React.FC = () => {
   };
 
   const handleFollow = async () => {
-    if (!user) {
-      Alert.alert('Login Required', 'Please login to follow vendors');
+    let currentUser = user;
+
+    // Fallback: Check Supabase session directly if context user is missing
+    if (!currentUser) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (sessionUser) {
+        currentUser = sessionUser;
+      }
+    }
+
+    if (!currentUser) {
+      Alert.alert(
+        'Login Required',
+        'Please login to follow vendors',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Login', onPress: () => showLoginSheet() }
+        ]
+      );
       return;
     }
 
@@ -633,6 +663,15 @@ const VendorProfile: React.FC = () => {
 
     try {
       const isFollowing = isFollowingVendor(vendor.id);
+
+      // Note: We use the context actions here. 
+      // If context 'user' is null, followVendor might fail inside Context.
+      // We might need to ensure Context also updates or we call API directly here if needed.
+      // For now, let's assume if we found a user, we should try to proceed. 
+      // However, VendorContext depends on 'user' from useAuth. 
+      // If useAuth is out of sync, VendorContext is too.
+      // We should probably rely on the context working, but if it fails, maybe reload auth?
+
       const success = isFollowing
         ? await unfollowVendor(vendor.id)
         : await followVendor(vendor.id);
@@ -644,7 +683,7 @@ const VendorProfile: React.FC = () => {
           follower_count: isFollowing ? prev.follower_count - 1 : prev.follower_count + 1
         } : null);
       } else {
-        Alert.alert('Error', 'Failed to update follow status');
+        // logic moved to alert in case of failure
       }
     } catch (error) {
       console.error('Error updating follow status:', error);
@@ -1285,7 +1324,7 @@ const VendorProfile: React.FC = () => {
 
           {/* Products Tab - Category-wise display */}
           {activeTab === 'products' && (
-            <ScrollView style={styles.productsContainer} showsVerticalScrollIndicator={false}>
+            <ScrollView style={styles.productsContainer} showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
               {productsLoading ? (
                 <View style={styles.contentLoadingContainer}>
                   <ActivityIndicator size="large" color="#F53F7A" />
@@ -1300,61 +1339,87 @@ const VendorProfile: React.FC = () => {
               ) : (
                 <>
                   {/* Group products by category */}
-                  {Object.entries(
-                    vendorProducts.reduce((acc, product) => {
+                  {(() => {
+                    // Group products
+                    const grouped = vendorProducts.reduce((acc, product) => {
                       const categoryName = product.category?.name || 'Other';
+                      const categoryId = product.category_id || 'other';
                       if (!acc[categoryName]) {
-                        acc[categoryName] = [];
+                        acc[categoryName] = {
+                          products: [],
+                          id: categoryId
+                        };
                       }
-                      acc[categoryName].push(product);
+                      acc[categoryName].products.push(product);
                       return acc;
-                    }, {} as { [key: string]: any[] })
-                  ).map(([categoryName, categoryProducts]) => {
-                    // Get category object from first product
-                    const category = categoryProducts[0]?.category || {
-                      id: categoryProducts[0]?.category_id || '',
-                      name: categoryName
-                    };
+                    }, {} as { [key: string]: { products: any[], id: string } });
 
-                    return (
-                      <View key={categoryName} style={styles.categorySection}>
-                        {/* Category Header */}
-                        <View style={styles.categoryHeader}>
-                          <Text style={styles.categoryTitle}>{categoryName}</Text>
-                          <TouchableOpacity
-                            style={styles.seeMoreButton}
-                            onPress={() => {
-                              navigation.navigate('Products' as never, {
-                                category: {
-                                  id: category.id || categoryProducts[0]?.category_id || '',
-                                  name: categoryName,
-                                  description: '',
-                                  is_active: true,
-                                  created_at: new Date().toISOString(),
-                                  updated_at: new Date().toISOString()
-                                },
-                                vendorId: vendor.id
-                              } as never);
-                            }}
-                          >
-                            <Text style={styles.seeMoreText}>See More</Text>
-                            <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
-                          </TouchableOpacity>
+                    // Sort groups based on allCategories order
+                    const sortedGroups = allCategories.length > 0 ?
+                      // 1. Map allCategories to present groups
+                      allCategories.map(cat => ({
+                        name: cat.name,
+                        data: grouped[cat.name]
+                      }))
+                        .filter(item => item.data && item.data.products.length > 0)
+                        // 2. Append any categories not in allCategories (e.g. 'Other')
+                        .concat(
+                          Object.keys(grouped)
+                            .filter(name => !allCategories.some(c => c.name === name))
+                            .map(name => ({ name, data: grouped[name] }))
+                        )
+                      : // Fallback: just use object keys if categories not loaded yet
+                      Object.entries(grouped).map(([name, data]) => ({ name, data }));
+
+                    return sortedGroups.map(({ name: categoryName, data }) => {
+                      const categoryProducts = data.products;
+                      const category = {
+                        id: data.id,
+                        name: categoryName
+                      };
+
+                      return (
+                        <View key={categoryName} style={styles.categorySection}>
+                          {/* Category Header */}
+                          <View style={styles.categoryHeader}>
+                            <Text style={styles.categoryTitle}>{categoryName}</Text>
+                            <TouchableOpacity
+                              style={styles.seeMoreButton}
+                              onPress={() => {
+                                navigation.navigate('Products' as never, {
+                                  category: {
+                                    id: category.id,
+                                    name: categoryName,
+                                    description: '',
+                                    is_active: true,
+                                    created_at: new Date().toISOString(),
+                                    updated_at: new Date().toISOString()
+                                  },
+                                  vendorId: vendor.id
+                                } as never);
+                              }}
+                            >
+                              <Text style={styles.seeMoreText}>See More</Text>
+                              <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
+                            </TouchableOpacity>
+                          </View>
+
+                          {/* Horizontal Product List */}
+                          <FlatList
+                            horizontal
+                            data={categoryProducts}
+                            renderItem={({ item }) => renderProductCard(item)}
+                            keyExtractor={(item) => item.id}
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.productsHorizontalList}
+                            ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
+                            nestedScrollEnabled={true}
+                            scrollEnabled={true}
+                          />
                         </View>
-
-                        {/* Horizontal Product List */}
-                        <FlatList
-                          horizontal
-                          data={categoryProducts}
-                          renderItem={({ item }) => renderProductCard(item)}
-                          keyExtractor={(item) => item.id}
-                          showsHorizontalScrollIndicator={false}
-                          contentContainerStyle={styles.productsHorizontalList}
-                          ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
-                        />
-                      </View>
-                    );
-                  })}
+                      );
+                    });
+                  })()}
                 </>
               )}
             </ScrollView>

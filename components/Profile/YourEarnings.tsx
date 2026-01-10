@@ -29,8 +29,10 @@ interface ResellerOrderRecord {
   order_number: string;
   created_at: string;
   total_amount: number;
-  reseller_commission: number;
-  platform_commission: number;
+  reseller_margin_percentage?: number;
+  reseller_margin_amount?: number;
+  original_total?: number;
+  reseller_profit?: number;
   payment_status: string;
   status?: string | null;
   estimated_delivery_date?: string | null;
@@ -41,7 +43,7 @@ interface ResellerOrderRecord {
     quantity: number;
     unit_price?: number;
     total_price?: number;
-    reseller_price?: number;
+    // reseller_price is not available in normal order_items
   }>;
 }
 
@@ -283,8 +285,8 @@ export default function ResellerEarnings() {
       entry.status === 'paid'
         ? 'Payout Completed'
         : entry.status === 'pending'
-        ? 'Payout Pending'
-        : 'Payout Details';
+          ? 'Payout Pending'
+          : 'Payout Details';
 
     const infoLines = [
       `Amount: ${formatCurrency(entry.amount || 0)}`,
@@ -337,14 +339,27 @@ export default function ResellerEarnings() {
   const fetchEarningsData = async () => {
     try {
       setLoading(true);
-      
+
       if (!userData?.id) {
         setLoading(false);
         return;
       }
 
-      const resellerProfile = await ResellerService.getResellerByUserId(userData.id);
+      console.log('[YourEarnings] Fetching earnings for user:', userData.id);
+
+      // IMPORTANT: Use ensureResellerForUser to auto-create profile if missing
+      // This prevents the screen from being blank if they've never registered but placed correct orders
+      let resellerProfile: Reseller | null = null;
+      try {
+        resellerProfile = await ResellerService.ensureResellerForUser(userData.id);
+      } catch (e) {
+        console.error('[YourEarnings] Failed to ensure reseller profile:', e);
+        // Fallback: try simple get
+        resellerProfile = await ResellerService.getResellerByUserId(userData.id);
+      }
+
       if (!resellerProfile) {
+        console.log('[YourEarnings] No reseller profile found even after ensure');
         setOrders([]);
         setStats({
           totalEarnings: 0,
@@ -360,27 +375,43 @@ export default function ResellerEarnings() {
       loadPayoutHistory(resellerProfile.id);
 
       let query = supabase
-        .from('reseller_orders')
+        .from('orders')
         .select(`
           id,
           order_number,
           created_at,
           total_amount,
-          reseller_commission,
-          platform_commission,
+          reseller_margin_percentage,
+          reseller_margin_amount,
+          reseller_profit,
+          original_total,
           payment_status,
           status,
-          items:reseller_order_items(
+          items:order_items(
             product_id,
-            variant_id,
             quantity,
             unit_price,
-            total_price,
-            reseller_price
+            total_price
           )
         `)
-        .eq('reseller_id', resellerProfile.id)
+        .eq('user_id', userData.id)
+        .eq('is_reseller_order', true)
         .order('created_at', { ascending: false });
+
+      // DEBUG: Fetch ALL orders count to compare
+      const { count: allOrdersCount, error: countError } = await supabase
+        .from('orders')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userData.id);
+
+      console.log('[YourEarnings] Total orders (any type):', allOrdersCount);
+      if (countError) console.error('[YourEarnings] Count error:', countError);
+
+      // Store debug info in state (hack for easy viewing)
+      setOrders(prev => {
+        (prev as any)._debug_total = allOrdersCount;
+        return prev;
+      });
 
       const { data, error } = await query;
       if (error) {
@@ -388,51 +419,27 @@ export default function ResellerEarnings() {
       }
 
       const rawOrders: ResellerOrderRecord[] = (data as ResellerOrderRecord[] | null) ?? [];
+      console.log('[YourEarnings] Fetched orders count:', rawOrders.length);
+      if (error) console.error('[YourEarnings] Query error:', error);
 
-      // Add mock reseller order for sample/demo purposes
-      const mockResellerOrder: EnrichedOrder = {
-        id: '00000000-0000-0000-0000-000000000010',
-        order_number: 'RSL789012',
-        created_at: new Date('2025-11-10').toISOString(),
-        total_amount: 5998,
-        original_total: 4998,
-        reseller_margin_amount: 1000,
-        reseller_profit: 1000,
-        payment_status: 'paid',
-        status: 'delivered',
-        estimated_delivery_date: new Date('2025-11-15').toISOString(),
-        expected_completion_date: new Date('2025-11-20').toISOString(),
-        order_items: [
-          {
-            id: '00000000-0000-0000-0000-000000000011',
-            product_id: '00000000-0000-0000-0000-000000000012',
-            quantity: 1,
-            unit_price: 2499,
-            total_price: 2499,
-            reseller_price: 1999,
-          },
-          {
-            id: '00000000-0000-0000-0000-000000000013',
-            product_id: '00000000-0000-0000-0000-000000000014',
-            quantity: 1,
-            unit_price: 3499,
-            total_price: 3499,
-            reseller_price: 2999,
-          },
-        ],
-      };
+      // Removed formatted mock order to show only real data
 
       const mapOrder = (order: ResellerOrderRecord): EnrichedOrder => {
-        const originalTotal = (order.items || []).reduce((sum, item) => sum + Number(item.total_price || 0), 0);
-        const marginAmount = Number(order.reseller_commission || 0);
+        // Calculation fallback if original_total is missing
+        const computedOriginalTotal = (order.items || []).reduce((sum, item) => sum + Number(item.total_price || 0), 0);
+
+        // Prefer database fields, fallback to computation if needed
+        const finalOriginalTotal = order.original_total || computedOriginalTotal;
+        const profit = order.reseller_profit || order.reseller_margin_amount || 0;
+
         return {
           id: order.id,
           order_number: order.order_number,
           created_at: order.created_at,
           total_amount: Number(order.total_amount || 0),
-          original_total: originalTotal,
-          reseller_margin_amount: marginAmount,
-          reseller_profit: marginAmount,
+          original_total: finalOriginalTotal,
+          reseller_margin_amount: profit,
+          reseller_profit: profit,
           payment_status: order.payment_status,
           status: order.status,
           estimated_delivery_date: (order as any).estimated_delivery_date || null,
@@ -441,7 +448,7 @@ export default function ResellerEarnings() {
         };
       };
 
-      const allEnrichedOrders = [mockResellerOrder, ...rawOrders.map(mapOrder)];
+      const allEnrichedOrders = rawOrders.map(mapOrder);
 
       const filteredOrders = selectedFilter === 'all'
         ? allEnrichedOrders
@@ -543,16 +550,16 @@ export default function ResellerEarnings() {
           navigation.navigate('OrderDetails', { orderId: item.id });
         }}
       >
-      <View style={styles.orderHeader}>
+        <View style={styles.orderHeader}>
           <View style={styles.orderHeaderLeft}>
-          <Text style={styles.orderNumber}>#{item.order_number}</Text>
+            <Text style={styles.orderNumber}>#{item.order_number}</Text>
           </View>
           <View style={[styles.orderStatusPill, { backgroundColor: statusTheme.bg }]}>
             <Ionicons name={statusTheme.icon as any} size={14} color={statusTheme.color} />
             <Text style={[styles.orderStatusText, { color: statusTheme.color }]}>
               {statusTheme.label}
-          </Text>
-        </View>
+            </Text>
+          </View>
         </View>
 
         <View style={styles.orderMetaRow}>
@@ -581,63 +588,63 @@ export default function ResellerEarnings() {
               </View>
             </TouchableOpacity>
           ))}
-      </View>
+        </View>
 
-      <View style={styles.divider} />
+        <View style={styles.divider} />
 
-      <View style={styles.orderDetails}>
-        <View style={styles.detailRow}>
+        <View style={styles.orderDetails}>
+          <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Original Price</Text>
             <Text style={styles.detailValue}>{formatCurrency(item.original_total || 0)}</Text>
-        </View>
-        <View style={styles.detailRow}>
+          </View>
+          <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Selling Price</Text>
             <Text style={styles.detailValueBold}>{formatCurrency(item.total_amount || 0)}</Text>
-        </View>
-      </View>
-
-      {/* Delivery Dates for Pending Orders */}
-      {item.payment_status === 'pending' && (item.estimated_delivery_date || item.expected_completion_date) && (
-        <>
-          <View style={styles.divider} />
-          <View style={styles.deliveryInfoContainer}>
-            {item.estimated_delivery_date && (
-              <View style={styles.deliveryRow}>
-                <Ionicons name="location-outline" size={18} color="#F59E0B" />
-                <View style={styles.deliveryTextContainer}>
-                  <Text style={styles.deliveryLabel}>Estimated Delivery</Text>
-                  <Text style={styles.deliveryDate}>
-                    {new Date(item.estimated_delivery_date).toLocaleDateString('en-US', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </Text>
-                </View>
-              </View>
-            )}
-            {item.expected_completion_date && (
-              <View style={styles.deliveryRow}>
-                <Ionicons name="checkmark-circle-outline" size={18} color="#10B981" />
-                <View style={styles.deliveryTextContainer}>
-                  <Text style={styles.deliveryLabel}>Expected Completion</Text>
-                  <Text style={styles.deliveryDate}>
-                    {new Date(item.expected_completion_date).toLocaleDateString('en-US', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </Text>
-                </View>
-              </View>
-            )}
           </View>
-        </>
-      )}
+        </View>
 
-      <View style={styles.divider} />
-    </TouchableOpacity>
-  );
+        {/* Delivery Dates for Pending Orders */}
+        {item.payment_status === 'pending' && (item.estimated_delivery_date || item.expected_completion_date) && (
+          <>
+            <View style={styles.divider} />
+            <View style={styles.deliveryInfoContainer}>
+              {item.estimated_delivery_date && (
+                <View style={styles.deliveryRow}>
+                  <Ionicons name="location-outline" size={18} color="#F59E0B" />
+                  <View style={styles.deliveryTextContainer}>
+                    <Text style={styles.deliveryLabel}>Estimated Delivery</Text>
+                    <Text style={styles.deliveryDate}>
+                      {new Date(item.estimated_delivery_date).toLocaleDateString('en-US', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </Text>
+                  </View>
+                </View>
+              )}
+              {item.expected_completion_date && (
+                <View style={styles.deliveryRow}>
+                  <Ionicons name="checkmark-circle-outline" size={18} color="#10B981" />
+                  <View style={styles.deliveryTextContainer}>
+                    <Text style={styles.deliveryLabel}>Expected Completion</Text>
+                    <Text style={styles.deliveryDate}>
+                      {new Date(item.expected_completion_date).toLocaleDateString('en-US', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </View>
+          </>
+        )}
+
+        <View style={styles.divider} />
+      </TouchableOpacity>
+    );
   };
 
   const renderListHeader = () => (
@@ -773,6 +780,15 @@ export default function ResellerEarnings() {
         <View style={styles.headerRight} />
       </View>
 
+      {/* DEBUG INFO */}
+      <View style={{ padding: 10, backgroundColor: '#eee', alignItems: 'center' }}>
+        <Text style={{ fontSize: 10, color: '#666' }}>
+          UserID: {userData?.id?.substring(0, 8)}... |
+          Total Orders: {(orders as any)._debug_total ?? '?'} |
+          Reseller Orders: {orders.length}
+        </Text>
+      </View>
+
       {/* Orders List */}
       <FlatList
         data={orders}
@@ -853,20 +869,20 @@ export default function ResellerEarnings() {
                       ? `${formatCurrency(tier.min).replace('.00', '')}+`
                       : `${formatCurrency(tier.min).replace('.00', '')} – ${formatCurrency(tier.max).replace('.00', '')}`;
 
-                const sampleVolume = Math.max(2500, Math.min(tier.max === Infinity ? tier.min + 5000 : tier.max, 10000));
-                const tierTheme = tier;
-                const unlocked = monthlySales >= tier.min;
-                const unlockNeed = Math.max(0, tier.min - monthlySales);
-                return (
+                  const sampleVolume = Math.max(2500, Math.min(tier.max === Infinity ? tier.min + 5000 : tier.max, 10000));
+                  const tierTheme = tier;
+                  const unlocked = monthlySales >= tier.min;
+                  const unlockNeed = Math.max(0, tier.min - monthlySales);
+                  return (
                     <View
                       key={tier.name}
                       style={[
                         styles.tierTimelineCard,
-                      {
-                        borderColor: isCurrent ? tierTheme.accent : tierTheme.badgeBg,
-                        backgroundColor: isCurrent ? tierTheme.bg : '#fff',
-                      },
-                      isNext && { borderColor: tierTheme.accent },
+                        {
+                          borderColor: isCurrent ? tierTheme.accent : tierTheme.badgeBg,
+                          backgroundColor: isCurrent ? tierTheme.bg : '#fff',
+                        },
+                        isNext && { borderColor: tierTheme.accent },
                       ]}
                     >
                       <View style={styles.tierTimelineHeader}>

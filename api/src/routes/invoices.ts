@@ -91,6 +91,48 @@ router.get('/', async (req, res, next) => {
       values
     );
 
+    // Fetch invoice lines for each invoice
+    const invoicesWithLines = await Promise.all(
+      rows.map(async (invoice) => {
+        // Fetch invoice items with product details
+        const itemsResult = await pool.query(
+          `SELECT 
+            ii.*,
+            p.sku as product_code,
+            p.name as product_name
+          FROM invoice_items ii
+          LEFT JOIN products p ON ii.product_id = p.id
+          WHERE ii.invoice_id = $1`,
+          [invoice.id]
+        );
+
+        // Transform invoice_items to invoice_lines format
+        const invoice_lines = itemsResult.rows.map((item: any) => ({
+          product_code: item.product_code || item.product_id,
+          product_name: item.product_name || item.description || 'Unknown Product',
+          quantity: item.quantity,
+          unit_price: parseFloat(item.unit_price) || 0,
+          discount: parseFloat(item.discount_amount) || 0,
+          tax: parseFloat(item.tax_amount) || 0,
+          subtotal: parseFloat(item.line_total) || (item.unit_price * item.quantity - (item.discount_amount || 0) + (item.tax_amount || 0)),
+        }));
+
+        // Get partner_id from customer_id (assuming partner_id is the customer_id)
+        // If partner_id is stored elsewhere, adjust this query
+        const partnerIdResult = await pool.query(
+          `SELECT id FROM customers WHERE id = $1`,
+          [invoice.customer_id]
+        );
+        const partner_id = partnerIdResult.rows[0]?.id || invoice.customer_id;
+
+        return {
+          ...invoice,
+          partner_id: partner_id,
+          invoice_lines: invoice_lines,
+        };
+      })
+    );
+
     const countValues = values.slice(0, -2);
     const countResult = await pool.query(`SELECT COUNT(*) FROM invoices ${where}`, countValues);
     const total = parseInt(countResult.rows[0].count);
@@ -98,7 +140,7 @@ router.get('/', async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        invoices: rows,
+        invoices: invoicesWithLines,
         pagination: {
           page: Number(page),
           limit: Number(limit),
@@ -175,13 +217,46 @@ router.get('/:id', async (req, res, next) => {
       });
     }
 
-    const itemsResult = await pool.query('SELECT * FROM invoice_items WHERE invoice_id = $1', [req.params.id]);
+    const invoice = invoiceResult.rows[0];
+
+    // Fetch invoice items with product details
+    const itemsResult = await pool.query(
+      `SELECT 
+        ii.*,
+        p.sku as product_code,
+        p.name as product_name
+      FROM invoice_items ii
+      LEFT JOIN products p ON ii.product_id = p.id
+      WHERE ii.invoice_id = $1`,
+      [req.params.id]
+    );
+
+    // Transform invoice_items to invoice_lines format
+    const invoice_lines = itemsResult.rows.map((item: any) => ({
+      product_code: item.product_code || item.product_id,
+      product_name: item.product_name || item.description || 'Unknown Product',
+      quantity: item.quantity,
+      unit_price: parseFloat(item.unit_price) || 0,
+      discount: parseFloat(item.discount_amount) || 0,
+      tax: parseFloat(item.tax_amount) || 0,
+      subtotal: parseFloat(item.line_total) || (item.unit_price * item.quantity - (item.discount_amount || 0) + (item.tax_amount || 0)),
+    }));
+
+    // Get partner_id from customer_id (assuming partner_id is the customer_id)
+    const partnerIdResult = await pool.query(
+      `SELECT id FROM customers WHERE id = $1`,
+      [invoice.customer_id]
+    );
+    const partner_id = partnerIdResult.rows[0]?.id || invoice.customer_id;
 
     res.json({
       success: true,
       data: {
-        invoice: invoiceResult.rows[0],
-        items: itemsResult.rows,
+        invoice: {
+          ...invoice,
+          partner_id: partner_id,
+          invoice_lines: invoice_lines,
+        },
       },
       error: null,
     });

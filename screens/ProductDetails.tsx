@@ -621,10 +621,17 @@ const ProductDetails = () => {
             setVariants(variantsData);
             console.log('✅ Set variants from fetched product:', variantsData.length);
 
-            // Set default variant (prioritize M size, then first variant with images)
+            // Set default variant (prioritize smallest/lowest size with images)
             if (variantsData.length > 0 && !selectedVariant) {
-              const mVariant = variantsData.find((v) => v.size?.name?.trim().toUpperCase() === 'M' && v.image_urls && v.image_urls.length > 0);
-              const defaultVariant = mVariant || variantsData.find((v) => v.image_urls && v.image_urls.length > 0) || variantsData[0];
+              const sizePriorityOrder = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'Free Size'];
+              const getVariantSizePriority = (v: any) => {
+                const sizeName = v.size?.name?.trim().toUpperCase() || '';
+                const idx = sizePriorityOrder.findIndex(s => s.toUpperCase() === sizeName);
+                return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+              };
+              // Sort variants by size priority (smallest first) and pick the first one with images
+              const sortedVariants = [...variantsData].sort((a, b) => getVariantSizePriority(a) - getVariantSizePriority(b));
+              const defaultVariant = sortedVariants.find((v) => v.image_urls && v.image_urls.length > 0) || sortedVariants[0];
               setSelectedVariant(defaultVariant);
               console.log('✅ Set default variant from fetched product:', defaultVariant.id, 'Size:', defaultVariant.size?.name);
             }
@@ -1197,10 +1204,17 @@ const ProductDetails = () => {
       }
       // Otherwise Size selection is required - no auto-selection
 
-      // Set default variant if no variant is selected (prioritize M size, then first variant with images)
+      // Set default variant if no variant is selected (prioritize smallest/lowest size with images)
       if (variantsData.length > 0 && !selectedVariant) {
-        const mVariant = variantsData.find((v) => v.size?.name?.trim().toUpperCase() === 'M' && v.image_urls && v.image_urls.length > 0);
-        const defaultVariant = mVariant || variantsData.find((v) => v.image_urls && v.image_urls.length > 0) || variantsData[0];
+        const sizePriorityOrder = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'Free Size'];
+        const getVariantSizePriority = (v: any) => {
+          const sizeName = v.size?.name?.trim().toUpperCase() || '';
+          const idx = sizePriorityOrder.findIndex(s => s.toUpperCase() === sizeName);
+          return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+        };
+        // Sort variants by size priority (smallest first) and pick the first one with images
+        const sortedVariants = [...variantsData].sort((a, b) => getVariantSizePriority(a) - getVariantSizePriority(b));
+        const defaultVariant = sortedVariants.find((v) => v.image_urls && v.image_urls.length > 0) || sortedVariants[0];
         setSelectedVariant(defaultVariant);
         console.log('✅ Set default variant:', defaultVariant.id, 'Size:', defaultVariant.size?.name);
       }
@@ -1526,7 +1540,7 @@ const ProductDetails = () => {
     ]).start();
   };
 
-  const handleAddToCart = async () => {
+  const handleAddToCart = async (overrideOptions?: { isReseller?: boolean; price?: number; margin?: number }) => {
     // Check size first
     if (!selectedSize) {
       triggerJitterAnimation(sizeSectionJitter);
@@ -1598,7 +1612,8 @@ const ProductDetails = () => {
       stock: selectedVariant.quantity,
       category: productData.category,
       sku: productData.sku || productData.id,
-      isReseller: false,
+      isReseller: overrideOptions?.isReseller ?? false,
+      resellerPrice: overrideOptions?.price, // Pass custom reseller price if available
     });
 
     setAddToCartLoading(false);
@@ -1614,6 +1629,101 @@ const ProductDetails = () => {
       position: 'top',
       visibilityTime: 2000,
     });
+  };
+
+  const handleComboOfferAddToCart = async () => {
+    if (!productData || availableSizes.length === 0) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Product or sizes not available',
+        position: 'top',
+      });
+      return;
+    }
+
+    setAddToCartLoading(true);
+    setShowMarginModal(false);
+
+    try {
+      // Get product images
+      const productImage = productData.image_urls?.[0] || productData.image || '';
+      const productImages = productData.image_urls || (productData.image ? [productData.image] : []);
+
+      // Get selected color if available
+      const selectedColorData = availableColors.find((c) => c.id === selectedColor);
+
+      // Add each size variant to cart
+      for (const size of availableSizes) {
+        // Find variant for this size (prefer selected color, otherwise first available)
+        let variantForSize = variants.find(
+          (v) => v.size_id === size.id && (selectedColor ? v.color_id === selectedColor : true)
+        );
+
+        // If no variant found with selected color, try any variant with this size
+        if (!variantForSize) {
+          variantForSize = variants.find((v) => v.size_id === size.id);
+        }
+
+        if (!variantForSize) {
+          console.warn(`No variant found for size ${size.name}`);
+          continue;
+        }
+
+        // Get base price for this variant (use RSP if available, otherwise regular price)
+        const basePrice = variantForSize.rsp_price || variantForSize.price || productData.price;
+
+        // Calculate discounted price per item (15% discount)
+        const discountedPricePerItem = Math.round(basePrice * 0.85);
+
+        // Use variant image if available, otherwise product image
+        const variantImage = variantForSize?.image_urls?.[0] || productImage;
+        const variantImages = variantForSize?.image_urls || [];
+        const mergedImages = [...new Set([...variantImages, ...productImages])];
+
+        // Add to cart with discounted price
+        addToCart({
+          productId: productData.id,
+          variantId: variantForSize.id,
+          name: productData.name,
+          price: discountedPricePerItem, // Apply 15% discount
+          image: variantImage || productImage,
+          image_urls: mergedImages.length > 0 ? mergedImages : (productImage ? [productImage] : []),
+          size: size.name,
+          color: variantForSize.color?.name || selectedColorData?.name || 'N/A',
+          quantity: 1,
+          stock: variantForSize.quantity,
+          category: productData.category,
+          sku: variantForSize.sku || productData.sku || productData.id,
+          isReseller: true,
+          resellerPrice: discountedPricePerItem, // Set reseller price for combo offer
+        });
+      }
+
+      // Show success toast
+      Toast.show({
+        type: 'success',
+        text1: 'Combo Offer Added! 🎉',
+        text2: `${availableSizes.length} sizes added to cart with 15% discount`,
+        position: 'top',
+        visibilityTime: 3000,
+      });
+
+      // Navigate to cart screen
+      setTimeout(() => {
+        (navigation as any).navigate('Cart');
+      }, 500);
+    } catch (error) {
+      console.error('Error adding combo offer to cart:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to add combo offer to cart',
+        position: 'top',
+      });
+    } finally {
+      setAddToCartLoading(false);
+    }
   };
 
   const fetchUserCoinBalance = async () => {
@@ -4974,67 +5084,6 @@ const ProductDetails = () => {
                 <Text style={styles.customPriceHelp}>Leave empty to use selected margin</Text>
               </View>
 
-              {/* Full Set Option - 15% discount on RSP */}
-              {availableSizes && availableSizes.length > 1 && (
-                <View style={{
-                  marginTop: 16,
-                  padding: 16,
-                  backgroundColor: '#FEF3C7',
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: '#F59E0B',
-                }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                    <Ionicons name="gift" size={20} color="#D97706" />
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#92400E', marginLeft: 8 }}>
-                      Combo Offer
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: 14, color: '#78350F', marginBottom: 8 }}>
-                    Buy all available sizes ({availableSizes.length} sizes: {availableSizes.map(s => s.name).join(', ')}) at 15% discount!
-                  </Text>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <View>
-                      <Text style={{ fontSize: 12, color: '#92400E' }}>Full Set Price:</Text>
-                      <Text style={{ fontSize: 18, fontWeight: '700', color: '#D97706' }}>
-                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length * 0.85)}
-                      </Text>
-                      <Text style={{ fontSize: 11, color: '#78350F', textDecorationLine: 'line-through' }}>
-                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length)}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={{
-                        backgroundColor: '#D97706',
-                        paddingHorizontal: 16,
-                        paddingVertical: 10,
-                        borderRadius: 8,
-                      }}
-                      onPress={() => {
-                        setShowMarginModal(false);
-                        // Navigate to catalog share with full set info
-                        const fullSetPrice = Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length * 0.85);
-                        (navigation as any).navigate('CatalogShare', {
-                          product: {
-                            ...productData,
-                            variants: variants,
-                            product_variants: variants,
-                            availableSizes: availableSizes,
-                            isFullSet: true,
-                            fullSetPrice: fullSetPrice,
-                            resellPrice: fullSetPrice,
-                            margin: 0,
-                            basePrice: (selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length
-                          }
-                        });
-                      }}
-                    >
-                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Select Full Set</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
               <View style={styles.marginSummary}>
                 <Text style={styles.marginSummaryTitle}>Profit Summary</Text>
                 {(() => {
@@ -5102,6 +5151,79 @@ const ProductDetails = () => {
                 }}>
                 <Text style={styles.marginContinueText}>Continue to Share</Text>
               </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.marginContinueBtn, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#F53F7A', marginTop: 12 }]}
+                onPress={() => {
+                  const effectivePrice = (() => {
+                    const base = selectedVariant?.price || productData.price;
+                    const num = Number(customPrice);
+                    if (!!customPrice && !isNaN(num) && num >= base) return Math.round(num);
+                    return Math.round(base * (1 + selectedMargin / 100));
+                  })();
+
+                  handleAddToCart({
+                    isReseller: true,
+                    price: effectivePrice,
+                    margin: selectedMargin
+                  });
+                  setShowMarginModal(false);
+                }}>
+                <Text style={[styles.marginContinueText, { color: '#F53F7A' }]}>Add to Cart (Resell)</Text>
+              </TouchableOpacity>
+
+              {/* Full Set Option - 15% discount on RSP */}
+              {availableSizes && availableSizes.length > 1 && (
+                <View style={{
+                  marginTop: 16,
+                  padding: 16,
+                  backgroundColor: '#FFF0F5',
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#F53F7A',
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="gift" size={20} color="#F53F7A" />
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#B91C4B', marginLeft: 8 }}>
+                      Wholesale Combo Offer
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 13, color: '#BE185D', marginBottom: 6 }}>
+                    Buy all available sizes ({availableSizes.length} sizes: {availableSizes.map(s => s.name).join(', ')})
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, backgroundColor: 'rgba(245, 63, 122, 0.1)', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, alignSelf: 'flex-start' }}>
+                    <Ionicons name="pricetag" size={14} color="#F53F7A" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#F53F7A', marginLeft: 6 }}>
+                      Get flat 15% EXTRA Discount
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View>
+                      <Text style={{ fontSize: 12, color: '#B91C4B' }}>Full Set Price:</Text>
+                      <Text style={{ fontSize: 18, fontWeight: '700', color: '#F53F7A' }}>
+                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length * 0.85)}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#BE185D', textDecorationLine: 'line-through' }}>
+                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#F53F7A',
+                        paddingHorizontal: 16,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                      }}
+                      onPress={handleComboOfferAddToCart}
+                      disabled={addToCartLoading}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
+                        {addToCartLoading ? 'Adding...' : 'Add 1 Set to Cart'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </ScrollView>
           </View>
         </View>

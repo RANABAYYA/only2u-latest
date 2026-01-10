@@ -9,15 +9,12 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useUser } from '~/contexts/UserContext';
-import { useLoginSheet } from '~/contexts/LoginSheetContext';
-import { supabase } from '~/utils/supabase';
 import Toast from 'react-native-toast-message';
+import { aiSupportService } from '~/services/aiSupportService';
 
 type RootStackParamList = {
   TermsAndConditions: undefined;
@@ -29,238 +26,190 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 interface SupportMessage {
   id: string;
-  ticket_id: string;
-  sender_id: string;
   sender_type: 'user' | 'admin';
   message: string;
-  is_read: boolean;
   created_at: string;
-}
-
-interface SupportTicket {
-  id: string;
-  user_id: string;
-  subject: string;
-  status: 'open' | 'in_progress' | 'resolved' | 'closed';
-  created_at: string;
-  updated_at: string;
 }
 
 const HelpCenter = () => {
   const navigation = useNavigation<NavigationProp>();
-  const { userData } = useUser();
-  const { showLoginSheet } = useLoginSheet();
+
   const [activeTab, setActiveTab] = useState('chat');
   const [message, setMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [messages, setMessages] = useState<SupportMessage[]>([]);
-  const [ticket, setTicket] = useState<SupportTicket | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState<SupportMessage[]>([
+    {
+      id: 'welcome-1',
+      sender_type: 'admin',
+      message: "Hello! Welcome to Only2U Support. How can I help you today?",
+      created_at: new Date().toISOString()
+    },
+    {
+      id: 'welcome-2',
+      sender_type: 'admin',
+      message: "Ask me about your orders, margins, products, or app usage.",
+      created_at: new Date().toISOString()
+    }
+  ]);
   const [sending, setSending] = useState(false);
+  const [aiTyping, setAiTyping] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
-  const messagesSubscriptionRef = useRef<any>(null);
 
   const handleBackPress = () => {
     navigation.goBack();
   };
 
-  // Get or create ticket for user
-  const getOrCreateTicket = async () => {
-    if (!userData?.id) {
-      showLoginSheet();
-      return null;
-    }
-
-    try {
-      setLoading(true);
-      
-      // Call the database function to get or create a ticket
-      const { data, error } = await supabase.rpc('get_or_create_user_ticket', {
-        p_user_id: userData.id,
-      });
-
-      if (error) {
-        console.error('Error getting/creating ticket:', error);
-        // Fallback: try to find existing ticket or create manually
-        const { data: existingTicket } = await supabase
-          .from('support_tickets')
-          .select('*')
-          .eq('user_id', userData.id)
-          .in('status', ['open', 'in_progress'])
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single();
-
-        if (existingTicket) {
-          setTicket(existingTicket);
-          return existingTicket.id;
-        }
-
-        // Create new ticket
-        const { data: newTicket, error: createError } = await supabase
-          .from('support_tickets')
-          .insert({
-            user_id: userData.id,
-            subject: 'Support Request',
-            status: 'open',
-          })
-          .select()
-          .single();
-
-        if (createError) {
-          throw createError;
-        }
-
-        setTicket(newTicket);
-        return newTicket.id;
-      }
-
-      // Fetch the ticket details
-      const { data: ticketData, error: ticketError } = await supabase
-        .from('support_tickets')
-        .select('*')
-        .eq('id', data)
-        .single();
-
-      if (ticketError) {
-        throw ticketError;
-      }
-
-      setTicket(ticketData);
-      return data;
-    } catch (error: any) {
-      console.error('Error in getOrCreateTicket:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to initialize chat. Please try again.',
-      });
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Load messages for a ticket
-  const loadMessages = async (ticketId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('support_messages')
-        .select('*')
-        .eq('ticket_id', ticketId)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-
-      setMessages(data || []);
-      
-      // Scroll to bottom after loading
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    } catch (error: any) {
-      console.error('Error loading messages:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load messages.',
-      });
-    }
-  };
-
-  // Subscribe to real-time message updates
-  const subscribeToMessages = (ticketId: string) => {
-    // Unsubscribe from previous subscription
-    if (messagesSubscriptionRef.current) {
-      supabase.removeChannel(messagesSubscriptionRef.current);
-    }
-
-    const channel = supabase
-      .channel(`support_messages:${ticketId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'support_messages',
-          filter: `ticket_id=eq.${ticketId}`,
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setMessages((prev) => [...prev, payload.new as SupportMessage]);
-            setTimeout(() => {
-              scrollViewRef.current?.scrollToEnd({ animated: true });
-            }, 100);
-          } else if (payload.eventType === 'UPDATE') {
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === payload.new.id ? (payload.new as SupportMessage) : msg
-              )
-            );
-          }
-        }
-      )
-      .subscribe();
-
-    messagesSubscriptionRef.current = channel;
-  };
-
-  // Initialize chat
-  useEffect(() => {
-    if (activeTab === 'chat' && userData?.id) {
-      getOrCreateTicket().then((ticketId) => {
-        if (ticketId) {
-          loadMessages(ticketId);
-          subscribeToMessages(ticketId);
-        }
-      });
-    }
-
-    return () => {
-      if (messagesSubscriptionRef.current) {
-        supabase.removeChannel(messagesSubscriptionRef.current);
-      }
-    };
-  }, [activeTab, userData?.id]);
-
   const handleSendMessage = async () => {
-    if (!message?.trim() || !ticket || !userData?.id) {
-      if (!userData?.id) {
-        showLoginSheet();
-      }
-      return;
-    }
+    if (!message?.trim()) return;
+
+    const userMessageText = message.trim();
+    const newMessage: SupportMessage = {
+      id: Date.now().toString(),
+      sender_type: 'user',
+      message: userMessageText,
+      created_at: new Date().toISOString(),
+    };
+
+    // Update local state immediately
+    setMessages(prev => [...prev, newMessage]);
+    setMessage('');
+
+    // Scroll to bottom
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
 
     try {
       setSending(true);
-      const messageText = message.trim();
+      setAiTyping(true);
 
-      const { error } = await supabase.from('support_messages').insert({
-        ticket_id: ticket.id,
-        sender_id: userData.id,
-        sender_type: 'user',
-        message: messageText,
-        is_read: false,
-      });
+      // Construct history for AI context
+      const history = messages.map(m => ({
+        role: m.sender_type === 'user' ? 'user' : 'model',
+        parts: m.message
+      }));
 
-      if (error) throw error;
+      // Get AI Response
+      const aiResponseText = await aiSupportService.generateResponse(userMessageText, history as any);
 
-      setMessage('');
-      
-      // Scroll to bottom after sending
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    } catch (error: any) {
-      console.error('Error sending message:', error);
+      if (aiResponseText) {
+        const aiMessage: SupportMessage = {
+          id: (Date.now() + 1).toString(),
+          sender_type: 'admin',
+          message: aiResponseText,
+          created_at: new Date().toISOString(),
+        };
+        setMessages(prev => [...prev, aiMessage]);
+        setTimeout(() => {
+          scrollViewRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+      }
+    } catch (error) {
+      console.error('Error generating AI response:', error);
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'Failed to send message. Please try again.',
+        text2: 'Failed to get response. Please try again.',
       });
     } finally {
       setSending(false);
+      setAiTyping(false);
     }
+  };
+
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
+
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  const renderChatSupport = () => {
+    return (
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.chatContainer}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 160 : 0}
+      >
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.chatContent}
+          contentContainerStyle={styles.chatContentContainer}
+          onContentSizeChange={() => {
+            scrollViewRef.current?.scrollToEnd({ animated: true });
+          }}
+        >
+          {messages.map((msg) => {
+            const isUser = msg.sender_type === 'user';
+            return (
+              <View
+                key={msg.id}
+                style={[
+                  styles.messageBubble,
+                  isUser ? styles.userMessage : styles.adminMessage,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.messageText,
+                    isUser ? styles.userMessageText : styles.adminMessageText,
+                  ]}
+                >
+                  {msg.message}
+                </Text>
+                <Text
+                  style={[
+                    styles.messageTime,
+                    isUser ? styles.userMessageTime : styles.adminMessageTime,
+                  ]}
+                >
+                  {formatTime(msg.created_at)}
+                </Text>
+              </View>
+            );
+          })}
+          {aiTyping && (
+            <View style={[styles.messageBubble, styles.adminMessage, { width: 80 }]}>
+              <ActivityIndicator size="small" color="#666" />
+            </View>
+          )}
+        </ScrollView>
+
+        <View style={styles.messageInputContainer}>
+          <TextInput
+            style={styles.messageInput}
+            value={message}
+            onChangeText={setMessage}
+            placeholder="Type your message here..."
+            placeholderTextColor="#999"
+            multiline
+            editable={!sending}
+          />
+          <TouchableOpacity
+            style={[styles.sendButton, (sending || aiTyping) && styles.sendButtonDisabled]}
+            onPress={handleSendMessage}
+            disabled={!message?.trim() || sending || aiTyping}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="send" size={20} color="#fff" />
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    );
   };
 
   const faqs = [
@@ -286,139 +235,6 @@ const HelpCenter = () => {
     faq.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
     faq.answer.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const minutes = Math.floor(diff / 60000);
-
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
-    
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  };
-
-  const renderChatSupport = () => {
-    if (!userData?.id) {
-      return (
-        <View style={styles.chatContainer}>
-          <View style={styles.chatContent}>
-            <View style={styles.loginPrompt}>
-              <Ionicons name="chatbubbles-outline" size={48} color="#F53F7A" />
-              <Text style={styles.loginPromptTitle}>Login Required</Text>
-              <Text style={styles.loginPromptText}>
-                Please login to start a conversation with our support team.
-              </Text>
-              <TouchableOpacity
-                style={styles.loginButton}
-                onPress={showLoginSheet}
-              >
-                <Text style={styles.loginButtonText}>Login</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      );
-    }
-
-    if (loading && messages.length === 0) {
-      return (
-        <View style={styles.chatContainer}>
-          <View style={styles.chatContent}>
-            <ActivityIndicator size="large" color="#F53F7A" />
-            <Text style={styles.loadingText}>Loading chat...</Text>
-          </View>
-        </View>
-      );
-    }
-
-    return (
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.chatContainer}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-      >
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.chatContent}
-          contentContainerStyle={styles.chatContentContainer}
-          onContentSizeChange={() => {
-            scrollViewRef.current?.scrollToEnd({ animated: true });
-          }}
-        >
-          {messages.length === 0 ? (
-            <View style={styles.welcomeContainer}>
-              <Ionicons name="chatbubbles-outline" size={48} color="#F53F7A" />
-              <Text style={styles.welcomeMessage}>Hello! How can I help you today?</Text>
-              <Text style={styles.welcomeSubtext}>
-                Start a conversation and our support team will respond as soon as possible.
-              </Text>
-            </View>
-          ) : (
-            messages.map((msg) => {
-              const isUser = msg.sender_type === 'user';
-              return (
-                <View
-                  key={msg.id}
-                  style={[
-                    styles.messageBubble,
-                    isUser ? styles.userMessage : styles.adminMessage,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.messageText,
-                      isUser ? styles.userMessageText : styles.adminMessageText,
-                    ]}
-                  >
-                    {msg.message}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.messageTime,
-                      isUser ? styles.userMessageTime : styles.adminMessageTime,
-                    ]}
-                  >
-                    {formatTime(msg.created_at)}
-                  </Text>
-                </View>
-              );
-            })
-          )}
-        </ScrollView>
-
-        <View style={styles.messageInputContainer}>
-          <TextInput
-            style={styles.messageInput}
-            value={message}
-            onChangeText={setMessage}
-            placeholder="Type your message here..."
-            placeholderTextColor="#999"
-            multiline
-            editable={!sending}
-          />
-          <TouchableOpacity
-            style={[styles.sendButton, sending && styles.sendButtonDisabled]}
-            onPress={handleSendMessage}
-            disabled={!message?.trim() || sending}
-          >
-            {sending ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="send" size={20} color="#fff" />
-            )}
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    );
-  };
 
   const renderFAQs = () => (
     <View style={styles.faqContainer}>
@@ -809,11 +625,11 @@ const styles = StyleSheet.create({
   },
   policyContent: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flex: 1,
   },
   policyText: {
-    marginLeft: 16,
+    marginLeft: 12,
     flex: 1,
   },
   policyTitle: {

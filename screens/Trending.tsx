@@ -548,15 +548,20 @@ const TrendingScreen = () => {
   // Filter states
   const [activeFilterCategory, setActiveFilterCategory] = useState('Brand/Influencer');
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
+  const [selectedInfluencerIds, setSelectedInfluencerIds] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [filterMinPrice, setFilterMinPrice] = useState('');
   const [filterMaxPrice, setFilterMaxPrice] = useState('');
   const [brandSearchQuery, setBrandSearchQuery] = useState('');
+  const [influencerSearchQuery, setInfluencerSearchQuery] = useState('');
   const [showVendorSuggestions, setShowVendorSuggestions] = useState(false);
+  const [showInfluencerSuggestions, setShowInfluencerSuggestions] = useState(false);
+  const [activeBrandInfluencerTab, setActiveBrandInfluencerTab] = useState<'brands' | 'influencers'>('brands');
 
   // Filter data
   const [filteredVendors, setFilteredVendors] = useState<any[]>([]);
+  const [filteredInfluencers, setFilteredInfluencers] = useState<any[]>([]);
   const [filteredCategories, setFilteredCategories] = useState<any[]>([]);
   const [filteredSizes, setFilteredSizes] = useState<any[]>([]);
 
@@ -603,6 +608,21 @@ const TrendingScreen = () => {
 
     return suggestions;
   }, [brandSearchQuery, filteredVendors]);
+
+  // Calculate influencer suggestions based on search query
+  const influencerSuggestions = useMemo(() => {
+    if (!influencerSearchQuery.trim()) return [];
+
+    const query = influencerSearchQuery.toLowerCase();
+    const suggestions = filteredInfluencers
+      .filter(influencer =>
+        influencer.name?.toLowerCase().includes(query) ||
+        influencer.username?.toLowerCase().includes(query)
+      )
+      .slice(0, 5); // Show top 5 matches
+
+    return suggestions;
+  }, [influencerSearchQuery, filteredInfluencers]);
 
   // Helper function to add product directly to "All" collection
   const addToAllCollection = async (product: Product) => {
@@ -1143,7 +1163,7 @@ const TrendingScreen = () => {
     }
   };
 
-  // Fetch filter data (vendors, categories, colors, sizes)
+  // Fetch filter data (vendors, influencers, categories, colors, sizes)
   const fetchFilterData = async () => {
     try {
       debugLog('[Trending] Fetching filter data...');
@@ -1181,6 +1201,41 @@ const TrendingScreen = () => {
         }
       } else {
         setFilteredVendors([]);
+      }
+
+      // Fetch influencers that have products
+      const { data: productsWithInfluencers } = await supabase
+        .from('products')
+        .select('influencer_id')
+        .not('influencer_id', 'is', null);
+
+      if (productsWithInfluencers) {
+        const influencerIds = [...new Set(productsWithInfluencers.map((p: any) => p.influencer_id).filter(Boolean))];
+
+        if (influencerIds.length > 0) {
+          const { data: influencersData, error: influencersError } = await supabase
+            .from('influencer_profiles')
+            .select('id, name, username, profile_photo, is_verified')
+            .in('id', influencerIds)
+            .eq('is_active', true)
+            .order('name');
+
+          if (influencersError) {
+            console.error('[Trending] Error fetching influencers:', influencersError);
+          }
+
+          if (!influencersError && influencersData) {
+            debugLog('[Trending] Fetched influencers with products:', influencersData.length);
+            setFilteredInfluencers(influencersData);
+          } else {
+            debugLog('[Trending] No influencers data or error occurred');
+            setFilteredInfluencers([]);
+          }
+        } else {
+          setFilteredInfluencers([]);
+        }
+      } else {
+        setFilteredInfluencers([]);
       }
 
       // Fetch categories - only active ones
@@ -1631,8 +1686,10 @@ const TrendingScreen = () => {
     }
   };
 
+  const { user } = useAuth();
+
   const handleFollowVendor = async (vendorId: string) => {
-    if (!userData?.id) {
+    if (!user?.id) {
       Alert.alert('Login Required', 'Please login to follow vendors');
       return;
     }
@@ -2069,6 +2126,14 @@ const TrendingScreen = () => {
     );
   };
 
+  const toggleInfluencerSelection = (influencerId: string) => {
+    setSelectedInfluencerIds(prev =>
+      prev.includes(influencerId)
+        ? prev.filter(i => i !== influencerId)
+        : [...prev, influencerId]
+    );
+  };
+
   const toggleCategorySelection = (categoryId: string) => {
     setSelectedCategories(prev =>
       prev.includes(categoryId)
@@ -2087,11 +2152,13 @@ const TrendingScreen = () => {
 
   const handleClearAllFilters = () => {
     setSelectedVendorIds([]);
+    setSelectedInfluencerIds([]);
     setSelectedCategories([]);
     setSelectedSizes([]);
     setFilterMinPrice('');
     setFilterMaxPrice('');
     setBrandSearchQuery('');
+    setInfluencerSearchQuery('');
   };
 
   // Apply filters and refresh products
@@ -2107,8 +2174,8 @@ const TrendingScreen = () => {
 
   // Filter products based on selected filters
   const applyFilters = () => {
-    if (selectedVendorIds.length === 0 && selectedCategories.length === 0 &&
-      selectedSizes.length === 0 && !filterMinPrice && !filterMaxPrice && !brandSearchQuery.trim()) {
+    if (selectedVendorIds.length === 0 && selectedInfluencerIds.length === 0 && selectedCategories.length === 0 &&
+      selectedSizes.length === 0 && !filterMinPrice && !filterMaxPrice && !brandSearchQuery.trim() && !influencerSearchQuery.trim()) {
       setProducts(allProducts);
       return;
     }
@@ -2125,23 +2192,50 @@ const TrendingScreen = () => {
       });
     }
 
-    // Separate vendor products and other products when vendor filter is applied
+    // Filter by influencer search query
+    if (influencerSearchQuery.trim()) {
+      const lowerQuery = influencerSearchQuery.toLowerCase();
+      filtered = filtered.filter(product => {
+        const influencerData = productInfluencers[product.id];
+        if (influencerData) {
+          return influencerData.name?.toLowerCase().includes(lowerQuery) ||
+            influencerData.username?.toLowerCase().includes(lowerQuery);
+        }
+        return false;
+      });
+    }
+
+    // Separate vendor products, influencer products, and other products
     let vendorProducts: any[] = [];
+    let influencerProducts: any[] = [];
     let otherProducts: any[] = [];
 
-    if (selectedVendorIds.length > 0) {
-      // Split products into vendor products and others
+    if (selectedVendorIds.length > 0 || selectedInfluencerIds.length > 0) {
+      // Split products into vendor products, influencer products, and others
       filtered.forEach(product => {
         const vendorData = productVendors[product.id];
-        if (vendorData && selectedVendorIds.includes(vendorData.id)) {
+        const influencerData = productInfluencers[product.id];
+
+        let added = false;
+
+        if (selectedVendorIds.length > 0 && vendorData && selectedVendorIds.includes(vendorData.id)) {
           vendorProducts.push(product);
-        } else {
+          added = true;
+        }
+
+        if (selectedInfluencerIds.length > 0 && influencerData && selectedInfluencerIds.includes(influencerData.id)) {
+          influencerProducts.push(product);
+          added = true;
+        }
+
+        if (!added) {
           otherProducts.push(product);
         }
       });
     } else {
-      // No vendor filter, use all products
+      // No vendor or influencer filter, use all products
       vendorProducts = filtered;
+      influencerProducts = [];
       otherProducts = [];
     }
 
@@ -2178,12 +2272,13 @@ const TrendingScreen = () => {
       return result;
     };
 
-    // Apply filters to both groups
+    // Apply filters to all groups
     const filteredVendorProducts = applyOtherFilters(vendorProducts);
+    const filteredInfluencerProducts = applyOtherFilters(influencerProducts);
     const filteredOtherProducts = applyOtherFilters(otherProducts);
 
-    // Combine: vendor products first, then other products
-    const finalFiltered = [...filteredVendorProducts, ...filteredOtherProducts];
+    // Combine: vendor products first, then influencer products, then other products
+    const finalFiltered = [...filteredVendorProducts, ...filteredInfluencerProducts, ...filteredOtherProducts];
 
     setProducts(finalFiltered);
     setCurrentIndex(0); // Reset to first item
@@ -3353,112 +3448,284 @@ const TrendingScreen = () => {
                 {/* Brand/Influencer Filter with Search */}
                 {activeFilterCategory === 'Brand/Influencer' && (
                   <View style={styles.filterSection}>
-                    {/* Search bar for brands with autocomplete */}
-                    <View style={styles.brandSearchWrapper}>
-                      <View style={styles.brandSearchContainer}>
-                        <Ionicons name="search" size={18} color="#999" />
-                        <TextInput
-                          style={styles.brandSearchInput}
-                          placeholder="Search brands or influencers..."
-                          placeholderTextColor="#999"
-                          value={brandSearchQuery}
-                          onChangeText={(text) => {
-                            setBrandSearchQuery(text);
-                            setShowVendorSuggestions(text.trim().length > 0);
-                          }}
-                          onFocus={() => setShowVendorSuggestions(brandSearchQuery.trim().length > 0)}
-                        />
-                        {brandSearchQuery.length > 0 && (
-                          <TouchableOpacity
-                            onPress={() => {
-                              setBrandSearchQuery('');
-                              setShowVendorSuggestions(false);
-                            }}
-                          >
-                            <Ionicons name="close-circle" size={18} color="#999" />
-                          </TouchableOpacity>
-                        )}
-                      </View>
+                    {/* Tabs for Brands and Influencers */}
+                    <View style={styles.brandInfluencerTabs}>
+                      <TouchableOpacity
+                        style={[
+                          styles.brandInfluencerTab,
+                          activeBrandInfluencerTab === 'brands' && styles.brandInfluencerTabActive
+                        ]}
+                        onPress={() => setActiveBrandInfluencerTab('brands')}
+                      >
+                        <Text style={[
+                          styles.brandInfluencerTabText,
+                          activeBrandInfluencerTab === 'brands' && styles.brandInfluencerTabTextActive
+                        ]}>
+                          Brands ({filteredVendors.length})
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.brandInfluencerTab,
+                          activeBrandInfluencerTab === 'influencers' && styles.brandInfluencerTabActive
+                        ]}
+                        onPress={() => setActiveBrandInfluencerTab('influencers')}
+                      >
+                        <Text style={[
+                          styles.brandInfluencerTabText,
+                          activeBrandInfluencerTab === 'influencers' && styles.brandInfluencerTabTextActive
+                        ]}>
+                          Influencers ({filteredInfluencers.length})
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
 
-                      {/* Autocomplete Suggestions Dropdown */}
-                      {showVendorSuggestions && vendorSuggestions.length > 0 && (
-                        <View style={styles.suggestionsDropdown}>
-                          <ScrollView
-                            style={styles.suggestionsScrollView}
-                            nestedScrollEnabled={true}
-                            keyboardShouldPersistTaps="handled"
-                          >
-                            {vendorSuggestions.map((vendor, index) => (
+                    {/* Brands Tab */}
+                    {activeBrandInfluencerTab === 'brands' && (
+                      <>
+                        {/* Search bar for brands with autocomplete */}
+                        <View style={styles.brandSearchWrapper}>
+                          <View style={styles.brandSearchContainer}>
+                            <Ionicons name="search" size={18} color="#999" />
+                            <TextInput
+                              style={styles.brandSearchInput}
+                              placeholder="Search brands..."
+                              placeholderTextColor="#999"
+                              value={brandSearchQuery}
+                              onChangeText={(text) => {
+                                setBrandSearchQuery(text);
+                                setShowVendorSuggestions(text.trim().length > 0);
+                              }}
+                              onFocus={() => setShowVendorSuggestions(brandSearchQuery.trim().length > 0)}
+                            />
+                            {brandSearchQuery.length > 0 && (
                               <TouchableOpacity
-                                key={vendor.id}
-                                style={[
-                                  styles.suggestionItem,
-                                  index === vendorSuggestions.length - 1 && styles.suggestionItemLast
-                                ]}
                                 onPress={() => {
-                                  toggleVendorSelection(vendor.id);
                                   setBrandSearchQuery('');
                                   setShowVendorSuggestions(false);
                                 }}
                               >
-                                <View style={styles.suggestionContent}>
-                                  <Ionicons
-                                    name={selectedVendorIds.includes(vendor.id) ? "checkmark-circle" : "business-outline"}
-                                    size={20}
-                                    color={selectedVendorIds.includes(vendor.id) ? '#F53F7A' : '#666'}
-                                  />
-                                  <View style={styles.suggestionTextContainer}>
-                                    <Text style={styles.suggestionName}>
-                                      {vendor.business_name}
-                                    </Text>
-                                  </View>
-                                </View>
-                                <Ionicons
-                                  name="chevron-forward"
-                                  size={16}
-                                  color="#ccc"
-                                />
+                                <Ionicons name="close-circle" size={18} color="#999" />
                               </TouchableOpacity>
-                            ))}
-                          </ScrollView>
-                        </View>
-                      )}
-                    </View>
+                            )}
+                          </View>
 
-                    <Text style={styles.filterSectionTitle}>
-                      All Vendors ({filteredVendors.length})
-                    </Text>
-
-                    {filteredVendors.length === 0 ? (
-                      <View style={styles.emptyVendorsContainer}>
-                        <Ionicons name="business-outline" size={40} color="#ccc" />
-                        <Text style={styles.emptyVendorsText}>No vendors available</Text>
-                        <Text style={styles.emptyVendorsSubtext}>Check console for details</Text>
-                      </View>
-                    ) : (
-                      filteredVendors
-                        .filter(vendor =>
-                          !brandSearchQuery.trim() ||
-                          vendor.business_name?.toLowerCase().includes(brandSearchQuery.toLowerCase())
-                        )
-                        .map((vendor) => (
-                          <TouchableOpacity
-                            key={vendor.id}
-                            style={styles.filterOption}
-                            onPress={() => toggleVendorSelection(vendor.id)}
-                          >
-                            <View style={styles.checkboxContainer}>
-                              <Ionicons
-                                name={selectedVendorIds.includes(vendor.id) ? 'checkmark-circle' : 'ellipse-outline'}
-                                size={20}
-                                color={selectedVendorIds.includes(vendor.id) ? '#F53F7A' : '#999'}
-                              />
+                          {/* Autocomplete Suggestions Dropdown */}
+                          {showVendorSuggestions && vendorSuggestions.length > 0 && (
+                            <View style={styles.suggestionsDropdown}>
+                              <ScrollView
+                                style={styles.suggestionsScrollView}
+                                nestedScrollEnabled={true}
+                                keyboardShouldPersistTaps="handled"
+                              >
+                                {vendorSuggestions.map((vendor, index) => (
+                                  <TouchableOpacity
+                                    key={vendor.id}
+                                    style={[
+                                      styles.suggestionItem,
+                                      index === vendorSuggestions.length - 1 && styles.suggestionItemLast
+                                    ]}
+                                    onPress={() => {
+                                      toggleVendorSelection(vendor.id);
+                                      setBrandSearchQuery('');
+                                      setShowVendorSuggestions(false);
+                                    }}
+                                  >
+                                    <View style={styles.suggestionContent}>
+                                      <Ionicons
+                                        name={selectedVendorIds.includes(vendor.id) ? "checkmark-circle" : "business-outline"}
+                                        size={20}
+                                        color={selectedVendorIds.includes(vendor.id) ? '#F53F7A' : '#666'}
+                                      />
+                                      <View style={styles.suggestionTextContainer}>
+                                        <Text style={styles.suggestionName}>
+                                          {vendor.business_name}
+                                        </Text>
+                                      </View>
+                                    </View>
+                                    <Ionicons
+                                      name="chevron-forward"
+                                      size={16}
+                                      color="#ccc"
+                                    />
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
                             </View>
-                            <Text style={styles.filterOptionText}>
-                              {vendor.business_name}
-                            </Text>
-                          </TouchableOpacity>
-                        ))
+                          )}
+                        </View>
+
+                        <Text style={styles.filterSectionTitle}>
+                          All Vendors ({filteredVendors.length})
+                        </Text>
+
+                        {filteredVendors.length === 0 ? (
+                          <View style={styles.emptyVendorsContainer}>
+                            <Ionicons name="business-outline" size={40} color="#ccc" />
+                            <Text style={styles.emptyVendorsText}>No vendors available</Text>
+                          </View>
+                        ) : (
+                          filteredVendors
+                            .filter(vendor =>
+                              !brandSearchQuery.trim() ||
+                              vendor.business_name?.toLowerCase().includes(brandSearchQuery.toLowerCase())
+                            )
+                            .map((vendor) => (
+                              <TouchableOpacity
+                                key={vendor.id}
+                                style={styles.filterOption}
+                                onPress={() => toggleVendorSelection(vendor.id)}
+                              >
+                                <View style={styles.checkboxContainer}>
+                                  <Ionicons
+                                    name={selectedVendorIds.includes(vendor.id) ? 'checkmark-circle' : 'ellipse-outline'}
+                                    size={20}
+                                    color={selectedVendorIds.includes(vendor.id) ? '#F53F7A' : '#999'}
+                                  />
+                                </View>
+                                <Text style={styles.filterOptionText}>
+                                  {vendor.business_name}
+                                </Text>
+                              </TouchableOpacity>
+                            ))
+                        )}
+                      </>
+                    )}
+
+                    {/* Influencers Tab */}
+                    {activeBrandInfluencerTab === 'influencers' && (
+                      <>
+                        {/* Search bar for influencers with autocomplete */}
+                        <View style={styles.brandSearchWrapper}>
+                          <View style={styles.brandSearchContainer}>
+                            <Ionicons name="search" size={18} color="#999" />
+                            <TextInput
+                              style={styles.brandSearchInput}
+                              placeholder="Search influencers..."
+                              placeholderTextColor="#999"
+                              value={influencerSearchQuery}
+                              onChangeText={(text) => {
+                                setInfluencerSearchQuery(text);
+                                setShowInfluencerSuggestions(text.trim().length > 0);
+                              }}
+                              onFocus={() => setShowInfluencerSuggestions(influencerSearchQuery.trim().length > 0)}
+                            />
+                            {influencerSearchQuery.length > 0 && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  setInfluencerSearchQuery('');
+                                  setShowInfluencerSuggestions(false);
+                                }}
+                              >
+                                <Ionicons name="close-circle" size={18} color="#999" />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+
+                          {/* Autocomplete Suggestions Dropdown */}
+                          {showInfluencerSuggestions && influencerSuggestions.length > 0 && (
+                            <View style={styles.suggestionsDropdown}>
+                              <ScrollView
+                                style={styles.suggestionsScrollView}
+                                nestedScrollEnabled={true}
+                                keyboardShouldPersistTaps="handled"
+                              >
+                                {influencerSuggestions.map((influencer, index) => (
+                                  <TouchableOpacity
+                                    key={influencer.id}
+                                    style={[
+                                      styles.suggestionItem,
+                                      index === influencerSuggestions.length - 1 && styles.suggestionItemLast
+                                    ]}
+                                    onPress={() => {
+                                      toggleInfluencerSelection(influencer.id);
+                                      setInfluencerSearchQuery('');
+                                      setShowInfluencerSuggestions(false);
+                                    }}
+                                  >
+                                    <View style={styles.suggestionContent}>
+                                      <Ionicons
+                                        name={selectedInfluencerIds.includes(influencer.id) ? "checkmark-circle" : "person-outline"}
+                                        size={20}
+                                        color={selectedInfluencerIds.includes(influencer.id) ? '#F53F7A' : '#666'}
+                                      />
+                                      <View style={styles.suggestionTextContainer}>
+                                        <Text style={styles.suggestionName}>
+                                          {influencer.name || influencer.username}
+                                        </Text>
+                                        {influencer.username && (
+                                          <Text style={styles.suggestionSubtext}>
+                                            @{influencer.username}
+                                          </Text>
+                                        )}
+                                      </View>
+                                    </View>
+                                    <Ionicons
+                                      name="chevron-forward"
+                                      size={16}
+                                      color="#ccc"
+                                    />
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
+                            </View>
+                          )}
+                        </View>
+
+                        <Text style={styles.filterSectionTitle}>
+                          All Influencers ({filteredInfluencers.length})
+                        </Text>
+
+                        {filteredInfluencers.length === 0 ? (
+                          <View style={styles.emptyVendorsContainer}>
+                            <Ionicons name="person-outline" size={40} color="#ccc" />
+                            <Text style={styles.emptyVendorsText}>No influencers available</Text>
+                          </View>
+                        ) : (
+                          filteredInfluencers
+                            .filter(influencer =>
+                              !influencerSearchQuery.trim() ||
+                              influencer.name?.toLowerCase().includes(influencerSearchQuery.toLowerCase()) ||
+                              influencer.username?.toLowerCase().includes(influencerSearchQuery.toLowerCase())
+                            )
+                            .map((influencer) => (
+                              <TouchableOpacity
+                                key={influencer.id}
+                                style={styles.filterOption}
+                                onPress={() => toggleInfluencerSelection(influencer.id)}
+                              >
+                                <View style={styles.checkboxContainer}>
+                                  <Ionicons
+                                    name={selectedInfluencerIds.includes(influencer.id) ? 'checkmark-circle' : 'ellipse-outline'}
+                                    size={20}
+                                    color={selectedInfluencerIds.includes(influencer.id) ? '#F53F7A' : '#999'}
+                                  />
+                                </View>
+                                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                                  {influencer.profile_photo && (
+                                    <Image
+                                      source={{ uri: influencer.profile_photo }}
+                                      style={{ width: 24, height: 24, borderRadius: 12, marginRight: 8 }}
+                                    />
+                                  )}
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={styles.filterOptionText}>
+                                      {influencer.name || influencer.username}
+                                    </Text>
+                                    {influencer.username && influencer.name && (
+                                      <Text style={{ fontSize: 12, color: '#999' }}>
+                                        @{influencer.username}
+                                      </Text>
+                                    )}
+                                  </View>
+                                  {influencer.is_verified && (
+                                    <Ionicons name="checkmark-circle" size={16} color="#F53F7A" style={{ marginLeft: 4 }} />
+                                  )}
+                                </View>
+                              </TouchableOpacity>
+                            ))
+                        )}
+                      </>
                     )}
                   </View>
                 )}
@@ -5424,6 +5691,31 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
     marginBottom: 12,
+  },
+  brandInfluencerTabs: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    padding: 4,
+  },
+  brandInfluencerTab: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  brandInfluencerTabActive: {
+    backgroundColor: '#F53F7A',
+  },
+  brandInfluencerTabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  brandInfluencerTabTextActive: {
+    color: '#fff',
   },
   brandSearchWrapper: {
     marginBottom: 16,

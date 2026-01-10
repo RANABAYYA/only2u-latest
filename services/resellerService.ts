@@ -1,13 +1,14 @@
 import { supabase } from '~/utils/supabase';
-import type { 
-  Reseller, 
-  ResellerProduct, 
-  ResellerOrder, 
+import type {
+  Reseller,
+  ResellerProduct,
+  ResellerOrder,
   ResellerRegistrationForm,
   ResellerProductForm,
   CatalogShareForm,
   ResellerDashboard,
-  Product 
+  ResellerEarning,
+  Product
 } from '~/types/reseller';
 
 interface ResellerCheckoutItemInput {
@@ -52,7 +53,7 @@ export class ResellerService {
   static async registerReseller(formData: ResellerRegistrationForm): Promise<Reseller> {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      
+
       if (!user) {
         throw new Error('User not authenticated');
       }
@@ -110,7 +111,7 @@ export class ResellerService {
     }
   }
 
-  private static async ensureResellerForUser(userId: string): Promise<Reseller> {
+  static async ensureResellerForUser(userId: string): Promise<Reseller> {
     const existing = await this.getResellerByUserId(userId);
     if (existing) {
       return existing;
@@ -121,7 +122,7 @@ export class ResellerService {
       .select('id, name, email, phone, address, city, state, postal_code')
       .eq('id', userId)
       .maybeSingle();
-    
+
     const { data: authUserResponse } = await supabase.auth.getUser();
     const authUser = authUserResponse?.user;
 
@@ -187,7 +188,7 @@ export class ResellerService {
   // ===========================
 
   static async addProductToResellerCatalog(
-    resellerId: string, 
+    resellerId: string,
     productForm: ResellerProductForm
   ): Promise<ResellerProduct> {
     try {
@@ -290,7 +291,7 @@ export class ResellerService {
   }
 
   static async updateResellerProduct(
-    resellerProductId: string, 
+    resellerProductId: string,
     updates: Partial<ResellerProduct>
   ): Promise<ResellerProduct> {
     try {
@@ -414,7 +415,7 @@ export class ResellerService {
       // Here you would integrate with actual sharing services (WhatsApp, Telegram, etc.)
       // For now, we'll just log the content
       console.log('Catalog share content:', shareContent);
-      
+
     } catch (error) {
       console.error('Error sharing product catalog:', error);
       throw error;
@@ -428,17 +429,17 @@ export class ResellerService {
   ): string {
     const availableSizes = product.variants?.map((v: any) => v.size?.name).filter(Boolean).join(', ');
     const availableColors = product.variants?.map((v: any) => v.color?.name).filter(Boolean).join(', ');
-    
+
     let content = `🛍️ *${product.name}*\n\n`;
     content += `📝 ${product.description}\n\n`;
     content += `💰 *Price: ₹${resellerProduct.selling_price}*\n`;
     content += `📏 *Available Sizes: ${availableSizes}*\n`;
     content += `🎨 *Available Colors: ${availableColors}*\n\n`;
-    
+
     if (shareForm.custom_message) {
       content += `💬 *Message:* ${shareForm.custom_message}\n\n`;
     }
-    
+
     content += `🛒 Order now and get the best deals!\n`;
     content += `📱 Contact me for more details`;
 
@@ -451,35 +452,83 @@ export class ResellerService {
 
   static async getResellerOrders(resellerId: string): Promise<ResellerOrder[]> {
     try {
+      // 1. Get reseller's user_id
+      const { data: resellerData, error: resellerError } = await supabase
+        .from('resellers')
+        .select('user_id')
+        .eq('id', resellerId)
+        .single();
+
+      if (resellerError) throw resellerError;
+      const userId = resellerData.user_id;
+
+      // 2. Fetch orders from the main orders table
       const { data, error } = await supabase
-        .from('reseller_orders')
+        .from('orders')
         .select(`
-          *,
-          items:reseller_order_items(
+          id,
+          order_number,
+          created_at,
+          updated_at,
+          status,
+          payment_status,
+          total_amount,
+          reseller_profit,
+          reseller_margin_amount,
+          payment_method,
+          items:order_items(
             id,
+            product_id,
             quantity,
             unit_price,
             total_price,
-            margin_amount,
             product:products(
               id,
               name,
               image_urls
-            ),
-            variant:product_variants(
-              size:sizes(name),
-              color:colors(name)
             )
           )
         `)
-        .eq('reseller_id', resellerId)
+        .eq('user_id', userId)
+        .eq('is_reseller_order', true)
         .order('created_at', { ascending: false });
 
       if (error) {
         throw error;
       }
 
-      return data || [];
+      // 3. Map to ResellerOrder interface
+      return (data || []).map(order => ({
+        id: order.id,
+        order_number: order.order_number,
+        reseller_id: resellerId,
+        customer_name: 'Customer', // Placeholder as per discussion
+        customer_phone: '',
+        customer_address: '',
+        customer_city: '',
+        customer_state: '',
+        customer_pincode: '',
+        total_amount: Number(order.total_amount),
+        reseller_commission: Number(order.reseller_profit || order.reseller_margin_amount || 0),
+        platform_commission: 0, // Not exposing this currently
+        status: order.status as any,
+        payment_status: (order.payment_status || 'pending') as any,
+        payment_method: (order.payment_method || 'online') as any,
+        created_at: order.created_at,
+        updated_at: order.updated_at,
+        items: (order.items || []).map((item: any) => ({
+          id: item.id,
+          order_id: order.id,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total_price: item.total_price,
+          reseller_price: item.unit_price,
+          margin_amount: 0,
+          created_at: order.created_at,
+          product: item.product
+        }))
+      }));
     } catch (error) {
       console.error('Error fetching reseller orders:', error);
       throw error;
@@ -508,7 +557,7 @@ export class ResellerService {
     try {
       // Calculate totals
       const totalAmount = orderData.items.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
-      
+
       // Get reseller commission rate
       const { data: reseller, error: resellerError } = await supabase
         .from('resellers')
@@ -581,161 +630,10 @@ export class ResellerService {
   }
 
   static async logResellerOrderFromCheckout(payload: ResellerCheckoutSyncPayload): Promise<void> {
-    try {
-      if (!payload.userId || payload.items.length === 0) {
-        return;
-      }
-
-      const reseller = await this.ensureResellerForUser(payload.userId);
-
-      const resellerOrderNumber = payload.orderNumber && payload.orderNumber.trim().length > 0
-        ? `RS-${payload.orderNumber}`
-        : `RS${Date.now().toString(36).toUpperCase()}`;
-
-      const originalTotal = Number(payload.totals.originalTotal || 0);
-      const resellerTotal = Number(payload.totals.resellerTotal || originalTotal);
-      const resellerCommission = Math.max(0, Number(payload.totals.totalProfit || resellerTotal - originalTotal));
-      const platformCommission = Math.max(0, resellerTotal - resellerCommission);
-
-      const customerAddress = payload.customer.address || 'Not provided';
-      const customerCity = payload.customer.city || 'N/A';
-      const customerState = payload.customer.state || 'N/A';
-      const customerPincode = payload.customer.pincode || 'N/A';
-
-      const baseOrderRecord = {
-        reseller_id: reseller.id,
-        customer_id: payload.userId,
-        customer_name: payload.customer.name,
-        customer_phone: payload.customer.phone || 'N/A',
-        customer_email: payload.customer.email || null,
-        customer_address: customerAddress,
-        customer_city: customerCity,
-        customer_state: customerState,
-        customer_pincode: customerPincode,
-        total_amount: resellerTotal,
-        reseller_commission: resellerCommission,
-        platform_commission: platformCommission,
-        status: payload.paymentStatus === 'paid' ? 'confirmed' : 'pending',
-        payment_status: payload.paymentStatus,
-        payment_method: payload.paymentMethod ?? null,
-        notes: `Primary order ID: ${payload.orderId}`,
-        updated_at: new Date().toISOString(),
-      };
-
-      const { data: existingOrder, error: existingOrderError } = await supabase
-        .from('reseller_orders')
-        .select('id, reseller_commission')
-        .eq('order_number', resellerOrderNumber)
-        .maybeSingle();
-
-      if (existingOrderError) {
-        throw existingOrderError;
-      }
-
-      let resellerOrderId: string;
-      let commissionDelta = resellerCommission;
-
-      if (existingOrder) {
-        const { data: updatedOrder, error: updateError } = await supabase
-          .from('reseller_orders')
-          .update(baseOrderRecord)
-          .eq('id', existingOrder.id)
-          .select('id')
-          .single();
-
-        if (updateError) {
-          throw updateError;
-        }
-
-        resellerOrderId = updatedOrder.id;
-        commissionDelta = resellerCommission - Number(existingOrder.reseller_commission || 0);
-
-        await supabase
-          .from('reseller_order_items')
-          .delete()
-          .eq('order_id', resellerOrderId);
-      } else {
-        const { data: insertedOrder, error: insertError } = await supabase
-          .from('reseller_orders')
-          .insert({
-            order_number: resellerOrderNumber,
-            ...baseOrderRecord,
-            created_at: new Date().toISOString(),
-          })
-          .select('id')
-          .single();
-
-        if (insertError) {
-          throw insertError;
-        }
-
-        resellerOrderId = insertedOrder.id;
-      }
-
-      const orderItemsPayload = payload.items
-        .filter(item => item.productId)
-        .map(item => ({
-          order_id: resellerOrderId,
-          product_id: item.productId,
-          variant_id: item.variantId ?? null,
-          quantity: item.quantity,
-          unit_price: item.baseUnitPrice,
-          total_price: item.baseTotal,
-          reseller_price: item.resellerUnitPrice,
-          margin_amount: item.marginAmount,
-          created_at: new Date().toISOString(),
-        }));
-
-      if (orderItemsPayload.length > 0) {
-        const { error: resellerItemsError } = await supabase
-          .from('reseller_order_items')
-          .insert(orderItemsPayload);
-
-        if (resellerItemsError) {
-          throw resellerItemsError;
-        }
-      }
-
-      if (resellerCommission > 0) {
-        const { error: earningsError } = await supabase
-          .from('reseller_earnings')
-          .upsert({
-            reseller_id: reseller.id,
-            order_id: resellerOrderId,
-            earning_type: 'commission',
-            amount: resellerCommission,
-            description: `Commission for order ${resellerOrderNumber}`,
-            status: payload.paymentStatus === 'paid' ? 'paid' : 'pending',
-            paid_at: payload.paymentStatus === 'paid' ? new Date().toISOString() : null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }, {
-            onConflict: 'reseller_id,order_id,earning_type',
-          });
-
-        if (earningsError) {
-          throw earningsError;
-        }
-      }
-
-      if (commissionDelta !== 0 || !existingOrder) {
-        await supabase
-          .from('resellers')
-          .update({
-            total_orders: (reseller.total_orders || 0) + (existingOrder ? 0 : 1),
-            total_earnings: (reseller.total_earnings || 0) + commissionDelta,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', reseller.id);
-      }
-    } catch (error: any) {
-      if (error?.code === '42501' || /row-level security/i.test(error?.message || '')) {
-        console.warn('[ResellerService] Skipping reseller order log due to RLS policy:', error?.message || error);
-        return;
-      }
-      console.error('[ResellerService] Failed to log reseller order from checkout:', error);
-      throw error;
-    }
+    // Deprecated: Orders are now handled directly via the main 'orders' table.
+    // This function is kept to prevent errors in existing calls but does nothing.
+    console.log('[ResellerService] logResellerOrderFromCheckout is deprecated. Order should be logged via standard checkout flow.');
+    return;
   }
 
   // ===========================
@@ -744,71 +642,91 @@ export class ResellerService {
 
   static async getResellerDashboard(resellerId: string): Promise<ResellerDashboard> {
     try {
-      // Get basic stats
-      const [productsResult, ordersResult, earningsResult] = await Promise.all([
+      // 1. Get reseller's user_id to query the main orders table
+      const { data: resellerData, error: resellerError } = await supabase
+        .from('resellers')
+        .select('user_id')
+        .eq('id', resellerId)
+        .single();
+
+      if (resellerError) throw resellerError;
+      const userId = resellerData.user_id;
+
+      // 2. Fetch data in parallel
+      const [productsResult, ordersResult] = await Promise.all([
         supabase
           .from('reseller_products')
           .select('id, is_active')
           .eq('reseller_id', resellerId),
-        
+
+        // Fetch from main orders table where is_reseller_order is true
         supabase
-          .from('reseller_orders')
-          .select('id, status, total_amount, reseller_commission, created_at')
-          .eq('reseller_id', resellerId),
-        
-        supabase
-          .from('reseller_earnings')
-          .select('amount, status, created_at')
-          .eq('reseller_id', resellerId)
+          .from('orders')
+          .select(`
+            id, 
+            order_number, 
+            status, 
+            total_amount, 
+            reseller_profit, 
+            reseller_margin_amount,
+            created_at, 
+            updated_at
+          `)
+          .eq('user_id', userId)
+          .eq('is_reseller_order', true)
+          .order('created_at', { ascending: false }),
       ]);
 
       if (productsResult.error) throw productsResult.error;
       if (ordersResult.error) throw ordersResult.error;
-      if (earningsResult.error) throw earningsResult.error;
 
       const products = productsResult.data || [];
       const orders = (ordersResult.data || []).map(order => ({
         ...order,
         total_amount: Number(order.total_amount || 0),
-        reseller_commission: Number(order.reseller_commission || 0),
-      }));
-      const earnings = (earningsResult.data || []).map(earning => ({
-        ...earning,
-        amount: Number(earning.amount || 0),
+        // Use reseller_profit or margin_amount as commission
+        reseller_commission: Number(order.reseller_profit || order.reseller_margin_amount || 0),
+        customer_name: 'Customer', // Default since main orders might not expose full customer details to this view easily without extra queries, or we can add it if needed.
+        customer_phone: '',
       }));
 
       const totalProducts = products.length;
       const activeProducts = products.filter(p => p.is_active).length;
       const totalOrders = orders.length;
-      const pendingOrders = orders.filter(o => o.status === 'pending').length;
-      
-      const totalEarnings = earnings.reduce((sum, e) => sum + e.amount, 0);
-      const pendingEarnings = earnings.filter(e => e.status === 'pending').reduce((sum, e) => sum + e.amount, 0);
 
-      // Calculate monthly earnings
-      const currentMonth = new Date();
-      currentMonth.setDate(1);
-      const lastMonth = new Date(currentMonth);
-      lastMonth.setMonth(lastMonth.getMonth() - 1);
+      // Status mapping might need adjustment if order statuses differ
+      const pendingOrders = orders.filter(o => ['pending', 'processing', 'shipped'].includes(o.status)).length;
+
+      // Calculate earnings from the orders table
+      // Total earnings: Sum of profit from non-cancelled, non-returned orders (or just confirmed/delivered)
+      // For now, assume all non-cancelled orders count towards "Total Earnings" visually, 
+      // or strictly 'delivered'/'completed'. Let's stick to 'delivered' for realized earnings, 
+      // and others for pending.
+
+      const realizedStatuses = ['delivered', 'completed'];
+      const pendingStatuses = ['pending', 'processing', 'shipped', 'out_for_delivery'];
+
+      const totalEarnings = orders
+        .filter(o => realizedStatuses.includes(o.status))
+        .reduce((sum, o) => sum + o.reseller_commission, 0);
+
+      const pendingEarnings = orders
+        .filter(o => pendingStatuses.includes(o.status))
+        .reduce((sum, o) => sum + o.reseller_commission, 0);
+
+      // Monthly calculations
+      const now = new Date();
+      const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+      const lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString();
 
       const thisMonthEarnings = orders
-        .filter(o => new Date(o.created_at) >= currentMonth)
+        .filter(o => o.created_at >= firstDayThisMonth && realizedStatuses.includes(o.status))
         .reduce((sum, o) => sum + o.reseller_commission, 0);
 
       const lastMonthEarnings = orders
-        .filter(o => {
-          const orderDate = new Date(o.created_at);
-          return orderDate >= lastMonth && orderDate < currentMonth;
-        })
+        .filter(o => o.created_at >= firstDayLastMonth && o.created_at <= lastDayLastMonth && realizedStatuses.includes(o.status))
         .reduce((sum, o) => sum + o.reseller_commission, 0);
-
-      // Get recent orders
-      const recentOrders = orders
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, 5);
-
-      // Get top products (mock data for now)
-      const topProducts: any[] = [];
 
       return {
         total_products: totalProducts,
@@ -819,13 +737,7 @@ export class ResellerService {
         pending_earnings: pendingEarnings,
         this_month_earnings: thisMonthEarnings,
         last_month_earnings: lastMonthEarnings,
-        recent_orders: recentOrders as ResellerOrder[],
-        top_products: topProducts,
-        analytics: {
-          daily_revenue: [], // Would need to implement proper analytics
-          weekly_orders: [],
-          monthly_earnings: []
-        }
+        recent_orders: orders.slice(0, 5) as any[],
       };
     } catch (error) {
       console.error('Error fetching reseller dashboard:', error);
@@ -853,5 +765,21 @@ export class ResellerService {
 
   static calculateMargin(basePrice: number, sellingPrice: number): number {
     return ((sellingPrice - basePrice) / basePrice) * 100;
+  }
+  static async getPayoutHistory(resellerId: string, limit: number = 20): Promise<ResellerEarning[]> {
+    try {
+      const { data, error } = await supabase
+        .from('reseller_earnings')
+        .select('*')
+        .eq('reseller_id', resellerId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error fetching payout history:', error);
+      return [];
+    }
   }
 }

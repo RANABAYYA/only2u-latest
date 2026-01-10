@@ -13,6 +13,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
+import Toast from 'react-native-toast-message';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -33,7 +34,7 @@ const CollectionDetails = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { userData } = useUser();
-  const { removeFromWishlist } = useWishlist();
+  const { removeFromWishlist, removeMultipleFromWishlist } = useWishlist();
 
   // Get collection info from route params (either old or new format)
   const collectionId = (route.params as any)?.collectionId || (route.params as any)?.collection?.id;
@@ -47,6 +48,7 @@ const CollectionDetails = () => {
   const [isCustomCollection, setIsCustomCollection] = useState(false);
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [itemToRemove, setItemToRemove] = useState<any>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   useEffect(() => {
     if (collectionId) {
@@ -78,69 +80,9 @@ const CollectionDetails = () => {
 
       if (cpError) throw cpError;
 
-      // Sample data for testing/demo
-      const SAMPLE_PRODUCTS = [
-        {
-          id: 'sample-1',
-          name: 'Classic Cotton T-Shirt',
-          description: 'Premium cotton t-shirt with comfortable fit.',
-          vendor_name: 'Urban Styles',
-          alias_vendor: 'Urban Styles',
-          price: 499,
-          originalPrice: 999,
-          discount: 50,
-          image_urls: ['https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
-          video_urls: [],
-          variants: [],
-          stock: 10,
-        },
-        {
-          id: 'sample-2',
-          name: 'Slim Fit Denim Jeans',
-          description: 'Classic blue denim jeans with perfect stretch.',
-          vendor_name: 'Denim Co.',
-          alias_vendor: 'Denim Co.',
-          price: 1299,
-          originalPrice: 2499,
-          discount: 48,
-          image_urls: ['https://images.unsplash.com/photo-1542272454315-4c01d7abdf4a?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
-          video_urls: [],
-          variants: [],
-          stock: 15,
-        },
-        {
-          id: 'sample-3',
-          name: 'Floral Summer Dress',
-          description: 'Lightweight and breezy dress for summer days.',
-          vendor_name: 'Chic Boutique',
-          alias_vendor: 'Chic Boutique',
-          price: 899,
-          originalPrice: 1799,
-          discount: 50,
-          image_urls: ['https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
-          video_urls: [],
-          variants: [],
-          stock: 8,
-        },
-        {
-          id: 'sample-4',
-          name: 'Running Shoes - Sport Edition',
-          description: 'High performance running shoes for athletes.',
-          vendor_name: 'SportZ',
-          alias_vendor: 'SportZ',
-          price: 2499,
-          originalPrice: 4999,
-          discount: 50,
-          image_urls: ['https://images.unsplash.com/photo-1542291026-7eec264c27ff?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
-          video_urls: [],
-          variants: [],
-          stock: 5,
-        }
-      ];
-
       if (!collectionProducts || collectionProducts.length === 0) {
-        // Use sample data if no products found (requested by user)
-        setProducts(SAMPLE_PRODUCTS);
+        // No products in collection - show empty state
+        setProducts([]);
         setLoading(false);
         return;
       }
@@ -281,85 +223,90 @@ const CollectionDetails = () => {
       setCollection(prev => prev ? { ...prev, name: newCollectionName.trim() } : null);
       setShowRenameModal(false);
 
-      Alert.alert('Success', 'Collection renamed successfully');
+      Toast.show({
+        type: 'success',
+        text1: 'Collection Renamed',
+        text2: `Collection renamed to "${newCollectionName.trim()}"`,
+        position: 'top',
+        visibilityTime: 2000,
+      });
     } catch (error) {
       console.error('Error renaming collection:', error);
       Alert.alert('Error', 'Failed to rename collection. Please try again.');
     }
   };
 
-  const handleDeleteCollection = async () => {
-    Alert.alert(
-      'Delete Collection',
-      `Are you sure you want to delete "${collection?.name || 'this collection'}"? All products in this collection will be removed.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // 1. Get all products in this collection first
-              const { data: productsInCollection } = await supabase
-                .from('collection_products')
-                .select('product_id')
-                .eq('collection_id', collectionId);
+  const handleDeleteCollection = () => {
+    setShowDeleteModal(true);
+  };
 
-              if (productsInCollection && productsInCollection.length > 0) {
-                const productIds = productsInCollection.map(p => p.product_id);
+  const confirmDeleteCollection = async () => {
+    try {
+      // 1. Get all products in this collection first
+      const { data: productsInCollection } = await supabase
+        .from('collection_products')
+        .select('product_id')
+        .eq('collection_id', collectionId);
 
-                // 2. Remove from "All" collection (if exists)
-                const { data: allCollection } = await supabase
-                  .from('collections')
-                  .select('id')
-                  .eq('user_id', userData?.id)
-                  .eq('name', 'All')
-                  .single();
+      if (productsInCollection && productsInCollection.length > 0) {
+        const productIds = productsInCollection.map(p => p.product_id);
 
-                if (allCollection) {
-                  await supabase
-                    .from('collection_products')
-                    .delete()
-                    .eq('collection_id', allCollection.id)
-                    .in('product_id', productIds);
-                }
+        // 2. Remove from "All" collection (if exists)
+        const { data: allCollection } = await supabase
+          .from('collections')
+          .select('id')
+          .eq('user_id', userData?.id)
+          .eq('name', 'All')
+          .single();
 
-                // 3. Update local Wishlist Context (state & AsyncStorage)
-                productIds.forEach(id => {
-                  removeFromWishlist(id);
-                });
-              }
+        if (allCollection) {
+          await supabase
+            .from('collection_products')
+            .delete()
+            .eq('collection_id', allCollection.id)
+            .in('product_id', productIds);
+        }
 
-              // 4. Delete all products links from this collection
-              const { error: deleteProductsError } = await supabase
-                .from('collection_products')
-                .delete()
-                .eq('collection_id', collectionId);
+        // 3. Update local Wishlist Context (state & AsyncStorage) - use batch removal
+        removeMultipleFromWishlist(productIds);
+      }
 
-              if (deleteProductsError) throw deleteProductsError;
+      // 4. Delete all products links from this collection
+      const { error: deleteProductsError } = await supabase
+        .from('collection_products')
+        .delete()
+        .eq('collection_id', collectionId);
 
-              // 5. Finally delete the collection itself
-              const { error: deleteCollectionError } = await supabase
-                .from('collections')
-                .delete()
-                .eq('id', collectionId)
-                .eq('user_id', userData?.id);
+      if (deleteProductsError) throw deleteProductsError;
 
-              if (deleteCollectionError) throw deleteCollectionError;
+      // 5. Finally delete the collection itself
+      const { error: deleteCollectionError } = await supabase
+        .from('collections')
+        .delete()
+        .eq('id', collectionId)
+        .eq('user_id', userData?.id);
 
-              // Navigate back to Wishlist
-              navigation.goBack();
+      if (deleteCollectionError) throw deleteCollectionError;
 
-              // Show success message
-              Alert.alert('Success', 'Collection and its items deleted successfully');
-            } catch (error) {
-              console.error('Error deleting collection:', error);
-              Alert.alert('Error', 'Failed to delete collection. Please try again.');
-            }
-          },
-        },
-      ]
-    );
+      // Close modal and navigate back
+      setShowDeleteModal(false);
+      navigation.goBack();
+
+      // Show success message
+      setTimeout(() => {
+        Toast.show({
+          type: 'success',
+          text1: 'Collection Deleted',
+          text2: 'Collection and its items have been removed',
+          position: 'top',
+          visibilityTime: 2500,
+        });
+      }, 300);
+    } catch (error) {
+      console.error('Error deleting collection:', error);
+      setShowDeleteModal(false);
+      Alert.alert('Error', 'Failed to delete collection. Please try again.');
+    }
   };
 
   const handleRemoveFromCollection = async () => {
@@ -406,7 +353,13 @@ const CollectionDetails = () => {
       setItemToRemove(null);
 
       // Show success message
-      Alert.alert('Success', 'Item removed from wishlist');
+      Toast.show({
+        type: 'success',
+        text1: 'Item Removed',
+        text2: 'Item has been removed from your wishlist',
+        position: 'top',
+        visibilityTime: 2000,
+      });
     } catch (error) {
       console.error('Error removing from collection:', error);
       Alert.alert('Error', 'Failed to remove item from collection');
@@ -544,7 +497,7 @@ const CollectionDetails = () => {
             style={styles.deleteButton}
             onPress={() => handleDeleteCollection()}
           >
-            <Ionicons name="trash-outline" size={22} color="#EF4444" />
+            <Ionicons name="trash-outline" size={22} color="#F53F7A" />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.shareButton}
@@ -563,10 +516,10 @@ const CollectionDetails = () => {
         </View>
       ) : products.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="folder-open-outline" size={64} color="#ccc" />
-          <Text style={styles.emptyTitle}>No items yet</Text>
+          <Ionicons name="heart-outline" size={64} color="#ccc" />
+          <Text style={styles.emptyTitle}>No wishlisted items</Text>
           <Text style={styles.emptySubtitle}>
-            Products you save to this collection will appear here
+            You do not have any wishlisted items.{'\n'}Please add items to your wishlist.
           </Text>
         </View>
       ) : (
@@ -693,6 +646,55 @@ const CollectionDetails = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Delete Collection Confirmation Modal */}
+      <Modal
+        visible={showDeleteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeleteModal(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalContainer}>
+            {/* Header with Icon and Title */}
+            <View style={styles.deleteModalHeader}>
+              <View style={styles.deleteModalTrashCircle}>
+                <Ionicons name="trash" size={24} color="#F53F7A" />
+              </View>
+              <Text style={styles.deleteModalTitle}>Delete Collection?</Text>
+            </View>
+
+            {/* Collection Name */}
+            <Text style={styles.deleteModalCollectionName} numberOfLines={1}>
+              "{collection?.name || 'Collection'}" ({products.length} {products.length === 1 ? 'item' : 'items'})
+            </Text>
+
+            {/* Warning Message */}
+            <Text style={styles.deleteModalMessage}>
+              All items will be removed from your wishlist. This cannot be undone.
+            </Text>
+
+            {/* Buttons */}
+            <View style={styles.deleteModalButtons}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelButton}
+                onPress={() => setShowDeleteModal(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.deleteModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.deleteModalDeleteButton}
+                onPress={confirmDeleteCollection}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.deleteModalDeleteText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -740,7 +742,7 @@ const styles = StyleSheet.create({
   deleteButton: {
     padding: 8,
     borderRadius: 8,
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FFF0F5',
   },
   shareButton: {
     padding: 8,
@@ -1058,6 +1060,91 @@ const styles = StyleSheet.create({
   },
   removeModalRemoveText: {
     fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  // Delete Collection Modal Styles
+  deleteModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  deleteModalContainer: {
+    width: '100%',
+    maxWidth: 300,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  deleteModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 10,
+  },
+  deleteModalTrashCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFF0F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1a1a1a',
+  },
+  deleteModalCollectionName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  deleteModalMessage: {
+    fontSize: 13,
+    color: '#888',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+  deleteModalButtons: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 10,
+  },
+  deleteModalCancelButton: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteModalCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
+  },
+  deleteModalDeleteButton: {
+    flex: 1,
+    backgroundColor: '#F53F7A',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteModalDeleteText: {
+    fontSize: 15,
     fontWeight: '700',
     color: '#fff',
   },

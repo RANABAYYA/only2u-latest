@@ -156,7 +156,7 @@ const MyOrders = () => {
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null);
   const [selectedOrderItem, setSelectedOrderItem] = useState<SelectedOrderItemContext | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
-  
+
   // Review modal states
   const [isReviewModalVisible, setReviewModalVisible] = useState(false);
   const [reviewRating, setReviewRating] = useState(0);
@@ -164,7 +164,7 @@ const MyOrders = () => {
   const [reviewComment, setReviewComment] = useState('');
   const [reviewMedia, setReviewMedia] = useState<string[]>([]);
   const [selectedItem, setSelectedItem] = useState<any>(null);
-  
+
   // Report modal states
   const [isReportModalVisible, setReportModalVisible] = useState(false);
   const [reportType, setReportType] = useState('');
@@ -188,7 +188,7 @@ const MyOrders = () => {
       case 'confirmed':
         return { color: '#9C27B0', bg: '#F3E5F5' };
       case 'pending':
-        return { color: '#FF5722', bg: '#FFEBEE' };
+        return { color: '#F53F7A', bg: '#FFF0F5' };
       case 'cancelled':
         return { color: '#F44336', bg: '#FFEBEE' };
       default:
@@ -288,12 +288,12 @@ const MyOrders = () => {
           updates: Array.isArray(ticket.updates)
             ? ticket.updates
             : [
-                {
-                  timestamp: ticket.created_at,
-                  status: ticket.status,
-                  message: getStatusLabel(ticket.status),
-                },
-              ],
+              {
+                timestamp: ticket.created_at,
+                status: ticket.status,
+                message: getStatusLabel(ticket.status),
+              },
+            ],
           origin: 'remote',
         }));
       } else if (remoteError && remoteError?.code !== '42P01') {
@@ -354,10 +354,10 @@ const MyOrders = () => {
       const updatedList =
         index >= 0
           ? [
-              ...current.slice(0, index),
-              updatedTicket,
-              ...current.slice(index + 1),
-            ]
+            ...current.slice(0, index),
+            updatedTicket,
+            ...current.slice(index + 1),
+          ]
           : [updatedTicket, ...current];
       const nextMap = {
         ...prev,
@@ -438,27 +438,26 @@ const MyOrders = () => {
         return;
       }
 
-      // Add sample completed order for demonstration
-      const sampleCompletedOrder = {
-        orderId: '00000000-0000-0000-0000-000000000020',
+      // Add mock delivered order for demonstration
+      const sampleDeliveredOrder = {
+        orderId: 'mock-delivered-001',
         orderNumber: 'ONL789456',
-        date: formatDate(new Date('2025-11-12').toISOString()),
+        date: formatDate(new Date('2025-12-15').toISOString()),
         status: 'delivered',
-        statusColor: '#34C759',
-        statusBg: '#E8F8ED',
+        statusColor: '#4CAF50',
+        statusBg: '#E8F5E8',
         paymentStatus: 'paid',
         paymentMethod: 'UPI',
+        deliveryMessage: 'Delivered on 15 Dec 2025',
         shippingAddress: {
           name: 'Sample User',
           phone: '+91 98765 43210',
           address_line1: '123 Sample Street',
-          address_line2: 'Apt 5B',
           city: 'Mumbai',
           state: 'Maharashtra',
           pincode: '400001',
-          country: 'India',
         },
-        itemId: '00000000-0000-0000-0000-000000000021',
+        itemId: 'mock-item-001',
         name: 'Elegant Silk Saree',
         image: 'https://images.unsplash.com/photo-1583292650898-7d22cd27ca6f?w=400',
         size: 'Free Size',
@@ -469,21 +468,30 @@ const MyOrders = () => {
       };
 
       // Transform data to individual product items
-      const flattenedItems: any[] = [sampleCompletedOrder];
+      const flattenedItems: any[] = [sampleDeliveredOrder];
       ordersData?.forEach(order => {
         const statusStyle = getStatusStyle(order.status);
+        const deliveryMsg = order.status === 'delivered'
+          ? `Delivered on ${formatDate(order.created_at)}`
+          : order.status === 'cancelled'
+            ? 'Order was cancelled'
+            : order.status === 'shipped'
+              ? 'Out for delivery'
+              : `Expected by ${formatDate(new Date(new Date(order.created_at).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString())}`;
+
         order.order_items?.forEach((item: any) => {
           flattenedItems.push({
             // Order info
             orderId: order.id,
-          orderNumber: order.order_number,
-          date: formatDate(order.created_at),
-          status: order.status,
-          statusColor: statusStyle.color,
-          statusBg: statusStyle.bg,
-          paymentStatus: order.payment_status,
-          paymentMethod: order.payment_method,
-          shippingAddress: order.shipping_address,
+            orderNumber: order.order_number,
+            date: formatDate(order.created_at),
+            status: order.status,
+            statusColor: statusStyle.color,
+            statusBg: statusStyle.bg,
+            paymentStatus: order.payment_status,
+            paymentMethod: order.payment_method,
+            shippingAddress: order.shipping_address,
+            deliveryMessage: deliveryMsg,
             // Item info
             itemId: item.id,
             name: item.product_name,
@@ -732,7 +740,7 @@ const MyOrders = () => {
                 ]}
               >
                 {completed && <Ionicons name="checkmark" size={12} color="#fff" />}
-          </View>
+              </View>
               <View style={styles.timelineStepContent}>
                 <Text
                   style={[
@@ -740,10 +748,10 @@ const MyOrders = () => {
                     completed && styles.timelineStepLabelActive,
                   ]}
                 >
-                {getStatusLabel(statusKey)}
+                  {getStatusLabel(statusKey)}
                 </Text>
                 {idx < sequence.length - 1 && <View style={styles.timelineConnector} />}
-        </View>
+              </View>
             </View>
           );
         })}
@@ -771,13 +779,13 @@ const MyOrders = () => {
             <View style={styles.ticketTypeBadge}>
               <Text style={styles.ticketTypeBadgeText}>
                 {SUPPORT_TYPE_LABELS[ticket.type]}
-          </Text>
-        </View>
+              </Text>
+            </View>
             <Text style={styles.ticketProduct}>{ticket.productName}</Text>
             <Text style={styles.ticketMeta}>
               Logged on {formatDate(ticket.createdAt)} • {ticket.reason}
             </Text>
-      </View>
+          </View>
           <View style={styles.ticketHeaderRight}>
             <View
               style={[
@@ -823,11 +831,11 @@ const MyOrders = () => {
                       <Text style={styles.ticketUpdateMessage}>{update.message}</Text>
                       <Text style={styles.ticketUpdateTime}>
                         {new Date(update.timestamp).toLocaleString()}
-              </Text>
-            </View>
-          </View>
-        ))}
-      </View>
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
             ) : null}
 
             <View style={styles.ticketActionsRow}>
@@ -858,7 +866,7 @@ const MyOrders = () => {
                   <Text style={styles.ticketActionSecondaryText}>Cancel Request</Text>
                 </TouchableOpacity>
               )}
-      </View>
+            </View>
           </View>
         )}
       </View>
@@ -866,140 +874,131 @@ const MyOrders = () => {
   };
 
   const renderOrderCard = (item: any) => {
+    const getStatusDisplayText = (status: string) => {
+      switch (status.toLowerCase()) {
+        case 'delivered':
+          return 'Delivered';
+        case 'shipped':
+          return 'Order Shipped';
+        case 'processing':
+          return 'Order Processing';
+        case 'confirmed':
+          return 'Order Confirmed';
+        case 'pending':
+          return 'Order Placed';
+        case 'cancelled':
+          return 'Order Cancelled';
+        default:
+          return 'Order Placed';
+      }
+    };
+
     return (
       <TouchableOpacity
         key={`${item.orderId}-${item.itemId}`}
         style={styles.orderCard}
-        activeOpacity={0.95}
+        activeOpacity={0.7}
         onPress={() => navigation.navigate('OrderDetails', { orderId: item.orderId })}
       >
-        {/* Product Image - Left Side */}
+        {/* Product Image */}
         <View style={styles.productImageSection}>
-          <View style={styles.imageContainer}>
-            {item.image ? (
-              <Image
-                source={{ uri: item.image }}
-                style={styles.productImage}
-                resizeMode="cover"
-              />
-            ) : (
-              <View style={[styles.productImage, styles.productImagePlaceholder]}>
-                <Ionicons name="image-outline" size={28} color="#C7C7CC" />
-              </View>
-            )}
-            {/* Quantity Badge Overlay */}
-            {item.quantity > 1 && (
-              <View style={styles.quantityBadgeOverlay}>
-                <LinearGradient
-                  colors={['rgba(245, 63, 122, 0.95)', 'rgba(233, 30, 99, 0.95)']}
-                  style={styles.quantityBadgeGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <Text style={styles.quantityBadgeText}>×{item.quantity}</Text>
-                </LinearGradient>
-              </View>
-            )}
-          </View>
+          {item.image ? (
+            <Image
+              source={{ uri: item.image }}
+              style={styles.productImage}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={[styles.productImage, styles.productImagePlaceholder]}>
+              <Ionicons name="image-outline" size={28} color="#C7C7CC" />
+            </View>
+          )}
         </View>
 
-        {/* Order Content - Right Side */}
+        {/* Order Content */}
         <View style={styles.orderContent}>
-          {/* Top Row: Product Name & Status */}
-          <View style={styles.contentTopRow}>
-            <View style={styles.orderNumberContainer}>
-              <Text style={styles.productName} numberOfLines={2}>
-                {item.name}
+          {/* Status Text */}
+          <Text style={[styles.statusTextMain, { color: item.statusColor }]}>
+            {getStatusDisplayText(item.status)}
           </Text>
-              <View style={styles.orderMetaRow}>
-                <Ionicons name="receipt-outline" size={11} color="#8E8E93" />
-                <Text style={styles.orderNumber}>{item.orderNumber}</Text>
-                <View style={styles.metaDivider} />
-                <Ionicons name="calendar-outline" size={10} color="#8E8E93" />
-                <Text style={styles.orderDate}>{item.date}</Text>
+
+          {/* Delivery Message */}
+          <Text style={styles.deliveryMessage}>
+            {item.deliveryMessage || `Ordered on ${item.date}`}
+          </Text>
+
+          {/* Product Name */}
+          <Text style={styles.productName} numberOfLines={1}>
+            {item.name}
+          </Text>
+
+          {/* Size & Qty */}
+          <Text style={styles.sizeQtyText}>
+            {item.size && `Size: ${item.size}`}
+            {item.size && item.quantity && ' • '}
+            {item.quantity && `Qty: ${item.quantity}`}
+          </Text>
+
+          {/* Star Rating and Review Promo for Delivered Items */}
+          {item.status === 'delivered' && (
+            <View style={styles.reviewPromoContainer}>
+              <View style={styles.ratingRow}>
+                <View style={styles.starsRow}>
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <TouchableOpacity
+                      key={star}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleQuickRating(item, star);
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                    >
+                      <Ionicons
+                        name="star-outline"
+                        size={20}
+                        color="#E0E0E0"
+                        style={styles.starIcon}
+                      />
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
-            </View>
-            <View style={[styles.statusBadge, { backgroundColor: item.statusBg }]}>
-              <View style={[styles.statusDot, { backgroundColor: item.statusColor }]} />
-              <Text style={[styles.statusText, { color: item.statusColor }]}>
-                {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+
+              {/* Coins Promotion */}
+              <Text style={styles.reviewPromoText}>
+                Rate & Review to <Text style={styles.coinsHighlight}>earn 50 coins!</Text>
               </Text>
             </View>
-          </View>
-
-          {/* Star Rating for Delivered Items */}
-          {item.status === 'delivered' && (
-            <View style={styles.ratingRow}>
-              <Text style={styles.ratingLabel}>Rate:</Text>
-              <View style={styles.starsRow}>
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <TouchableOpacity
-                    key={star}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      handleQuickRating(item, star);
-                    }}
-                    hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-                  >
-                    <Ionicons
-                      name="star"
-                      size={18}
-                      color="#E0E0E0"
-                      style={styles.starIcon}
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
+          )}
         </View>
-      )}
 
-          {/* Bottom Row: Price & Action */}
-          <View style={styles.contentBottomRow}>
-            <View style={styles.priceContainer}>
-              <Text style={styles.orderTotal}>₹{item.totalPrice.toLocaleString('en-IN')}</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.viewDetailsButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                navigation.navigate('OrderDetails', { orderId: item.orderId });
-              }}
-            >
-              <LinearGradient
-                colors={['#F53F7A', '#E91E63']}
-                style={styles.viewDetailsGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                <Text style={styles.viewDetailsText}>View</Text>
-                <Ionicons name="chevron-forward" size={14} color="#FFFFFF" />
-              </LinearGradient>
-      </TouchableOpacity>
-    </View>
+        {/* Chevron Arrow */}
+        <View style={styles.chevronContainer}>
+          <Ionicons name="chevron-forward" size={22} color="#C7C7CC" />
         </View>
       </TouchableOpacity>
     );
   };
-  
+
   // Handle quick rating from card
   const handleQuickRating = (item: any, rating: number) => {
     setSelectedItem(item);
     setReviewRating(rating);
     setReviewModalVisible(true);
   };
-  
+
   // Handle rate and review
   const handleRateAndReview = (item: any) => {
     setSelectedItem(item);
     setReviewModalVisible(true);
   };
-  
+
   // Handle report product
   const handleReportProduct = (item: any) => {
     setSelectedItem(item);
     setReportModalVisible(true);
   };
-  
+
   // Pick media for review (images/videos)
   const pickReviewMedia = async () => {
     if (reviewMedia.length >= 5) {
@@ -1027,7 +1026,7 @@ const MyOrders = () => {
     if (!result.canceled && result.assets[0]) {
       const mediaUri = result.assets[0].uri;
       const mediaType = result.assets[0].type;
-      
+
       // Check video duration
       if (mediaType === 'video' && result.assets[0].duration && result.assets[0].duration > 30000) {
         Toast.show({
@@ -1037,7 +1036,7 @@ const MyOrders = () => {
         });
         return;
       }
-      
+
       setReviewMedia([...reviewMedia, mediaUri]);
     }
   };
@@ -1084,11 +1083,11 @@ const MyOrders = () => {
       });
       return;
     }
-    
+
     try {
       const userId = userData?.id || user?.id;
       if (!userId) return;
-      
+
       const { error } = await supabase.from('product_reviews').insert({
         user_id: userId,
         product_id: selectedItem.itemId,
@@ -1098,15 +1097,15 @@ const MyOrders = () => {
         comment: reviewComment,
         media: reviewMedia.length > 0 ? reviewMedia : null,
       });
-      
+
       if (error) throw error;
-      
+
       Toast.show({
         type: 'success',
         text1: 'Review Submitted',
         text2: 'Thank you for your feedback!',
       });
-      
+
       // Reset and close
       setReviewModalVisible(false);
       setReviewRating(0);
@@ -1123,7 +1122,7 @@ const MyOrders = () => {
       });
     }
   };
-  
+
   // Submit report
   const submitReport = async () => {
     if (!selectedItem || !reportType) {
@@ -1134,11 +1133,11 @@ const MyOrders = () => {
       });
       return;
     }
-    
+
     try {
       const userId = userData?.id || user?.id;
       if (!userId) return;
-      
+
       const { error } = await supabase.from('product_reports').insert({
         user_id: userId,
         product_id: selectedItem.itemId,
@@ -1146,15 +1145,15 @@ const MyOrders = () => {
         report_type: reportType,
         description: reportDescription,
       });
-      
+
       if (error) throw error;
-      
+
       Toast.show({
         type: 'success',
         text1: 'Report Submitted',
         text2: 'Our team will review your report.',
       });
-      
+
       // Reset and close
       setReportModalVisible(false);
       setReportType('');
@@ -1310,8 +1309,8 @@ const MyOrders = () => {
           <Text style={styles.emptySubtitle}>Your orders will appear here</Text>
         </View>
       ) : (
-        <ScrollView 
-          style={styles.scrollView} 
+        <ScrollView
+          style={styles.scrollView}
           contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -1326,7 +1325,7 @@ const MyOrders = () => {
           {orders.map((item, index) => renderOrderCard(item))}
         </ScrollView>
       )}
-      
+
       {/* Review Modal */}
       <Modal
         visible={isReviewModalVisible}
@@ -1351,9 +1350,9 @@ const MyOrders = () => {
                 <Ionicons name="close" size={24} color="#333" />
               </TouchableOpacity>
             </View>
-            
+
             {/* Scrollable Content */}
-            <ScrollView 
+            <ScrollView
               style={styles.modalScrollView}
               contentContainerStyle={styles.modalScrollContent}
               showsVerticalScrollIndicator={false}
@@ -1377,7 +1376,7 @@ const MyOrders = () => {
                   </View>
                 </View>
               )}
-              
+
               {/* Star Rating */}
               <View style={styles.ratingSection}>
                 <Text style={styles.sectionLabel}>Your Rating</Text>
@@ -1397,7 +1396,7 @@ const MyOrders = () => {
                   ))}
                 </View>
               </View>
-              
+
               {/* Review Title */}
               <View style={styles.inputSection}>
                 <Text style={styles.sectionLabel}>Review Title (Optional)</Text>
@@ -1410,7 +1409,7 @@ const MyOrders = () => {
                   maxLength={100}
                 />
               </View>
-              
+
               {/* Review Comment */}
               <View style={styles.inputSection}>
                 <Text style={styles.sectionLabel}>Your Review (Optional)</Text>
@@ -1425,12 +1424,12 @@ const MyOrders = () => {
                   maxLength={500}
                 />
               </View>
-              
+
               {/* Media Upload */}
               <View style={styles.mediaSection}>
                 <Text style={styles.sectionLabel}>Add Photos/Videos (Optional)</Text>
                 <Text style={styles.mediaSublabel}>Max 5 files • Videos up to 30 seconds</Text>
-                
+
                 {/* Media Grid */}
                 {reviewMedia.length > 0 && (
                   <ScrollView
@@ -1461,7 +1460,7 @@ const MyOrders = () => {
                     ))}
                   </ScrollView>
                 )}
-                
+
                 {/* Upload Buttons */}
                 {reviewMedia.length < 5 && (
                   <View style={styles.mediaButtonsRow}>
@@ -1479,7 +1478,7 @@ const MyOrders = () => {
                         <Text style={styles.mediaButtonText}>Gallery</Text>
                       </LinearGradient>
                     </TouchableOpacity>
-                    
+
                     <TouchableOpacity
                       style={styles.mediaButton}
                       onPress={takeReviewPhoto}
@@ -1497,7 +1496,7 @@ const MyOrders = () => {
                   </View>
                 )}
               </View>
-              
+
               {/* Submit Button */}
               <TouchableOpacity
                 style={[
@@ -1521,7 +1520,7 @@ const MyOrders = () => {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-      
+
       {/* Report Modal */}
       <Modal
         visible={isReportModalVisible}
@@ -1546,7 +1545,7 @@ const MyOrders = () => {
                 <Ionicons name="close" size={24} color="#333" />
               </TouchableOpacity>
             </View>
-            
+
             {/* Product Info */}
             {selectedItem && (
               <View style={styles.productInfoSection}>
@@ -1565,7 +1564,7 @@ const MyOrders = () => {
                 </View>
               </View>
             )}
-            
+
             {/* Report Types */}
             <View style={styles.reportTypesSection}>
               <Text style={styles.sectionLabel}>What's the issue?</Text>
@@ -1605,7 +1604,7 @@ const MyOrders = () => {
                 ))}
               </View>
             </View>
-            
+
             {/* Description */}
             <View style={styles.inputSection}>
               <Text style={styles.sectionLabel}>Describe the issue (Optional)</Text>
@@ -1620,7 +1619,7 @@ const MyOrders = () => {
                 maxLength={500}
               />
             </View>
-            
+
             {/* Submit Button */}
             <TouchableOpacity
               style={[
@@ -1769,11 +1768,37 @@ const styles = StyleSheet.create({
   },
   productName: {
     fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  statusTextMain: {
+    fontSize: 15,
     fontWeight: '700',
-    color: '#1C1C1E',
-    letterSpacing: -0.4,
-    marginBottom: 3,
-    lineHeight: 18,
+    marginBottom: 2,
+  },
+  deliveryMessage: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#666',
+    marginBottom: 4,
+  },
+  sizeQtyText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  reviewPromoText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#666',
+    marginTop: 4,
+  },
+  chevronContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingLeft: 8,
   },
   orderNumber: {
     fontSize: 12,
@@ -1963,6 +1988,30 @@ const styles = StyleSheet.create({
   },
   starIcon: {
     marginHorizontal: 1,
+  },
+  reviewPromoContainer: {
+    marginTop: 6,
+  },
+  reviewCoinsBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF0F5',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  coinIconContainer: {
+    marginRight: 6,
+  },
+  reviewCoinsText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#666',
+  },
+  coinsHighlight: {
+    fontWeight: '700',
+    color: '#F53F7A',
   },
   ticketList: {
     marginTop: 16,

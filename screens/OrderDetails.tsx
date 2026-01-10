@@ -157,7 +157,7 @@ const OrderDetails = () => {
             },
           ],
         };
-        
+
         setOrderDetails(mockOrderDetails);
         setLoading(false);
         return;
@@ -217,7 +217,7 @@ const OrderDetails = () => {
                   },
                 ],
               };
-              
+
               setOrderDetails(mockResellerOrderDetails);
               setLoading(false);
               return;
@@ -400,7 +400,7 @@ const OrderDetails = () => {
     setSelectedItem(item);
     setCurrentAction(action);
     setActionModalVisible(true);
-    
+
     // Reset form states
     setRating(0);
     setReviewTitle('');
@@ -435,7 +435,7 @@ const OrderDetails = () => {
 
     if (!result.canceled && result.assets[0]) {
       const imageUri = result.assets[0].uri;
-      
+
       // Add to appropriate image array based on current action
       if (currentAction === 'review') {
         if (reviewImages.length < 5) {
@@ -487,13 +487,13 @@ const OrderDetails = () => {
       if (orderId === '00000000-0000-0000-0000-000000000001') {
         // Simulate API delay
         await new Promise(resolve => setTimeout(resolve, 1000));
-        
+
         Toast.show({
           type: 'success',
           text1: 'Review Submitted',
           text2: 'Thank you for your feedback! (Mock Order)',
         });
-        
+
         closeActionModal();
         setSubmitting(false);
         return;
@@ -560,13 +560,13 @@ const OrderDetails = () => {
       if (orderId === '00000000-0000-0000-0000-000000000001') {
         // Simulate API delay
         await new Promise(resolve => setTimeout(resolve, 1000));
-        
+
         Toast.show({
           type: 'success',
           text1: `${currentAction === 'return' ? 'Return' : 'Replacement'} Request Submitted`,
           text2: 'We will process your request shortly (Mock Order)',
         });
-        
+
         closeActionModal();
         setSubmitting(false);
         return;
@@ -795,7 +795,39 @@ const OrderDetails = () => {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Items in Your Order</Text>
           {orderDetails.order_items.map((item) => (
-            <View key={item.id} style={styles.itemCard}>
+            <TouchableOpacity
+              key={item.id}
+              style={styles.itemCard}
+              activeOpacity={0.7}
+              onPress={() => {
+                if (item.product_id) {
+                  navigation.navigate('ProductDetails' as never, {
+                    productId: item.product_id,
+                    product: {
+                      id: item.product_id,
+                      name: item.product_name,
+                      price: item.unit_price,
+                      image: item.product_image,
+                    }
+                  } as never);
+                }
+              }}
+            >
+              {/* Product Image */}
+              <View style={styles.itemImageContainer}>
+                {item.product_image ? (
+                  <Image
+                    source={{ uri: item.product_image }}
+                    style={styles.itemImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+                    <Ionicons name="image-outline" size={32} color="#ccc" />
+                  </View>
+                )}
+              </View>
+
               <View style={styles.itemDetails}>
                 <Text style={styles.itemName}>{item.product_name}</Text>
                 <Text style={styles.itemMeta}>
@@ -811,7 +843,10 @@ const OrderDetails = () => {
                   <View style={styles.itemActions}>
                     <TouchableOpacity
                       style={styles.actionButton}
-                      onPress={() => openActionModal(item, 'review')}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        openActionModal(item, 'review');
+                      }}
                     >
                       <Ionicons name="star-outline" size={16} color="#fff" />
                       <Text style={styles.actionButtonText}>Review</Text>
@@ -819,7 +854,10 @@ const OrderDetails = () => {
 
                     <TouchableOpacity
                       style={styles.actionButtonOutline}
-                      onPress={() => openActionModal(item, 'return')}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        openActionModal(item, 'return');
+                      }}
                     >
                       <Ionicons name="return-down-back-outline" size={16} color="#F53F7A" />
                       <Text style={styles.actionButtonOutlineText}>Return</Text>
@@ -827,7 +865,10 @@ const OrderDetails = () => {
 
                     <TouchableOpacity
                       style={styles.actionButtonOutline}
-                      onPress={() => openActionModal(item, 'replacement')}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        openActionModal(item, 'replacement');
+                      }}
                     >
                       <Ionicons name="swap-horizontal-outline" size={16} color="#F53F7A" />
                       <Text style={styles.actionButtonOutlineText}>Replace</Text>
@@ -836,7 +877,7 @@ const OrderDetails = () => {
                 )}
 
               </View>
-            </View>
+            </TouchableOpacity>
           ))}
         </View>
 
@@ -874,10 +915,44 @@ const OrderDetails = () => {
             <Text style={styles.sectionTitle}>Tracking Information</Text>
             <View style={styles.trackingContainer}>
               <Ionicons name="location-outline" size={20} color="#F53F7A" />
-              <Text style={styles.trackingNumber}>{orderDetails.tracking_number}</Text>
             </View>
           </View>
         )}
+
+        {/* Track Order Button - Show for shipped/processing orders */}
+        {orderDetails.status.toLowerCase() !== 'delivered' &&
+          orderDetails.status.toLowerCase() !== 'cancelled' && (
+            <TouchableOpacity
+              style={styles.trackOrderButton}
+              onPress={() => {
+                if (orderDetails.tracking_number) {
+                  // Open tracking URL or show tracking info
+                  Toast.show({
+                    type: 'info',
+                    text1: 'Tracking Number',
+                    text2: orderDetails.tracking_number,
+                  });
+                } else {
+                  Toast.show({
+                    type: 'info',
+                    text1: 'Tracking Not Available',
+                    text2: 'Tracking information will be available once shipped',
+                  });
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={['#F53F7A', '#E91E63']}
+                style={styles.trackOrderButtonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                <Ionicons name="location-outline" size={20} color="#fff" />
+                <Text style={styles.trackOrderButtonText}>Track My Order</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
 
       </ScrollView>
 
@@ -1314,6 +1389,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#333',
+  },
+  trackOrderButton: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  trackOrderButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    gap: 8,
+  },
+  trackOrderButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
   },
   modalOverlay: {
     flex: 1,
