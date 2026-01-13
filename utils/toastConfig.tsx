@@ -37,7 +37,7 @@ export const toastConfig = {
         </View>
       </View>
       {props?.onViewPress && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.wishlistViewButton}
           onPress={props.onViewPress}
           activeOpacity={0.8}
@@ -51,18 +51,18 @@ export const toastConfig = {
     // Check if this is a removal action
     const isRemoval = text1?.toLowerCase().includes('removed');
     // Check if this is a face swap toast - check both text1 and text2
-    const isFaceSwap = text1?.toLowerCase().includes('face swap') || 
-                       text2?.toLowerCase().includes('face swap') ||
-                       text1?.toLowerCase().includes('face swap started') ||
-                       text1?.toLowerCase() === 'face swap started';
-    
+    const isFaceSwap = text1?.toLowerCase().includes('face swap') ||
+      text2?.toLowerCase().includes('face swap') ||
+      text1?.toLowerCase().includes('face swap started') ||
+      text1?.toLowerCase() === 'face swap started';
+
     let iconName = 'heart';
     if (isRemoval) {
       iconName = 'heart-dislike-outline';
     } else if (isFaceSwap) {
       iconName = 'sparkles';
     }
-    
+
     // Determine border style based on face swap detection
     const borderStyle = isFaceSwap ? {
       borderWidth: 2,
@@ -71,7 +71,7 @@ export const toastConfig = {
       borderLeftWidth: 4,
       borderLeftColor: '#F53F7A', // Left border for other success toasts
     };
-    
+
     return (
       <View style={{
         flexDirection: 'row',
@@ -207,6 +207,50 @@ export const toastConfig = {
       <View style={styles.toastTextContainer}>
         {text1 && <Text style={styles.toastTitle}>{text1}</Text>}
         {text2 && <Text style={styles.toastSubtitle}>{text2}</Text>}
+      </View>
+    </View>
+  ),
+  sizeRequired: ({ text1, text2 }: any) => (
+    <View style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#fff',
+      marginHorizontal: 16,
+      marginTop: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      shadowColor: '#F53F7A',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+      elevation: 8,
+      borderLeftWidth: 4,
+      borderLeftColor: '#F53F7A',
+    }}>
+      <View style={{
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FFF0F5',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+      }}>
+        <Ionicons name="resize-outline" size={22} color="#F53F7A" />
+      </View>
+      <View style={{ flex: 1 }}>
+        {text1 && <Text style={{
+          fontSize: 15,
+          fontWeight: '700',
+          color: '#1a1a1a',
+          marginBottom: 2,
+        }}>{text1}</Text>}
+        {text2 && <Text style={{
+          fontSize: 13,
+          fontWeight: '500',
+          color: '#666',
+        }}>{text2}</Text>}
       </View>
     </View>
   ),

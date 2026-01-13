@@ -1143,7 +1143,11 @@ const Profile = () => {
         return;
       }
 
+      // Clear all stored auth data
       await AsyncStorage.removeItem('userData');
+      await AsyncStorage.removeItem('last_logged_in_phone');
+      await AsyncStorage.removeItem('pending_phone_for_profile');
+      await AsyncStorage.removeItem('cached_user_data');
       setUser(null);
       await clearWishlist();
 
@@ -1279,12 +1283,13 @@ const Profile = () => {
       // First check if a user with this phone exists
       const { data: existingUser, error: findError } = await supabase
         .from('users')
-        .select('id')
+        .select('*')
         .eq('phone', fullPhone)
         .maybeSingle();
 
       if (existingUser) {
-        // User exists - sign in anonymously and link to existing profile
+        // User exists - sign in anonymously and update the existing user record
+        // to use the new anonymous session ID so it persists
         const { data: signInData, error: signInError } = await supabase.auth.signInAnonymously();
 
         if (signInError) {
@@ -1292,6 +1297,29 @@ const Profile = () => {
           setVerifying(false);
           return;
         }
+
+        const newUserId = signInData?.user?.id;
+
+        if (newUserId && newUserId !== existingUser.id) {
+          // Update the existing user's ID to match the new anonymous session ID
+          // This ensures the session can find the user profile on app restart
+          console.log('[WhatsApp OTP] Updating user ID from', existingUser.id, 'to', newUserId);
+
+          const { error: updateError } = await supabase
+            .from('users')
+            .update({ id: newUserId })
+            .eq('id', existingUser.id);
+
+          if (updateError) {
+            console.error('Failed to update user ID:', updateError);
+            // Fallback: try to use existing user data directly
+          }
+        }
+
+        // CRITICAL: Cache user data and phone for persistence across app restarts
+        await AsyncStorage.setItem('last_logged_in_phone', fullPhone);
+        await AsyncStorage.setItem('cached_user_data', JSON.stringify(existingUser));
+        console.log('[WhatsApp OTP] Cached user data for persistence');
 
         // Update user data to link with this phone
         await refreshUserData();
@@ -1304,6 +1332,9 @@ const Profile = () => {
           setVerifying(false);
           return;
         }
+
+        // Store phone temporarily for onboarding profile creation
+        await AsyncStorage.setItem('pending_phone_for_profile', fullPhone);
       }
 
       Toast.show({
@@ -1508,8 +1539,16 @@ const Profile = () => {
         setCreatingProfile(false);
         return;
       }
-      // Get phone number from auth user
-      const userPhone = authUser.phone || null;
+
+      // Get phone number from AsyncStorage (stored during OTP verification)
+      // or fall back to auth user phone
+      let userPhone = authUser.phone || null;
+      const pendingPhone = await AsyncStorage.getItem('pending_phone_for_profile');
+      if (pendingPhone) {
+        userPhone = pendingPhone;
+        // Clear it after use
+        await AsyncStorage.removeItem('pending_phone_for_profile');
+      }
 
       const newProfile = {
         id: authUser.id,
@@ -1522,6 +1561,14 @@ const Profile = () => {
         setCreatingProfile(false);
         return;
       }
+
+      // CRITICAL: Cache user data and phone for persistence across app restarts
+      if (userPhone) {
+        await AsyncStorage.setItem('last_logged_in_phone', userPhone);
+      }
+      await AsyncStorage.setItem('cached_user_data', JSON.stringify(newProfile));
+      console.log('[Profile] Cached new user data for persistence');
+
       if (appliedReferralCoupon && appliedReferralCoupon.referralCodeId) {
         try {
           const { redeemReferralCode } = await import('~/services/referralCodeService');

@@ -115,7 +115,7 @@ export const WishlistProvider: React.FC<{ children: ReactNode }> = ({ children }
     saveWishlist();
   };
 
-  const removeFromWishlist = (productId: string) => {
+  const removeFromWishlist = async (productId: string) => {
     if (!userData?.id) {
       return;
     }
@@ -128,14 +128,27 @@ export const WishlistProvider: React.FC<{ children: ReactNode }> = ({ children }
       );
       return updatedWishlist;
     });
+
+    // Decrement unread count (don't go below 0)
+    const newUnreadCount = Math.max(0, unreadCount - 1);
+    setUnreadCount(newUnreadCount);
+    const unreadCountKey = getUnreadCountKey();
+    if (unreadCountKey) {
+      if (newUnreadCount > 0) {
+        await AsyncStorage.setItem(unreadCountKey, newUnreadCount.toString());
+      } else {
+        await AsyncStorage.removeItem(unreadCountKey);
+      }
+    }
   };
 
-  const removeMultipleFromWishlist = (productIds: string[]) => {
+  const removeMultipleFromWishlist = async (productIds: string[]) => {
     if (!userData?.id || productIds.length === 0) {
       return;
     }
 
     const idsToRemove = new Set(productIds.map(id => String(id)));
+    const removedCount = productIds.length;
 
     setWishlist(currentWishlist => {
       const updatedWishlist = currentWishlist.filter(item => !idsToRemove.has(String(item.id)));
@@ -146,6 +159,18 @@ export const WishlistProvider: React.FC<{ children: ReactNode }> = ({ children }
       console.log(`Removed ${productIds.length} items from wishlist. Remaining: ${updatedWishlist.length}`);
       return updatedWishlist;
     });
+
+    // Decrement unread count by the number of items removed (don't go below 0)
+    const newUnreadCount = Math.max(0, unreadCount - removedCount);
+    setUnreadCount(newUnreadCount);
+    const unreadCountKey = getUnreadCountKey();
+    if (unreadCountKey) {
+      if (newUnreadCount > 0) {
+        await AsyncStorage.setItem(unreadCountKey, newUnreadCount.toString());
+      } else {
+        await AsyncStorage.removeItem(unreadCountKey);
+      }
+    }
   };
 
   const toggleWishlist = (product: WishlistProduct) => {

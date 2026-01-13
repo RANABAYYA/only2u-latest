@@ -157,6 +157,9 @@ const MyOrders = () => {
   const [selectedOrderItem, setSelectedOrderItem] = useState<SelectedOrderItemContext | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
 
+  // Tab state for order filtering
+  const [activeTab, setActiveTab] = useState<'all' | 'my_orders' | 'reselling'>('all');
+
   // Review modal states
   const [isReviewModalVisible, setReviewModalVisible] = useState(false);
   const [reviewRating, setReviewRating] = useState(0);
@@ -418,6 +421,7 @@ const MyOrders = () => {
           payment_status,
           payment_method,
           shipping_address,
+          is_reseller_order,
           order_items (
             id,
             product_name,
@@ -438,37 +442,8 @@ const MyOrders = () => {
         return;
       }
 
-      // Add mock delivered order for demonstration
-      const sampleDeliveredOrder = {
-        orderId: 'mock-delivered-001',
-        orderNumber: 'ONL789456',
-        date: formatDate(new Date('2025-12-15').toISOString()),
-        status: 'delivered',
-        statusColor: '#4CAF50',
-        statusBg: '#E8F5E8',
-        paymentStatus: 'paid',
-        paymentMethod: 'UPI',
-        deliveryMessage: 'Delivered on 15 Dec 2025',
-        shippingAddress: {
-          name: 'Sample User',
-          phone: '+91 98765 43210',
-          address_line1: '123 Sample Street',
-          city: 'Mumbai',
-          state: 'Maharashtra',
-          pincode: '400001',
-        },
-        itemId: 'mock-item-001',
-        name: 'Elegant Silk Saree',
-        image: 'https://images.unsplash.com/photo-1583292650898-7d22cd27ca6f?w=400',
-        size: 'Free Size',
-        color: 'Maroon',
-        quantity: 1,
-        unitPrice: 3499,
-        totalPrice: 3499,
-      };
-
       // Transform data to individual product items
-      const flattenedItems: any[] = [sampleDeliveredOrder];
+      const flattenedItems: any[] = [];
       ordersData?.forEach(order => {
         const statusStyle = getStatusStyle(order.status);
         const deliveryMsg = order.status === 'delivered'
@@ -492,6 +467,7 @@ const MyOrders = () => {
             paymentMethod: order.payment_method,
             shippingAddress: order.shipping_address,
             deliveryMessage: deliveryMsg,
+            isResellerOrder: order.is_reseller_order,
             // Item info
             itemId: item.id,
             name: item.product_name,
@@ -913,6 +889,13 @@ const MyOrders = () => {
               <Ionicons name="image-outline" size={28} color="#C7C7CC" />
             </View>
           )}
+          {/* Reseller Badge */}
+          {item.isResellerOrder && (
+            <View style={styles.resellerBadge}>
+              <Ionicons name="storefront" size={10} color="#fff" />
+              <Text style={styles.resellerBadgeText}>Reselling</Text>
+            </View>
+          )}
         </View>
 
         {/* Order Content */}
@@ -1302,29 +1285,38 @@ const MyOrders = () => {
           <ActivityIndicator size="large" color="#F53F7A" />
           <Text style={styles.loadingText}>Loading orders...</Text>
         </View>
-      ) : orders.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="bag-outline" size={64} color="#ccc" />
-          <Text style={styles.emptyTitle}>No Orders Yet</Text>
-          <Text style={styles.emptySubtitle}>Your orders will appear here</Text>
-        </View>
-      ) : (
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              colors={['#F53F7A']}
-              tintColor="#F53F7A"
-            />
-          }
-        >
-          {orders.map((item, index) => renderOrderCard(item))}
-        </ScrollView>
-      )}
+      ) : (() => {
+        // Filter to show only personal (non-reseller) orders
+        const filteredOrders = orders.filter(item => !item.isResellerOrder);
+
+        if (filteredOrders.length === 0) {
+          return (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="bag-outline" size={64} color="#ccc" />
+              <Text style={styles.emptyTitle}>No Orders Yet</Text>
+              <Text style={styles.emptySubtitle}>Your orders will appear here</Text>
+            </View>
+          );
+        }
+
+        return (
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                colors={['#F53F7A']}
+                tintColor="#F53F7A"
+              />
+            }
+          >
+            {filteredOrders.map((item, index) => renderOrderCard(item))}
+          </ScrollView>
+        );
+      })()}
 
       {/* Review Modal */}
       <Modal
@@ -1674,9 +1666,102 @@ const styles = StyleSheet.create({
   headerSpacer: {
     flex: 1,
   },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    gap: 8,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: '#f5f5f5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabButtonActive: {
+    backgroundColor: '#FFF0F5',
+    borderWidth: 1.5,
+    borderColor: '#F53F7A',
+  },
+  tabButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+  },
+  tabButtonTextActive: {
+    color: '#F53F7A',
+    fontWeight: '700',
+  },
   scrollView: {
     flex: 1,
     paddingTop: 12,
+  },
+  // View Earnings Button (empty state)
+  viewEarningsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F53F7A',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 25,
+    marginTop: 20,
+    gap: 8,
+  },
+  viewEarningsButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  // View Earnings Button (inline in list)
+  viewEarningsButtonInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#F53F7A',
+    shadowColor: '#F53F7A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  viewEarningsContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  viewEarningsIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFF0F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  viewEarningsTextContainer: {
+    flex: 1,
+  },
+  viewEarningsTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#333',
+  },
+  viewEarningsSubtitle: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
   },
   // Enhanced Order Card - Image Left, Content Right
   orderCard: {
@@ -1717,6 +1802,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#F8F8F8',
+  },
+  resellerBadge: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    backgroundColor: '#E91E8C',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  resellerBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
   },
   quantityBadgeOverlay: {
     position: 'absolute',

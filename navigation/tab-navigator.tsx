@@ -44,6 +44,7 @@ import Coupons from '~/screens/Coupons';
 import Toast from 'react-native-toast-message';
 import { validateReferralCode, redeemReferralCode } from '~/services/referralCodeService';
 import { sendWhatsAppOTP } from '~/services/whatsappService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
@@ -504,6 +505,11 @@ export default function TabLayout() {
           }
         }
 
+        // CRITICAL: Cache user data for session persistence across app restarts
+        await AsyncStorage.setItem('cached_user_data', JSON.stringify(profileData));
+        await AsyncStorage.setItem('last_logged_in_phone', fullPhone);
+        console.log('[TabNavigator] Cached user data for persistence');
+
         // Directly set the user data in both contexts (using the profile we fetched by phone)
         // This bypasses the ID mismatch issue entirely
         setUserData(profileData);
@@ -636,24 +642,31 @@ export default function TabLayout() {
         .single();
 
       if (createdProfile) {
+        // CRITICAL: Cache user data for session persistence across app restarts
+        await AsyncStorage.setItem('cached_user_data', JSON.stringify(createdProfile));
+        if (userPhone) {
+          await AsyncStorage.setItem('last_logged_in_phone', userPhone);
+        }
+        console.log('[TabNavigator] Cached new user data for persistence');
+
         setUserData(createdProfile);
       }
 
       // Force refresh user data
       await refreshUserData();
       setCreatingProfile(false);
-      
+
       // Close onboarding modal and show success
       setShowOnboarding(false);
       setName('');
       resetSheetState();
-      
+
       Toast.show({
         type: 'success',
         text1: 'Welcome!',
         text2: 'Account created successfully',
       });
-      
+
       return true;
     } catch (error: any) {
       console.error('Create profile error:', error);

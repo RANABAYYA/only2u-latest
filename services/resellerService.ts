@@ -8,7 +8,6 @@ import type {
   CatalogShareForm,
   ResellerDashboard,
   ResellerEarning,
-  Product
 } from '~/types/reseller';
 
 interface ResellerCheckoutItemInput {
@@ -179,6 +178,30 @@ export class ResellerService {
       return data;
     } catch (error) {
       console.error('Error updating reseller profile:', error);
+      throw error;
+    }
+  }
+
+  static async updateBankDetails(resellerId: string, details: {
+    account_holder_name: string;
+    bank_account_number: string;
+    ifsc_code: string;
+  }): Promise<Reseller> {
+    try {
+      const { data, error } = await supabase
+        .from('resellers')
+        .update({
+          ...details,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', resellerId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating bank details:', error);
       throw error;
     }
   }
@@ -737,7 +760,13 @@ export class ResellerService {
         pending_earnings: pendingEarnings,
         this_month_earnings: thisMonthEarnings,
         last_month_earnings: lastMonthEarnings,
-        recent_orders: orders.slice(0, 5) as any[],
+        recent_orders: orders.slice(0, 5) as any[], // TODO: Properly map to ResellerOrder
+        top_products: [], // TODO: Implement top products logic
+        analytics: {
+          daily_revenue: [],
+          weekly_orders: [],
+          monthly_earnings: []
+        }
       };
     } catch (error) {
       console.error('Error fetching reseller dashboard:', error);

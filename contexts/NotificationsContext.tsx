@@ -39,45 +39,78 @@ type NotificationsContextType = {
 const NotificationsContext = createContext<NotificationsContextType | undefined>(undefined);
 
 async function registerForPushNotificationsAsync() {
+  // Create notification channel for Android
   if (Platform.OS === 'android') {
-    Notifications.setNotificationChannelAsync('default', {
-      name: 'default',
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'Default',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#FF231F7C',
+      sound: 'default',
     });
   }
 
-  if (Device.isDevice) {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-    if (finalStatus !== 'granted') {
-      console.log('Failed to get push token for push notification!');
-      return;
-    }
-    const projectId =
-      Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
-    if (!projectId) {
-      console.log('Project ID not found');
-    }
+  // Check if running on physical device
+  if (!Device.isDevice) {
+    console.log('[PushNotifications] Must use physical device for Push Notifications');
+    return undefined;
+  }
+
+  // Request permissions
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+
+  if (existingStatus !== 'granted') {
+    console.log('[PushNotifications] Requesting permission...');
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+
+  if (finalStatus !== 'granted') {
+    console.log('[PushNotifications] Permission denied!');
+    return undefined;
+  }
+
+  console.log('[PushNotifications] Permission granted, fetching token...');
+
+  // Get project ID - try multiple sources for production compatibility
+  let projectId = Constants?.expoConfig?.extra?.eas?.projectId
+    ?? Constants?.easConfig?.projectId;
+
+  // Hardcoded fallback for production builds where Constants may not be available
+  if (!projectId) {
+    projectId = '23280bb9-6b62-412f-a55b-292d7738e440'; // From app.json extra.eas.projectId
+    console.log('[PushNotifications] Using hardcoded projectId:', projectId);
+  } else {
+    console.log('[PushNotifications] Using projectId from Constants:', projectId);
+  }
+
+  // Retry logic for token fetch
+  const maxRetries = 3;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const pushTokenString = (
-        await Notifications.getExpoPushTokenAsync({
-          projectId,
-        })
-      ).data;
-      console.log('Expo Push Token:', pushTokenString);
+      const tokenResponse = await Notifications.getExpoPushTokenAsync({
+        projectId,
+      });
+
+      const pushTokenString = tokenResponse.data;
+      console.log('[PushNotifications] ✅ Expo Push Token obtained:', pushTokenString);
       return pushTokenString;
     } catch (e: unknown) {
-      console.error(e);
+      lastError = e;
+      console.error(`[PushNotifications] Attempt ${attempt}/${maxRetries} failed:`, e);
+
+      if (attempt < maxRetries) {
+        // Wait before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
     }
-  } else {
-    console.log('Must use physical device for Push Notifications');
   }
+
+  console.error('[PushNotifications] ❌ Failed to get push token after all retries:', lastError);
+  return undefined;
 }
 
 export const NotificationsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

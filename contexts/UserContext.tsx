@@ -54,15 +54,60 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loadUserData = async () => {
     try {
       setIsLoading(true);
+
+      // FIRST: Check for cached user data (primary persistence for WhatsApp OTP)
+      const cachedUserData = await AsyncStorage.getItem('cached_user_data');
+      const lastPhone = await AsyncStorage.getItem('last_logged_in_phone');
+
+      console.log('[UserContext] loadUserData - cached:', !!cachedUserData, 'phone:', !!lastPhone);
+
+      if (cachedUserData) {
+        const parsedUser = JSON.parse(cachedUserData);
+        console.log('[UserContext] Found cached user:', parsedUser.id);
+
+        // Verify this user still exists in database (by phone for reliability)
+        if (lastPhone) {
+          const { data: dbUser, error: dbError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('phone', lastPhone)
+            .maybeSingle();
+
+          if (dbUser && !dbError) {
+            console.log('[UserContext] Verified user from database by phone');
+            const mappedUser = {
+              ...dbUser,
+              profilePhoto: dbUser.profilePhoto,
+              phone: dbUser.phone || dbUser.phoneNumber,
+              updatedAt: new Date().toISOString(),
+            } as UserData;
+            setUserData(mappedUser);
+            await AsyncStorage.setItem('userData', JSON.stringify(mappedUser));
+            // Update cached data with fresh from DB
+            await AsyncStorage.setItem('cached_user_data', JSON.stringify(mappedUser));
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // Phone not found in DB but we have cached data - use it anyway
+        console.log('[UserContext] Using cached user data directly');
+        setUserData(parsedUser as UserData);
+        setIsLoading(false);
+        return;
+      }
+
+      // SECOND: Try Supabase session (for Google login, etc.)
       const { data: { session } } = await supabase.auth.getSession();
+      console.log('[UserContext] Session check:', !!session);
 
       if (session?.user) {
-        // If we have a session, fetch fresh data from Supabase
+        // If we have a session, fetch fresh data from Supabase by ID
         const { data: freshUserData, error } = await supabase
           .from('users')
           .select('*')
           .eq('id', session.user.id)
-          .single();
+          .maybeSingle();
 
         if (freshUserData && !error) {
           const mappedUser = {
@@ -73,22 +118,83 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } as UserData;
           setUserData(mappedUser);
           await AsyncStorage.setItem('userData', JSON.stringify(mappedUser));
+          // Also cache for next time
+          await AsyncStorage.setItem('cached_user_data', JSON.stringify(mappedUser));
+          if (mappedUser.phone) {
+            await AsyncStorage.setItem('last_logged_in_phone', mappedUser.phone);
+          }
+        } else if (lastPhone) {
+          // User not found by session ID - try phone fallback
+          console.log('[UserContext] Trying phone fallback for session user');
+          const { data: phoneUser, error: phoneError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('phone', lastPhone)
+            .maybeSingle();
+
+          if (phoneUser && !phoneError) {
+            const mappedUser = {
+              ...phoneUser,
+              profilePhoto: phoneUser.profilePhoto,
+              phone: phoneUser.phone || phoneUser.phoneNumber,
+              updatedAt: new Date().toISOString(),
+            } as UserData;
+            setUserData(mappedUser);
+            await AsyncStorage.setItem('userData', JSON.stringify(mappedUser));
+            await AsyncStorage.setItem('cached_user_data', JSON.stringify(mappedUser));
+          }
         } else {
-          // Fallback to local storage if network fails but we are technically logged in
+          // Fallback to local storage if network fails
           const storedData = await AsyncStorage.getItem('userData');
           if (storedData) {
             setUserData(JSON.parse(storedData));
           }
         }
+      } else if (lastPhone) {
+        // No session but we have a phone - try to find user by phone
+        console.log('[UserContext] No session, trying phone lookup:', lastPhone);
+        const { data: phoneUser } = await supabase
+          .from('users')
+          .select('*')
+          .eq('phone', lastPhone)
+          .maybeSingle();
+
+        if (phoneUser) {
+          console.log('[UserContext] Found user by phone, restoring session');
+          const mappedUser = {
+            ...phoneUser,
+            profilePhoto: phoneUser.profilePhoto,
+            phone: phoneUser.phone || phoneUser.phoneNumber,
+            updatedAt: new Date().toISOString(),
+          } as UserData;
+          setUserData(mappedUser);
+          await AsyncStorage.setItem('userData', JSON.stringify(mappedUser));
+          await AsyncStorage.setItem('cached_user_data', JSON.stringify(mappedUser));
+          // Create anonymous session for API access
+          await supabase.auth.signInAnonymously();
+        } else {
+          // No user found anywhere - clear data
+          setUserData(null);
+          await AsyncStorage.removeItem('userData');
+        }
       } else {
-        // No session, check if we have local data (maybe expired?)
-        // Ideally if no session, we clear user data
+        // No session and no cached data
         setUserData(null);
         await AsyncStorage.removeItem('userData');
       }
     } catch (error) {
       console.error('Error loading user data:', error);
-      setUserData(null);
+      // Try to use cached data as fallback
+      try {
+        const storedData = await AsyncStorage.getItem('userData');
+        if (storedData) {
+          setUserData(JSON.parse(storedData));
+        } else {
+          setUserData(null);
+        }
+      } catch {
+        setUserData(null);
+      }
     } finally {
       setIsLoading(false);
     }

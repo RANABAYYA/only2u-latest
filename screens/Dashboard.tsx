@@ -36,6 +36,7 @@ import Toast from 'react-native-toast-message';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import NewYearSpecials from '~/components/Dashboard/NewYearSpecials';
+import DashboardLoader from '~/components/DashboardLoader';
 
 type DashboardNavigationProp = StackNavigationProp<RootStackParamList>;
 
@@ -690,7 +691,9 @@ const Dashboard = () => {
     }
 
     if (forceRefresh) {
-      setIsRefreshing(true);
+      // setIsRefreshing(true);
+      // Show custom loader even on refresh as per user request
+      setIsInitialLoading(true);
     } else {
       setIsInitialLoading(true);
     }
@@ -700,10 +703,17 @@ const Dashboard = () => {
       setErrorMessage('');
 
       // Fetch all data in parallel
+      // Fetch all data in parallel, but handle dependencies
       await Promise.all([
         fetchFeatureSections(),
-        fetchCategories(),
         fetchFeaturedProducts(),
+        // Chain categories and their products together
+        (async () => {
+          const fetchedCategories = await fetchCategories();
+          if (fetchedCategories && fetchedCategories.length > 0) {
+            await fetchCategoryProducts(fetchedCategories);
+          }
+        })()
       ]);
 
       setLastFetchTime(now);
@@ -763,11 +773,12 @@ const Dashboard = () => {
     }
   };
 
-  useEffect(() => {
-    if (categories.length > 0) {
-      fetchCategoryProducts();
-    }
-  }, [categories]);
+  // Removed automatic fetching of category products on categories change to prevent double loading/blinking
+  // useEffect(() => {
+  //   if (categories.length > 0) {
+  //     fetchCategoryProducts();
+  //   }
+  // }, [categories]);
 
   // Shimmer animation effect
   useEffect(() => {
@@ -818,12 +829,14 @@ const Dashboard = () => {
 
       if (error) {
         console.error('Error fetching categories:', error);
-        return;
+        return [];
       }
 
       setCategories(data || []);
+      return data || [];
     } catch (error) {
       console.error('Error fetching categories:', error);
+      return [];
     }
   };
 
@@ -945,12 +958,12 @@ const Dashboard = () => {
     }
   };
 
-  const fetchCategoryProducts = async () => {
+  const fetchCategoryProducts = async (currentCategories: Category[] = categories) => {
     try {
       // Fetch products for each category
       const categoryProductsData: { [categoryId: string]: Product[] } = {};
 
-      for (const category of categories) {
+      for (const category of currentCategories) {
         try {
           const { data, error } = await supabase
             .from('products')
@@ -1794,124 +1807,7 @@ const Dashboard = () => {
 
         {/* Initial Loading Screen */}
         {isInitialLoading && !hasError ? (
-          <View style={styles.fullScreenLoading}>
-            <ScrollView
-              style={styles.skeletonScrollView}
-              contentContainerStyle={styles.skeletonContentContainer}
-              showsVerticalScrollIndicator={false}
-            >
-              {/* Header Skeleton */}
-              <View style={styles.skeletonHeader}>
-                <Animated.View
-                  style={[
-                    styles.skeletonLogo,
-                    {
-                      opacity: shimmerAnimation.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0.3, 0.7],
-                      }),
-                    },
-                  ]}
-                />
-                <View style={styles.skeletonHeaderRight}>
-                  {[1, 2, 3, 4].map((item) => (
-                    <Animated.View
-                      key={item}
-                      style={[
-                        styles.skeletonIcon,
-                        {
-                          opacity: shimmerAnimation.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0.3, 0.7],
-                          }),
-                        },
-                      ]}
-                    />
-                  ))}
-                </View>
-              </View>
-
-              {/* Search Bar Skeleton */}
-              <Animated.View
-                style={[
-                  styles.skeletonSearchBar,
-                  {
-                    opacity: shimmerAnimation.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.3, 0.7],
-                    }),
-                  },
-                ]}
-              />
-
-              {/* Categories Skeleton */}
-              <View style={styles.skeletonSection}>
-                <View style={styles.skeletonSectionHeader}>
-                  <View style={styles.skeletonTitle} />
-                  <View style={styles.skeletonSeeMore} />
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[1, 2, 3, 4, 5].map((item) => (
-                    <View key={item} style={styles.skeletonCategoryCard}>
-                      <View style={styles.skeletonCategoryImage} />
-                      <View style={styles.skeletonCategoryTitle} />
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-
-              {/* Trending Products Skeleton */}
-              <View style={styles.skeletonSection}>
-                <View style={styles.skeletonSectionHeader}>
-                  <View style={styles.skeletonTitle} />
-                  <View style={styles.skeletonSeeMore} />
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[1, 2, 3, 4].map((item) => (
-                    <View key={item} style={styles.skeletonProductCard}>
-                      <View style={styles.skeletonProductImage} />
-                      <View style={styles.skeletonProductTitle} />
-                      <View style={styles.skeletonProductPrice} />
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-
-              {/* Best Sellers Skeleton */}
-              <View style={styles.skeletonSection}>
-                <View style={styles.skeletonSectionHeader}>
-                  <View style={styles.skeletonTitle} />
-                  <View style={styles.skeletonSeeMore} />
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[1, 2, 3, 4].map((item) => (
-                    <View key={item} style={styles.skeletonProductCard}>
-                      <View style={styles.skeletonProductImage} />
-                      <View style={styles.skeletonProductTitle} />
-                      <View style={styles.skeletonProductPrice} />
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-
-              {/* Category Section Skeleton */}
-              <View style={styles.skeletonSection}>
-                <View style={styles.skeletonSectionHeader}>
-                  <View style={styles.skeletonTitle} />
-                  <View style={styles.skeletonSeeMore} />
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[1, 2, 3, 4].map((item) => (
-                    <View key={item} style={styles.skeletonProductCard}>
-                      <View style={styles.skeletonProductImage} />
-                      <View style={styles.skeletonProductTitle} />
-                      <View style={styles.skeletonProductPrice} />
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-            </ScrollView>
-          </View>
+          <DashboardLoader />
         ) : hasError ? (
           <View style={styles.errorContainer}>
             <Ionicons name="cloud-offline-outline" size={64} color="#999" />
@@ -1991,127 +1887,129 @@ const Dashboard = () => {
         )}
 
         {/* Address Selection Bottom Sheet */}
-        {addressSheetVisible && (
-          <BottomSheet
-            ref={addressSheetRef}
-            index={0}
-            snapPoints={['70%']}
-            enablePanDownToClose
-            onClose={() => setAddressSheetVisible(false)}
-          >
-            <BottomSheetScrollView style={styles.addressSheetContent}>
-              <View style={styles.addressSheetHeader}>
-                <Text style={styles.addressSheetTitle}>Select Delivery Address</Text>
-                <TouchableOpacity
-                  style={styles.addNewAddressButton}
-                  onPress={() => {
-                    setAddressSheetVisible(false);
-                    addressSheetRef.current?.close();
-                    navigation.navigate('AddressBook' as never);
-                  }}
-                >
-                  <Ionicons name="add-circle" size={20} color="#F53F7A" />
-                  <Text style={styles.addNewAddressText}>Add New</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Pincode Availability Checker */}
-              <View style={styles.pincodeChecker}>
-                <Text style={styles.pincodeCheckerTitle}>Check Delivery Availability</Text>
-                <View style={styles.pincodeInputRow}>
-                  <TextInput
-                    style={styles.pincodeInput}
-                    placeholder="Enter Pincode"
-                    value={pincode}
-                    onChangeText={setPincode}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    placeholderTextColor="#999"
-                  />
+        {
+          addressSheetVisible && (
+            <BottomSheet
+              ref={addressSheetRef}
+              index={0}
+              snapPoints={['70%']}
+              enablePanDownToClose
+              onClose={() => setAddressSheetVisible(false)}
+            >
+              <BottomSheetScrollView style={styles.addressSheetContent}>
+                <View style={styles.addressSheetHeader}>
+                  <Text style={styles.addressSheetTitle}>Select Delivery Address</Text>
                   <TouchableOpacity
-                    style={[styles.checkButton, checkingPincode && styles.checkButtonDisabled]}
-                    onPress={handleCheckPincode}
-                    disabled={checkingPincode}
-                  >
-                    {checkingPincode ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.checkButtonText}>Check</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-                {pincodeAvailable !== null && (
-                  <View style={[styles.availabilityResult, pincodeAvailable ? styles.availableResult : styles.unavailableResult]}>
-                    <Ionicons
-                      name={pincodeAvailable ? 'checkmark-circle' : 'close-circle'}
-                      size={18}
-                      color={pincodeAvailable ? '#10b981' : '#ef4444'}
-                    />
-                    <Text style={[styles.availabilityText, pincodeAvailable ? styles.availableText : styles.unavailableText]}>
-                      {pincodeAvailable ? 'Delivery available to this location' : 'Currently not serviceable'}
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.dividerLine} />
-
-              {addresses.length === 0 ? (
-                <View style={styles.emptyAddressContainer}>
-                  <Ionicons name="location-outline" size={48} color="#999" />
-                  <Text style={styles.emptyAddressText}>No addresses added yet</Text>
-                  <TouchableOpacity
-                    style={styles.addFirstAddressButton}
+                    style={styles.addNewAddressButton}
                     onPress={() => {
                       setAddressSheetVisible(false);
                       addressSheetRef.current?.close();
                       navigation.navigate('AddressBook' as never);
                     }}
                   >
-                    <Text style={styles.addFirstAddressText}>Add Your First Address</Text>
+                    <Ionicons name="add-circle" size={20} color="#F53F7A" />
+                    <Text style={styles.addNewAddressText}>Add New</Text>
                   </TouchableOpacity>
                 </View>
-              ) : (
-                <View style={styles.addressList}>
-                  {addresses.map((address) => (
+
+                {/* Pincode Availability Checker */}
+                <View style={styles.pincodeChecker}>
+                  <Text style={styles.pincodeCheckerTitle}>Check Delivery Availability</Text>
+                  <View style={styles.pincodeInputRow}>
+                    <TextInput
+                      style={styles.pincodeInput}
+                      placeholder="Enter Pincode"
+                      value={pincode}
+                      onChangeText={setPincode}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      placeholderTextColor="#999"
+                    />
                     <TouchableOpacity
-                      key={address.id}
-                      style={[
-                        styles.addressCard,
-                        selectedAddress?.id === address.id && styles.selectedAddressCard
-                      ]}
-                      onPress={() => handleAddressSelect(address)}
+                      style={[styles.checkButton, checkingPincode && styles.checkButtonDisabled]}
+                      onPress={handleCheckPincode}
+                      disabled={checkingPincode}
                     >
-                      <View style={styles.addressCardHeader}>
-                        <View style={styles.addressCardNameRow}>
-                          <Text style={styles.addressCardName}>{address.full_name}</Text>
-                          {address.is_default && (
-                            <View style={styles.defaultBadge}>
-                              <Text style={styles.defaultBadgeText}>Default</Text>
-                            </View>
+                      {checkingPincode ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.checkButtonText}>Check</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                  {pincodeAvailable !== null && (
+                    <View style={[styles.availabilityResult, pincodeAvailable ? styles.availableResult : styles.unavailableResult]}>
+                      <Ionicons
+                        name={pincodeAvailable ? 'checkmark-circle' : 'close-circle'}
+                        size={18}
+                        color={pincodeAvailable ? '#10b981' : '#ef4444'}
+                      />
+                      <Text style={[styles.availabilityText, pincodeAvailable ? styles.availableText : styles.unavailableText]}>
+                        {pincodeAvailable ? 'Delivery available to this location' : 'Currently not serviceable'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.dividerLine} />
+
+                {addresses.length === 0 ? (
+                  <View style={styles.emptyAddressContainer}>
+                    <Ionicons name="location-outline" size={48} color="#999" />
+                    <Text style={styles.emptyAddressText}>No addresses added yet</Text>
+                    <TouchableOpacity
+                      style={styles.addFirstAddressButton}
+                      onPress={() => {
+                        setAddressSheetVisible(false);
+                        addressSheetRef.current?.close();
+                        navigation.navigate('AddressBook' as never);
+                      }}
+                    >
+                      <Text style={styles.addFirstAddressText}>Add Your First Address</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={styles.addressList}>
+                    {addresses.map((address) => (
+                      <TouchableOpacity
+                        key={address.id}
+                        style={[
+                          styles.addressCard,
+                          selectedAddress?.id === address.id && styles.selectedAddressCard
+                        ]}
+                        onPress={() => handleAddressSelect(address)}
+                      >
+                        <View style={styles.addressCardHeader}>
+                          <View style={styles.addressCardNameRow}>
+                            <Text style={styles.addressCardName}>{address.full_name}</Text>
+                            {address.is_default && (
+                              <View style={styles.defaultBadge}>
+                                <Text style={styles.defaultBadgeText}>Default</Text>
+                              </View>
+                            )}
+                          </View>
+                          {selectedAddress?.id === address.id && (
+                            <Ionicons name="checkmark-circle" size={24} color="#F53F7A" />
                           )}
                         </View>
-                        {selectedAddress?.id === address.id && (
-                          <Ionicons name="checkmark-circle" size={24} color="#F53F7A" />
-                        )}
-                      </View>
-                      <Text style={styles.addressCardPhone}>{address.phone}</Text>
-                      <Text style={styles.addressCardAddress}>
-                        {address.address_line1}
-                        {address.address_line2 && `, ${address.address_line2}`}
-                      </Text>
-                      <Text style={styles.addressCardCity}>
-                        {address.city}, {address.state} - {address.pincode}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-            </BottomSheetScrollView>
-          </BottomSheet>
-        )}
+                        <Text style={styles.addressCardPhone}>{address.phone}</Text>
+                        <Text style={styles.addressCardAddress}>
+                          {address.address_line1}
+                          {address.address_line2 && `, ${address.address_line2}`}
+                        </Text>
+                        <Text style={styles.addressCardCity}>
+                          {address.city}, {address.state} - {address.pincode}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </BottomSheetScrollView>
+            </BottomSheet>
+          )
+        }
 
-      </Animated.View>
+      </Animated.View >
       {/* End Animated Content Wrapper */}
 
       {/* Coins Info Modal - Outside Animated.View for proper visibility */}
@@ -2255,7 +2153,7 @@ const Dashboard = () => {
           </View>
         </View>
       </Modal>
-    </View>
+    </View >
   );
 };
 

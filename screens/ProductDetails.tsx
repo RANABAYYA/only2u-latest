@@ -59,6 +59,7 @@ import { compressImageForProfilePhoto } from '~/utils/imageCompression';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getPlayableVideoUrl, isHlsUrl, getFallbackVideoUrl } from '../utils/videoUrlHelpers';
+import { getSetting } from '~/utils/settings';
 
 const { width } = Dimensions.get('window');
 const RESELL_TUTORIAL_VIDEO_URL = 'https://vz-025b9bde-754.b-cdn.net/b0227bc1-daa8-4c85-8233-5e3880ad5828/playlist.m3u8';
@@ -201,6 +202,9 @@ const ProductDetails = () => {
   const [failedVideos, setFailedVideos] = useState<Set<string>>(new Set());
   const [videoFallbackOverrides, setVideoFallbackOverrides] = useState<Record<string, string>>({});
 
+  // Global setting for wholesale combo offer visibility
+  const [showWholesaleCombo, setShowWholesaleCombo] = useState(true);
+
   // Convert Google Drive links to direct download for thumbnail generation
   const resetFullScreenZoom = useCallback(() => {
     baseScale.setValue(1);
@@ -231,6 +235,21 @@ const ProductDetails = () => {
       }
     };
     loadTutorialFlags();
+  }, []);
+
+  // Fetch global setting for wholesale combo offer visibility
+  useEffect(() => {
+    const fetchWholesaleComboSetting = async () => {
+      try {
+        const value = await getSetting('show_wholesale_combo');
+        // Default to true if setting doesn't exist
+        setShowWholesaleCombo(value !== 'false');
+      } catch (error) {
+        console.warn('Failed to fetch wholesale combo setting:', error);
+        setShowWholesaleCombo(true); // Default to true on error
+      }
+    };
+    fetchWholesaleComboSetting();
   }, []);
 
   useEffect(() => {
@@ -1545,7 +1564,7 @@ const ProductDetails = () => {
     if (!selectedSize) {
       triggerJitterAnimation(sizeSectionJitter);
       Toast.show({
-        type: 'error',
+        type: 'sizeRequired',
         text1: 'Size Required',
         text2: 'Please select a size to add to cart',
         position: 'top',
@@ -3704,7 +3723,7 @@ const ProductDetails = () => {
                           styles.addToCartButtonPro,
                           (getAvailableQuantity() === 0 || addToCartLoading) && styles.buttonDisabled,
                         ]}
-                        onPress={handleAddToCart}
+                        onPress={() => handleAddToCart()}
                         disabled={getAvailableQuantity() === 0 || addToCartLoading}
                         activeOpacity={0.85}
                       >
@@ -5173,7 +5192,7 @@ const ProductDetails = () => {
               </TouchableOpacity>
 
               {/* Full Set Option - 15% discount on RSP */}
-              {availableSizes && availableSizes.length > 1 && (
+              {showWholesaleCombo && availableSizes && availableSizes.length > 1 && (
                 <View style={{
                   marginTop: 16,
                   padding: 16,

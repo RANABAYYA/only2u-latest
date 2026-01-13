@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,10 @@ import {
   ActivityIndicator,
   FlatList,
   Linking,
-  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { Video, ResizeMode } from 'expo-av';
 import { useInfluencer, Influencer, InfluencerPost } from '~/contexts/InfluencerContext';
 import { useAuth } from '~/contexts/useAuth';
 import { useLoginSheet } from '~/contexts/LoginSheetContext';
@@ -25,7 +23,7 @@ import { supabase } from '~/utils/supabase';
 import Toast from 'react-native-toast-message';
 
 const { width } = Dimensions.get('window');
-const POST_SIZE = (width - 6) / 3;
+
 
 type InfluencerProfileRouteParams = {
   InfluencerProfile: {
@@ -45,24 +43,20 @@ const InfluencerProfile: React.FC = () => {
 
   const {
     fetchInfluencerById,
-    fetchInfluencerPosts,
-    influencerPosts,
     fetchProductsByInfluencerId,
     followInfluencer,
     unfollowInfluencer,
     isFollowingInfluencer,
-    likePost,
-    unlikePost,
+    fetchInfluencerPosts,
+    influencerPosts,
   } = useInfluencer();
 
   const [influencer, setInfluencer] = useState<Influencer | null>(initialInfluencer || null);
-  const [posts, setPosts] = useState<InfluencerPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [contentLoading, setContentLoading] = useState(true);
-  const [selectedPost, setSelectedPost] = useState<InfluencerPost | null>(null);
-  const [showVideoModal, setShowVideoModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'products'>('posts');
   const [influencerProducts, setInfluencerProducts] = useState<any[]>([]);
+  const [posts, setPosts] = useState<InfluencerPost[]>([]);
   const [postsDisplayCount, setPostsDisplayCount] = useState(12);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
 
@@ -83,27 +77,7 @@ const InfluencerProfile: React.FC = () => {
           setInfluencer(initialInfluencer);
         }
 
-        // Generate sample posts
-        const samplePosts: InfluencerPost[] = Array.from({ length: 9 }, (_, i) => ({
-          id: `sample_post_${influencerId}_${i}`,
-          influencer_id: influencerId,
-          title: `Style Inspiration ${i + 1}`,
-          description: 'Check out this amazing look! 💫✨',
-          video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-          thumbnail_url: `https://via.placeholder.com/400x600/FF6EA6/FFFFFF?text=Video+${i + 1}`,
-          product_id: undefined,
-          views: Math.floor(Math.random() * 50000) + 10000,
-          likes: Math.floor(Math.random() * 5000) + 500,
-          shares: Math.floor(Math.random() * 500) + 50,
-          is_published: true,
-          is_featured: i < 3,
-          published_at: new Date(Date.now() - i * 86400000).toISOString(),
-          created_at: new Date(Date.now() - i * 86400000).toISOString(),
-          updated_at: new Date(Date.now() - i * 86400000).toISOString(),
-          is_liked: false,
-        }));
-
-        setPosts(samplePosts);
+        // Generate sample post
       } else {
         // Real influencer data
         const influencerData = await fetchInfluencerById(influencerId);
@@ -138,10 +112,67 @@ const InfluencerProfile: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    // Update posts when context data changes
-    setPosts(influencerPosts.filter(post => post.influencer_id === influencerId));
-  }, [influencerPosts, influencerId]);
+  // Helper function to share to WhatsApp
+  const shareToWhatsApp = async (message: string) => {
+    const url = `whatsapp://send?text=${encodeURIComponent(message)}`;
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'WhatsApp not available',
+          text2: 'Install WhatsApp to share',
+        });
+      }
+    } catch (error) {
+      console.error('Error sharing to WhatsApp:', error);
+    }
+  };
+
+  // Helper function to get first image from product
+  const getFirstImage = (product: any): string => {
+    if (product?.image_urls && Array.isArray(product.image_urls) && product.image_urls.length > 0) {
+      return product.image_urls[0];
+    }
+    if (product?.image_url) {
+      return product.image_url;
+    }
+    return 'https://via.placeholder.com/400x400/f0f0f0/999999?text=No+Image';
+  };
+
+  // Render product card for horizontal list
+  const renderProductCard = (product: any) => {
+    const firstImage = getFirstImage(product);
+    const price = product?.price || 0;
+    const discountedPrice = product?.discount_percentage
+      ? price * (1 - product.discount_percentage / 100)
+      : price;
+
+    return (
+      <TouchableOpacity
+        style={styles.productCard}
+        onPress={() => navigation.navigate('ProductDetails' as never, { product } as never)}
+        activeOpacity={0.8}
+      >
+        <Image
+          source={{ uri: firstImage }}
+          style={styles.productCardImage}
+          resizeMode="cover"
+        />
+        <View style={styles.productCardInfo}>
+          <Text style={styles.productCardName} numberOfLines={2}>{product?.name || 'Product'}</Text>
+          <View style={styles.productCardPriceRow}>
+            <Text style={styles.productCardPrice}>₹{discountedPrice.toFixed(0)}</Text>
+            {product?.discount_percentage > 0 && (
+              <Text style={styles.productCardOriginalPrice}>₹{price.toFixed(0)}</Text>
+            )}
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const handleFollow = async () => {
     if (!influencer) return;
@@ -197,266 +228,7 @@ const InfluencerProfile: React.FC = () => {
     }
   };
 
-  const handleLikePost = async (postId: string, isLiked: boolean) => {
-    // Handle sample posts
-    if (postId.startsWith('sample_post_')) {
-      // Just update local state for demo
-      setPosts(prev => prev.map(post =>
-        post.id === postId
-          ? {
-            ...post,
-            likes: isLiked ? post.likes - 1 : post.likes + 1,
-            is_liked: !isLiked
-          }
-          : post
-      ));
-      Toast.show({
-        type: 'success',
-        text1: isLiked ? 'Unliked' : 'Liked',
-        text2: 'Sample profile demo',
-      });
-      return;
-    }
 
-    let currentUser = user;
-
-    // Fallback: Check Supabase session directly if context user is missing
-    if (!currentUser) {
-      const { data: { user: sessionUser } } = await supabase.auth.getUser();
-      if (sessionUser) {
-        currentUser = sessionUser;
-      }
-    }
-
-    if (!currentUser) {
-      Toast.show({
-        type: 'info',
-        text1: 'Login Required',
-        text2: 'Please login to like posts',
-      });
-      showLoginSheet();
-      return;
-    }
-
-    try {
-      const success = isLiked ? await unlikePost(postId) : await likePost(postId);
-      if (success) {
-        // Update local state
-        setPosts(prev => prev.map(post =>
-          post.id === postId
-            ? {
-              ...post,
-              likes: isLiked ? post.likes - 1 : post.likes + 1,
-              is_liked: !isLiked
-            }
-            : post
-        ));
-      }
-    } catch (error) {
-      console.error('Error updating like status:', error);
-    }
-  };
-
-  const shareToWhatsApp = async (message: string) => {
-    try {
-      const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
-      const canOpen = await Linking.canOpenURL(whatsappUrl);
-      if (canOpen) {
-        await Linking.openURL(whatsappUrl);
-      } else {
-        Alert.alert('WhatsApp not installed', 'Please install WhatsApp to share.');
-      }
-    } catch (error) {
-      console.error('Error opening WhatsApp:', error);
-      Alert.alert('Error', 'Unable to open WhatsApp for sharing.');
-    }
-  };
-
-  // Helper functions for Product Card
-  const getSmallestPrice = (product: any) => {
-    if (product.product_variants && product.product_variants.length > 0) {
-      // Find variant with lowest price
-      return Math.min(...product.product_variants.map((v: any) => v.price));
-    }
-    return 0;
-  };
-
-  const getFirstImage = (product: any) => {
-    if (product.image_urls && product.image_urls.length > 0) return product.image_urls[0];
-    if (product.product_variants && product.product_variants.length > 0) {
-      const v = product.product_variants.find((v: any) => v.image_urls && v.image_urls.length > 0);
-      if (v) return v.image_urls[0];
-    }
-    return 'https://via.placeholder.com/150';
-  };
-
-
-
-  const renderProductCard = (product: any) => {
-    const price = getSmallestPrice(product);
-    const discountPct = Math.max(...(product?.product_variants?.map((v: any) => v.discount_percentage || 0) || [0]));
-    const hasDiscount = discountPct > 0;
-    const originalPrice = hasDiscount ? price / (1 - discountPct / 100) : undefined;
-
-    // Use rating if available, else 0
-    const rating = product.rating || 0;
-
-    const firstImage = getFirstImage(product);
-    const brandLabel = product.vendor_name || 'Only2U';
-
-    return (
-      <TouchableOpacity
-        key={product.id}
-        style={styles.productCard}
-        activeOpacity={0.85}
-        onPress={() => navigation.navigate('ProductDetails' as never, { product } as never)}
-      >
-        {hasDiscount && (
-          <View style={styles.discountBadge}>
-            <Text style={styles.discountBadgeText}>{Math.round(discountPct)}% OFF</Text>
-          </View>
-        )}
-        <Image source={{ uri: firstImage }} style={styles.productImage} />
-        <Text style={styles.brandName} numberOfLines={1}>{brandLabel}</Text>
-        <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
-        <View style={styles.priceContainer}>
-          <View style={styles.priceInfo}>
-            {hasDiscount && (
-              <Text style={styles.originalPrice}>₹{(originalPrice || 0).toFixed(0)}</Text>
-            )}
-            <Text style={styles.price}>₹{price?.toFixed(0)}</Text>
-          </View>
-          <View style={styles.discountAndRatingRow}>
-            {hasDiscount && (
-              <Text style={styles.discountPercentage}>{Math.round(discountPct)}% OFF</Text>
-            )}
-            <View style={styles.reviewsContainer}>
-              <Ionicons name="star" size={12} color="#FFD600" style={{ marginRight: 2 }} />
-              <Text style={styles.reviews}>{rating.toFixed(1)}</Text>
-            </View>
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const handlePostPress = (post: InfluencerPost) => {
-    setSelectedPost(post);
-    setShowVideoModal(true);
-  };
-
-  const renderPost = ({ item }: { item: InfluencerPost }) => (
-    <TouchableOpacity
-      style={styles.postItem}
-      onPress={() => handlePostPress(item)}
-    >
-      {item.thumbnail_url ? (
-        <Image
-          source={{ uri: item.thumbnail_url }}
-          style={styles.postImage}
-          resizeMode="cover"
-        />
-      ) : (
-        <View style={styles.postImagePlaceholder}>
-          <Ionicons name="play-circle" size={40} color="rgba(255,255,255,0.8)" />
-        </View>
-      )}
-      <View style={styles.postOverlay}>
-        <View style={styles.postStats}>
-          <Ionicons name="play" size={16} color="white" />
-          <Text style={styles.postStatText}>{item.views}</Text>
-          <Ionicons name="heart" size={16} color="white" style={{ marginLeft: 12 }} />
-          <Text style={styles.postStatText}>{item.likes}</Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-
-  const renderVideoModal = () => {
-    if (!showVideoModal || !selectedPost) return null;
-
-    return (
-      <Modal
-        visible={showVideoModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowVideoModal(false)}
-      >
-        <View style={styles.videoModalContainer}>
-          <TouchableOpacity
-            style={styles.videoModalOverlay}
-            activeOpacity={1}
-            onPress={() => setShowVideoModal(false)}
-          >
-            <SafeAreaView style={styles.videoModalContent}>
-              <View style={styles.videoModalHeader}>
-                <TouchableOpacity onPress={() => setShowVideoModal(false)}>
-                  <Ionicons name="close" size={28} color="white" />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.videoContainer}>
-                <Video
-                  source={{ uri: selectedPost.video_url }}
-                  style={styles.video}
-                  useNativeControls
-                  resizeMode={ResizeMode.CONTAIN}
-                  shouldPlay
-                  isLooping
-                />
-              </View>
-
-              <View style={styles.videoInfoSection}>
-                <View style={styles.videoHeader}>
-                  <Image
-                    source={{
-                      uri: influencer?.profile_photo || 'https://via.placeholder.com/40'
-                    }}
-                    style={styles.videoInfluencerAvatar}
-                  />
-                  <View style={styles.videoInfluencerInfo}>
-                    <View style={styles.videoInfluencerNameRow}>
-                      <Text style={styles.videoInfluencerName}>{influencer?.name}</Text>
-                      {influencer?.is_verified && (
-                        <Ionicons name="checkmark-circle" size={16} color="#4FC3F7" />
-                      )}
-                    </View>
-                    <Text style={styles.videoInfluencerUsername}>@{influencer?.username}</Text>
-                  </View>
-                </View>
-
-                {selectedPost.title && (
-                  <Text style={styles.videoTitle}>{selectedPost.title}</Text>
-                )}
-                {selectedPost.description && (
-                  <Text style={styles.videoDescription}>{selectedPost.description}</Text>
-                )}
-
-                <View style={styles.videoActions}>
-                  <TouchableOpacity
-                    style={styles.videoActionButton}
-                    onPress={() => handleLikePost(selectedPost.id, selectedPost.is_liked || false)}
-                  >
-                    <Ionicons
-                      name={selectedPost.is_liked ? "heart" : "heart-outline"}
-                      size={24}
-                      color={selectedPost.is_liked ? "#FF6EA6" : "white"}
-                    />
-                    <Text style={styles.videoActionText}>{selectedPost.likes}</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.videoActionButton}>
-                    <Ionicons name="share-social-outline" size={24} color="white" />
-                    <Text style={styles.videoActionText}>{selectedPost.shares}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </SafeAreaView>
-          </TouchableOpacity>
-        </View>
-      </Modal>
-    );
-  };
 
   if (loading) {
     return (
@@ -514,8 +286,8 @@ const InfluencerProfile: React.FC = () => {
             {/* Stats */}
             <View style={styles.statsRow}>
               <TouchableOpacity style={styles.statItem}>
-                <Text style={styles.statNumber}>{posts.length}</Text>
-                <Text style={styles.statLabel}>posts</Text>
+                <Text style={styles.statNumber}>{influencerProducts.length}</Text>
+                <Text style={styles.statLabel}>products</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.statItem}>
                 <Text style={styles.statNumber}>
@@ -525,10 +297,7 @@ const InfluencerProfile: React.FC = () => {
                 </Text>
                 <Text style={styles.statLabel}>followers</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.statItem}>
-                <Text style={styles.statNumber}>{influencer.total_products_promoted || 0}</Text>
-                <Text style={styles.statLabel}>products</Text>
-              </TouchableOpacity>
+
             </View>
           </View>
 
@@ -768,8 +537,7 @@ const InfluencerProfile: React.FC = () => {
         </View>
       </ScrollView>
 
-      {/* Video Modal */}
-      {renderVideoModal()}
+
     </SafeAreaView>
   );
 };
@@ -824,6 +592,35 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
     position: 'relative',
+  },
+  productCardImage: {
+    width: '100%',
+    height: 138,
+    backgroundColor: '#f5f5f5',
+  },
+  productCardInfo: {
+    padding: 8,
+  },
+  productCardName: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 4,
+  },
+  productCardPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  productCardPrice: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F53F7A',
+  },
+  productCardOriginalPrice: {
+    fontSize: 11,
+    color: '#999',
+    textDecorationLine: 'line-through',
   },
   discountBadge: {
     position: 'absolute',
@@ -1168,86 +965,7 @@ const styles = StyleSheet.create({
   contentSection: {
     flex: 1,
   },
-  postsGrid: {
-    paddingHorizontal: 2,
-  },
-  postsRow: {
-    gap: 2,
-    marginBottom: 2,
-  },
-  postItem: {
-    width: POST_SIZE,
-    height: POST_SIZE,
-    backgroundColor: '#F0F0F0',
-    position: 'relative',
-  },
-  postImage: {
-    width: '100%',
-    height: '100%',
-  },
-  postImagePlaceholder: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#333',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  postOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 8,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  postStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  postStatText: {
-    fontSize: 12,
-    color: 'white',
-    marginLeft: 4,
-    fontWeight: '600',
-  },
-  productsGrid: {
-    padding: 8,
-  },
-  productsRow: {
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  productItem: {
-    width: (width - 28) / 2,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    marginBottom: 4,
-  },
-  productImage: {
-    width: '100%',
-    height: 200,
-    backgroundColor: '#f0f0f0',
-  },
-  productInfo: {
-    padding: 8,
-  },
-  productName: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 4,
-  },
-  productPrice: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#000',
-  },
+
   tabContent: {
     flex: 1,
   },
@@ -1268,91 +986,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: 'center',
     paddingHorizontal: 40,
-  },
-  videoModalContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.95)',
-  },
-  videoModalOverlay: {
-    flex: 1,
-  },
-  videoModalContent: {
-    flex: 1,
-  },
-  videoModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  videoContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  video: {
-    width: width,
-    height: width * 1.777, // 16:9 aspect ratio
-  },
-  videoInfoSection: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 30,
-  },
-  videoHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  videoInfluencerAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
-  },
-  videoInfluencerInfo: {
-    flex: 1,
-  },
-  videoInfluencerNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  videoInfluencerName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: 'white',
-  },
-  videoInfluencerUsername: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.7)',
-    marginTop: 2,
-  },
-  videoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: 'white',
-    marginBottom: 8,
-  },
-  videoDescription: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.8)',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  videoActions: {
-    flexDirection: 'row',
-    gap: 24,
-  },
-  videoActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  videoActionText: {
-    fontSize: 14,
-    color: 'white',
-    fontWeight: '600',
   },
 });
 

@@ -32,8 +32,9 @@ import { useUser } from '~/contexts/UserContext';
 import BottomSheet from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const { width } = Dimensions.get('window');
-const POST_SIZE = (width - 6) / 3;
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+// Use Math.floor to ensure 3 items fit perfectly with 2px total gap
+const POST_SIZE = Math.floor((SCREEN_WIDTH - 4) / 3);
 
 type VendorProfileRouteParams = {
   VendorProfile: {
@@ -999,6 +1000,76 @@ const VendorProfile: React.FC = () => {
     );
   };
 
+  // Horizontal Product List with Scroll Buttons Component
+  const HorizontalProductList = ({ products, categoryName }: { products: any[], categoryName: string }) => {
+    const flatListRef = useRef<FlatList>(null);
+    const [scrollPosition, setScrollPosition] = useState(0);
+    const [contentWidth, setContentWidth] = useState(0);
+    const [containerWidth, setContainerWidth] = useState(0);
+    const SCROLL_AMOUNT = 200;
+
+    const canScrollLeft = scrollPosition > 10;
+    const canScrollRight = contentWidth > containerWidth && scrollPosition < contentWidth - containerWidth - 10;
+
+    const scrollLeft = () => {
+      const newPosition = Math.max(0, scrollPosition - SCROLL_AMOUNT);
+      flatListRef.current?.scrollToOffset({ offset: newPosition, animated: true });
+    };
+
+    const scrollRight = () => {
+      const maxScroll = contentWidth - containerWidth;
+      const newPosition = Math.min(maxScroll, scrollPosition + SCROLL_AMOUNT);
+      flatListRef.current?.scrollToOffset({ offset: newPosition, animated: true });
+    };
+
+    return (
+      <View style={styles.horizontalListWrapper}>
+        {/* Left Arrow Button */}
+        {canScrollLeft && (
+          <TouchableOpacity
+            style={[styles.scrollArrowButton, styles.scrollArrowLeft]}
+            onPress={scrollLeft}
+            activeOpacity={0.8}
+          >
+            <View style={styles.scrollArrowBackground}>
+              <Ionicons name="chevron-back" size={20} color="#333" />
+            </View>
+          </TouchableOpacity>
+        )}
+
+        <FlatList
+          ref={flatListRef}
+          horizontal
+          data={products}
+          renderItem={({ item }) => renderProductCard(item)}
+          keyExtractor={(item) => `${categoryName}-${item.id}`}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.productsHorizontalList}
+          ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
+          nestedScrollEnabled={true}
+          scrollEnabled={true}
+          onScroll={(e) => setScrollPosition(e.nativeEvent.contentOffset.x)}
+          onContentSizeChange={(w) => setContentWidth(w)}
+          onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width)}
+          scrollEventThrottle={16}
+        />
+
+        {/* Right Arrow Button */}
+        {canScrollRight && (
+          <TouchableOpacity
+            style={[styles.scrollArrowButton, styles.scrollArrowRight]}
+            onPress={scrollRight}
+            activeOpacity={0.8}
+          >
+            <View style={styles.scrollArrowBackground}>
+              <Ionicons name="chevron-forward" size={20} color="#333" />
+            </View>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
   const renderPostDetail = (post: VendorPost) => (
     <View style={styles.postDetail}>
       <View style={styles.postHeader}>
@@ -1404,17 +1475,10 @@ const VendorProfile: React.FC = () => {
                             </TouchableOpacity>
                           </View>
 
-                          {/* Horizontal Product List */}
-                          <FlatList
-                            horizontal
-                            data={categoryProducts}
-                            renderItem={({ item }) => renderProductCard(item)}
-                            keyExtractor={(item) => item.id}
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.productsHorizontalList}
-                            ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
-                            nestedScrollEnabled={true}
-                            scrollEnabled={true}
+                          {/* Horizontal Product List with Scroll Buttons */}
+                          <HorizontalProductList
+                            products={categoryProducts}
+                            categoryName={categoryName}
                           />
                         </View>
                       );
@@ -2147,7 +2211,8 @@ const styles = StyleSheet.create({
   postItem: {
     width: POST_SIZE,
     height: POST_SIZE,
-    margin: 1,
+    marginRight: 2,
+    marginBottom: 2,
   },
   postImage: {
     width: '100%',
@@ -2164,7 +2229,7 @@ const styles = StyleSheet.create({
   gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 1,
+    width: SCREEN_WIDTH,
   },
   loadMoreButton: {
     flexDirection: 'row',
@@ -2188,8 +2253,8 @@ const styles = StyleSheet.create({
     marginBottom: 1,
   },
   gridItem: {
-    width: (width - 2) / 3,
-    height: (width - 2) / 3,
+    width: (SCREEN_WIDTH - 2) / 3,
+    height: (SCREEN_WIDTH - 2) / 3,
     backgroundColor: '#f0f0f0',
   },
   gridImage: {
@@ -2241,6 +2306,34 @@ const styles = StyleSheet.create({
   },
   productsHorizontalList: {
     paddingHorizontal: 16,
+  },
+  horizontalListWrapper: {
+    position: 'relative',
+  },
+  scrollArrowButton: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -20,
+    zIndex: 10,
+  },
+  scrollArrowLeft: {
+    left: 4,
+  },
+  scrollArrowRight: {
+    right: 4,
+  },
+  scrollArrowBackground: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
   },
   categorySection: {
     marginBottom: 24,

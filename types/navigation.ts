@@ -38,6 +38,17 @@ export type RootStackParamList = {
   OrderDetails: {
     orderId: string;
   };
+  OrderTracking: {
+    orderId: string;
+    orderNumber: string;
+    status: string;
+    trackingNumber?: string;
+    createdAt: string;
+    shippedAt?: string;
+    deliveredAt?: string;
+    productName?: string;
+    productImage?: string;
+  };
   BodyMeasurements: undefined;
   HelpCenter: undefined;
   Wishlist: undefined;

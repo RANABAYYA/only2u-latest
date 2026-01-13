@@ -21,11 +21,13 @@
     },
     "preview": {
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "credentialsSource": "remote"
       },
       "ios": {
         "simulator": false,
-        "buildConfiguration": "Release"
+        "buildConfiguration": "Release",
+        "credentialsSource": "remote"
       },
       "distribution": "internal",
       "env": {
@@ -46,9 +48,9 @@
   },
   "submit": {
     "production": {
-        "ios": {
-          "ascAppId": "6753112805"
-        }
+      "ios": {
+        "ascAppId": "6753112805"
       }
+    }
   }
 }

@@ -120,6 +120,9 @@ const Cart = () => {
     type: 'error' | 'config';
   }>({ title: '', message: '', type: 'error' });
 
+  // Login required modal state
+  const [showLoginRequiredModal, setShowLoginRequiredModal] = useState(false);
+
   // Address state
   const [defaultAddress, setDefaultAddress] = useState<any | null>(null);
 
@@ -1067,10 +1070,7 @@ const Cart = () => {
   const handlePlaceOrder = async () => {
     try {
       if (!userData) {
-        Alert.alert('Login Required', 'Please login to place your order.', [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Login', onPress: () => navigation.navigate('Login' as never) },
-        ]);
+        setShowLoginRequiredModal(true);
         return;
       }
 
@@ -3362,7 +3362,57 @@ const Cart = () => {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+
+      {/* Login Required Modal */}
+      <Modal
+        visible={showLoginRequiredModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLoginRequiredModal(false)}
+      >
+        <View style={styles.loginRequiredOverlay}>
+          <View style={styles.loginRequiredContent}>
+            {/* Icon */}
+            <View style={styles.loginRequiredIconContainer}>
+              <View style={styles.loginRequiredIconBg}>
+                <Ionicons name="lock-closed" size={40} color="#F53F7A" />
+              </View>
+            </View>
+
+            {/* Title */}
+            <Text style={styles.loginRequiredTitle}>Login Required</Text>
+
+            {/* Message */}
+            <Text style={styles.loginRequiredMessage}>
+              Please login to your account to place your order.
+            </Text>
+
+            {/* Buttons */}
+            <View style={styles.loginRequiredButtons}>
+              <TouchableOpacity
+                style={styles.loginRequiredPrimaryButton}
+                onPress={() => {
+                  setShowLoginRequiredModal(false);
+                  navigation.navigate('Login' as never);
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="log-in-outline" size={20} color="#FFF" />
+                <Text style={styles.loginRequiredPrimaryButtonText}>Login Now</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.loginRequiredSecondaryButton}
+                onPress={() => setShowLoginRequiredModal(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.loginRequiredSecondaryButtonText}>Maybe Later</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView >
   );
 };
 
@@ -5321,6 +5371,107 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   paymentErrorSecondaryButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  // Login Required Modal Styles
+  loginRequiredOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  loginRequiredContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 28,
+    width: '90%',
+    maxWidth: 380,
+    alignItems: 'center',
+    shadowColor: '#F53F7A',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  loginRequiredIconContainer: {
+    marginBottom: 20,
+  },
+  loginRequiredIconBg: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#FFF0F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#F53F7A20',
+  },
+  loginRequiredTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  loginRequiredMessage: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  loginRequiredFeatures: {
+    width: '100%',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
+    gap: 12,
+  },
+  loginFeatureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  loginFeatureText: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '500',
+  },
+  loginRequiredButtons: {
+    width: '100%',
+    gap: 12,
+  },
+  loginRequiredPrimaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F53F7A',
+    paddingVertical: 16,
+    borderRadius: 14,
+    gap: 10,
+    shadowColor: '#F53F7A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  loginRequiredPrimaryButtonText: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  loginRequiredSecondaryButton: {
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loginRequiredSecondaryButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#6B7280',

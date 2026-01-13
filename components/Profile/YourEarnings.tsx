@@ -13,6 +13,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,13 +39,43 @@ interface ResellerOrderRecord {
   estimated_delivery_date?: string | null;
   expected_completion_date?: string | null;
   items: Array<{
+    id?: string;
     product_id?: string;
     variant_id?: string;
+    product_name?: string;
+    product_image?: string;
+    size?: string;
+    color?: string;
     quantity: number;
     unit_price?: number;
     total_price?: number;
-    // reseller_price is not available in normal order_items
   }>;
+}
+
+// Flattened item for individual display (similar to MyOrders pattern)
+interface FlattenedEarningItem {
+  // Order info
+  orderId: string;
+  orderNumber: string;
+  createdAt: string;
+  orderStatus: string;
+  paymentStatus: string;
+  estimatedDeliveryDate?: string | null;
+  expectedCompletionDate?: string | null;
+
+  // Item info
+  itemId?: string;
+  productId?: string;
+  productName: string;
+  productImage?: string;
+  size?: string;
+  color?: string;
+  quantity: number;
+
+  // Pricing
+  itemBasePrice: number;
+  itemSellingPrice: number;
+  itemProfit: number;
 }
 
 type EnrichedOrder = {
@@ -183,7 +214,7 @@ export default function ResellerEarnings() {
   const { userData } = useUser();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [orders, setOrders] = useState<EnrichedOrder[]>([]);
+  const [orders, setOrders] = useState<FlattenedEarningItem[]>([]);
   const [stats, setStats] = useState<EarningsStats>({
     totalEarnings: 0,
     totalOrders: 0,
@@ -310,24 +341,7 @@ export default function ResellerEarnings() {
       let history = await ResellerService.getPayoutHistory(resellerId, 25);
       if (!history || history.length === 0) {
         history = [
-          {
-            id: 'sample-1',
-            amount: 2500,
-            status: 'paid',
-            paid_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            description: 'Sample payout deposited',
-            order_id: null,
-          },
-          {
-            id: 'sample-2',
-            amount: 1800,
-            status: 'pending',
-            paid_at: null,
-            created_at: new Date().toISOString(),
-            description: 'Awaiting transfer',
-            order_id: null,
-          },
+
         ] as ResellerEarning[];
       }
       setPayoutHistory(history || []);
@@ -388,7 +402,12 @@ export default function ResellerEarnings() {
           payment_status,
           status,
           items:order_items(
+            id,
             product_id,
+            product_name,
+            product_image,
+            size,
+            color,
             quantity,
             unit_price,
             total_price
@@ -407,12 +426,6 @@ export default function ResellerEarnings() {
       console.log('[YourEarnings] Total orders (any type):', allOrdersCount);
       if (countError) console.error('[YourEarnings] Count error:', countError);
 
-      // Store debug info in state (hack for easy viewing)
-      setOrders(prev => {
-        (prev as any)._debug_total = allOrdersCount;
-        return prev;
-      });
-
       const { data, error } = await query;
       if (error) {
         throw error;
@@ -420,69 +433,98 @@ export default function ResellerEarnings() {
 
       const rawOrders: ResellerOrderRecord[] = (data as ResellerOrderRecord[] | null) ?? [];
       console.log('[YourEarnings] Fetched orders count:', rawOrders.length);
-      if (error) console.error('[YourEarnings] Query error:', error);
 
-      // Removed formatted mock order to show only real data
+      // Flatten orders into individual items (similar to MyOrders pattern)
+      const flattenOrders = (orders: ResellerOrderRecord[]): FlattenedEarningItem[] => {
+        const flattenedItems: FlattenedEarningItem[] = [];
 
-      const mapOrder = (order: ResellerOrderRecord): EnrichedOrder => {
-        // Calculation fallback if original_total is missing
-        const computedOriginalTotal = (order.items || []).reduce((sum, item) => sum + Number(item.total_price || 0), 0);
+        orders.forEach(order => {
+          const orderTotalAmount = Number(order.total_amount || 0);
+          const orderOriginalTotal = Number(order.original_total || 0);
+          const orderProfit = Number(order.reseller_profit || order.reseller_margin_amount || 0);
+          const itemsCount = order.items?.length || 1;
 
-        // Prefer database fields, fallback to computation if needed
-        const finalOriginalTotal = order.original_total || computedOriginalTotal;
-        const profit = order.reseller_profit || order.reseller_margin_amount || 0;
+          // Calculate profit margin percentage for proportional distribution
+          const marginRatio = orderOriginalTotal > 0
+            ? (orderTotalAmount - orderOriginalTotal) / orderOriginalTotal
+            : 0;
 
-        return {
-          id: order.id,
-          order_number: order.order_number,
-          created_at: order.created_at,
-          total_amount: Number(order.total_amount || 0),
-          original_total: finalOriginalTotal,
-          reseller_margin_amount: profit,
-          reseller_profit: profit,
-          payment_status: order.payment_status,
-          status: order.status,
-          estimated_delivery_date: (order as any).estimated_delivery_date || null,
-          expected_completion_date: (order as any).expected_completion_date || null,
-          order_items: order.items || [],
-        };
+          order.items?.forEach((item, index) => {
+            const itemBasePrice = Number(item.unit_price || 0) * (item.quantity || 1);
+            const itemSellingPrice = itemBasePrice * (1 + marginRatio);
+            const itemProfit = itemSellingPrice - itemBasePrice;
+
+            flattenedItems.push({
+              // Order info
+              orderId: order.id,
+              orderNumber: order.order_number,
+              createdAt: order.created_at,
+              orderStatus: order.status || 'pending',
+              paymentStatus: order.payment_status,
+              estimatedDeliveryDate: (order as any).estimated_delivery_date || null,
+              expectedCompletionDate: (order as any).expected_completion_date || null,
+
+              // Item info
+              itemId: item.id || `${order.id}-${index}`,
+              productId: item.product_id,
+              productName: item.product_name || 'Unknown Product',
+              productImage: item.product_image,
+              size: item.size,
+              color: item.color,
+              quantity: item.quantity || 1,
+
+              // Pricing
+              itemBasePrice: itemBasePrice,
+              itemSellingPrice: itemSellingPrice,
+              itemProfit: itemProfit > 0 ? itemProfit : 0,
+            });
+          });
+        });
+
+        return flattenedItems;
       };
 
-      const allEnrichedOrders = rawOrders.map(mapOrder);
+      const allFlattenedItems = flattenOrders(rawOrders);
+      console.log('[YourEarnings] Total flattened items:', allFlattenedItems.length);
 
-      const filteredOrders = selectedFilter === 'all'
-        ? allEnrichedOrders
-        : allEnrichedOrders.filter(o => o.payment_status === selectedFilter);
+      // Filter based on selected filter
+      const filteredItems = selectedFilter === 'all'
+        ? allFlattenedItems
+        : allFlattenedItems.filter(item => item.paymentStatus === selectedFilter);
 
-      const totalEarnings = allEnrichedOrders.reduce((sum, order) => sum + (order.reseller_profit || 0), 0);
-      const pendingEarnings = allEnrichedOrders
-        .filter(o => o.payment_status === 'pending')
-        .reduce((sum, order) => sum + (order.reseller_profit || 0), 0);
-      const completedEarnings = allEnrichedOrders
-        .filter(o => o.payment_status === 'paid')
-        .reduce((sum, order) => sum + (order.reseller_profit || 0), 0);
+      // Calculate stats from flattened items
+      const totalEarnings = allFlattenedItems.reduce((sum, item) => sum + item.itemProfit, 0);
+      const pendingEarnings = allFlattenedItems
+        .filter(item => item.paymentStatus === 'pending')
+        .reduce((sum, item) => sum + item.itemProfit, 0);
+      const completedEarnings = allFlattenedItems
+        .filter(item => item.paymentStatus === 'paid')
+        .reduce((sum, item) => sum + item.itemProfit, 0);
+
+      // Get unique order count for stats
+      const uniqueOrderIds = new Set(allFlattenedItems.map(item => item.orderId));
 
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
-      const monthlyTotal = allEnrichedOrders
-        .filter((order) => {
-          const orderDate = new Date(order.created_at);
-          return orderDate >= startOfMonth;
+      const monthlyTotal = allFlattenedItems
+        .filter((item) => {
+          const itemDate = new Date(item.createdAt);
+          return itemDate >= startOfMonth;
         })
-        .reduce((sum, order) => sum + (order.total_amount || 0), 0);
+        .reduce((sum, item) => sum + item.itemSellingPrice, 0);
       const derivedTier = getTierForSales(monthlyTotal);
       setMonthlySales(monthlyTotal);
       setCurrentTier(derivedTier);
 
       setStats({
         totalEarnings,
-        totalOrders: allEnrichedOrders.length,
+        totalOrders: uniqueOrderIds.size,
         pendingEarnings,
         completedEarnings,
       });
 
-      setOrders(filteredOrders);
+      setOrders(filteredItems);
 
     } catch (error) {
       console.error('Error in fetchEarningsData:', error);
@@ -509,140 +551,73 @@ export default function ResellerEarnings() {
     </View>
   );
 
-  const renderOrderItem = ({ item }: { item: EnrichedOrder }) => {
-    const statusTheme = getStatusTheme(item.status || item.payment_status);
-    const quickInfoData = [
-      {
-        label: 'Created',
-        value: formatDisplayDate(new Date(item.created_at)),
-        icon: 'calendar-outline',
-        color: '#6B7280',
-      },
-      {
-        label: 'Status',
-        value: toTitleCase(item.status),
-        icon: 'flag-outline',
-        color: statusTheme.color,
-      },
-      {
-        label: 'Est. Delivery',
-        value: item.estimated_delivery_date
-          ? getEstimatedDateLabel(item.estimated_delivery_date)
-          : getEstimatedDateLabel(item.created_at, 5),
-        icon: 'cube-outline',
-        color: '#F97316',
-      },
-      {
-        label: 'Est. Payout',
-        value: item.expected_completion_date
-          ? getEstimatedDateLabel(item.expected_completion_date)
-          : getEstimatedDateLabel(item.created_at, 12),
-        icon: 'time-outline',
-        color: '#3B82F6',
-      },
-    ];
+  const renderOrderItem = ({ item }: { item: FlattenedEarningItem }) => {
+    const statusTheme = getStatusTheme(item.orderStatus || item.paymentStatus);
 
     return (
       <TouchableOpacity
-        style={styles.orderCard}
+        style={styles.earningsItemCard}
         activeOpacity={0.7}
         onPress={() => {
-          navigation.navigate('OrderDetails', { orderId: item.id });
+          navigation.navigate('OrderDetails', { orderId: item.orderId });
         }}
       >
-        <View style={styles.orderHeader}>
-          <View style={styles.orderHeaderLeft}>
-            <Text style={styles.orderNumber}>#{item.order_number}</Text>
-          </View>
-          <View style={[styles.orderStatusPill, { backgroundColor: statusTheme.bg }]}>
-            <Ionicons name={statusTheme.icon as any} size={14} color={statusTheme.color} />
-            <Text style={[styles.orderStatusText, { color: statusTheme.color }]}>
-              {statusTheme.label}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.orderMetaRow}>
-          <View style={styles.orderMetaItem}>
-            <Ionicons name="cube-outline" size={16} color="#6B7280" />
-            <Text style={styles.orderMetaText}>{item.order_items?.length || 0} item(s)</Text>
-          </View>
-          <View style={styles.orderMetaItem}>
-            <Ionicons name="cash-outline" size={16} color="#6B7280" />
-            <Text style={styles.orderMetaText}>{formatCurrency(item.total_amount || 0)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.quickInfoRow}>
-          {quickInfoData.map((info) => (
-            <TouchableOpacity
-              key={`${item.id}-${info.label}`}
-              style={styles.quickInfoPill}
-              activeOpacity={0.85}
-              onPress={() => Alert.alert(info.label, info.value)}
-            >
-              <Ionicons name={info.icon as any} size={14} color={info.color} />
-              <View style={styles.quickInfoTextGroup}>
-                <Text style={styles.quickInfoLabel}>{info.label}</Text>
-                <Text style={[styles.quickInfoValue, { color: info.color }]}>{info.value}</Text>
+        {/* Compact Row: Image + Product Info + Pricing */}
+        <View style={styles.earningsItemTopRow}>
+          {/* Product Image - Smaller */}
+          <View style={styles.earningsItemImageContainer}>
+            {item.productImage ? (
+              <Image
+                source={{ uri: item.productImage }}
+                style={styles.earningsItemImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={[styles.earningsItemImage, styles.earningsItemImagePlaceholder]}>
+                <Ionicons name="image-outline" size={24} color="#C7C7CC" />
               </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <View style={styles.divider} />
-
-        <View style={styles.orderDetails}>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Original Price</Text>
-            <Text style={styles.detailValue}>{formatCurrency(item.original_total || 0)}</Text>
+            )}
           </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Selling Price</Text>
-            <Text style={styles.detailValueBold}>{formatCurrency(item.total_amount || 0)}</Text>
-          </View>
-        </View>
 
-        {/* Delivery Dates for Pending Orders */}
-        {item.payment_status === 'pending' && (item.estimated_delivery_date || item.expected_completion_date) && (
-          <>
-            <View style={styles.divider} />
-            <View style={styles.deliveryInfoContainer}>
-              {item.estimated_delivery_date && (
-                <View style={styles.deliveryRow}>
-                  <Ionicons name="location-outline" size={18} color="#F59E0B" />
-                  <View style={styles.deliveryTextContainer}>
-                    <Text style={styles.deliveryLabel}>Estimated Delivery</Text>
-                    <Text style={styles.deliveryDate}>
-                      {new Date(item.estimated_delivery_date).toLocaleDateString('en-US', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </Text>
-                  </View>
-                </View>
-              )}
-              {item.expected_completion_date && (
-                <View style={styles.deliveryRow}>
-                  <Ionicons name="checkmark-circle-outline" size={18} color="#10B981" />
-                  <View style={styles.deliveryTextContainer}>
-                    <Text style={styles.deliveryLabel}>Expected Completion</Text>
-                    <Text style={styles.deliveryDate}>
-                      {new Date(item.expected_completion_date).toLocaleDateString('en-US', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </Text>
-                  </View>
-                </View>
-              )}
+          {/* Product Details - Compact */}
+          <View style={styles.earningsItemInfo}>
+            {/* Product Name */}
+            <Text style={styles.earningsItemName} numberOfLines={1}>
+              {item.productName}
+            </Text>
+
+            {/* Size only */}
+            {item.size && (
+              <Text style={styles.earningsItemMeta} numberOfLines={1}>
+                Size: {item.size}
+              </Text>
+            )}
+
+            {/* Pricing Row - Inline */}
+            <View style={styles.earningsItemPricingInline}>
+              <Text style={styles.pricingLabelSmall}>Base: </Text>
+              <Text style={styles.pricingValueSmall}>{formatCurrency(item.itemBasePrice)}</Text>
+              <Text style={styles.pricingArrow}> → </Text>
+              <Text style={styles.pricingLabelSmall}>Sold: </Text>
+              <Text style={styles.pricingValueSmallBold}>{formatCurrency(item.itemSellingPrice)}</Text>
             </View>
-          </>
-        )}
+          </View>
 
-        <View style={styles.divider} />
+          {/* Right Side: Profit + Status */}
+          <View style={styles.earningsItemRight}>
+            {/* Profit */}
+            <View style={styles.profitBadgeCompact}>
+              <Text style={styles.profitBadgeTextCompact}>+{formatCurrency(item.itemProfit)}</Text>
+            </View>
+
+            {/* Status Pill */}
+            <View style={[styles.statusPillSmall, { backgroundColor: statusTheme.bg }]}>
+              <Text style={[styles.statusPillTextSmall, { color: statusTheme.color }]}>
+                {statusTheme.label}
+              </Text>
+            </View>
+          </View>
+        </View>
       </TouchableOpacity>
     );
   };
@@ -780,20 +755,13 @@ export default function ResellerEarnings() {
         <View style={styles.headerRight} />
       </View>
 
-      {/* DEBUG INFO */}
-      <View style={{ padding: 10, backgroundColor: '#eee', alignItems: 'center' }}>
-        <Text style={{ fontSize: 10, color: '#666' }}>
-          UserID: {userData?.id?.substring(0, 8)}... |
-          Total Orders: {(orders as any)._debug_total ?? '?'} |
-          Reseller Orders: {orders.length}
-        </Text>
-      </View>
+
 
       {/* Orders List */}
       <FlatList
         data={orders}
         renderItem={renderOrderItem}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => `${item.orderId}-${item.itemId}`}
         ListHeaderComponent={renderListHeader}
         ListHeaderComponentStyle={styles.listHeaderComponent}
         contentContainerStyle={styles.listContainer}
@@ -1930,6 +1898,187 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '700',
+  },
+  // New individual earnings item card styles - COMPACT
+  earningsItemCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  earningsItemTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  earningsItemImageContainer: {
+    position: 'relative',
+  },
+  earningsItemImage: {
+    width: 85,
+    height: 85,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+  },
+  earningsItemImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  earningsItemInfo: {
+    flex: 1,
+    gap: 3,
+  },
+  earningsItemName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  earningsItemMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  earningsItemPricingInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 3,
+    flexWrap: 'wrap',
+  },
+  pricingLabelSmall: {
+    fontSize: 10,
+    color: '#9CA3AF',
+  },
+  pricingValueSmall: {
+    fontSize: 10,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  pricingValueSmallBold: {
+    fontSize: 10,
+    color: '#1F2937',
+    fontWeight: '700',
+  },
+  pricingArrow: {
+    fontSize: 10,
+    color: '#D1D5DB',
+    marginHorizontal: 2,
+  },
+  earningsItemRight: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  profitBadgeCompact: {
+    backgroundColor: '#ECFDF5',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  profitBadgeTextCompact: {
+    color: '#10B981',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusPillSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  statusPillTextSmall: {
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  // Keep old styles for compatibility
+  profitBadge: {
+    position: 'absolute',
+    bottom: -6,
+    left: -6,
+    right: -6,
+    backgroundColor: '#10B981',
+    borderRadius: 8,
+    paddingVertical: 3,
+    alignItems: 'center',
+  },
+  profitBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  earningsItemQty: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    fontWeight: '500',
+  },
+  orderNumberBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  orderNumberText: {
+    fontSize: 11,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  earningsItemPricingRow: {
+    flexDirection: 'row',
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  pricingItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  pricingLabel: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    marginBottom: 4,
+  },
+  pricingValue: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  pricingValueBold: {
+    fontSize: 13,
+    color: '#1F2937',
+    fontWeight: '700',
+  },
+  pricingValueProfit: {
+    fontSize: 13,
+    color: '#10B981',
+    fontWeight: '700',
+  },
+  pricingDivider: {
+    width: 1,
+    backgroundColor: '#F3F4F6',
+  },
+  earningsItemDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  earningsItemDateText: {
+    fontSize: 12,
+    color: '#9CA3AF',
   },
 });
 

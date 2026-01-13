@@ -24,6 +24,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 
+import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+
+interface Address {
+  id: string;
+  user_id: string;
+  full_name: string;
+  phone: string;
+  address_line1: string;
+  address_line2?: string;
+  city: string;
+  state: string;
+  pincode: string;
+  is_default: boolean;
+  created_at?: string;
+}
+
 interface OrderItem {
   id: string;
   product_name: string;
@@ -49,6 +65,10 @@ interface OrderDetails {
   shipped_at?: string;
   delivered_at?: string;
   order_items: OrderItem[];
+  // Reselling fields
+  is_reseller_order?: boolean;
+  reseller_profit?: number;
+  reseller_margin_amount?: number;
 }
 
 type ActionType = 'review' | 'return' | 'replacement';
@@ -69,6 +89,11 @@ const OrderDetails = () => {
   const [currentAction, setCurrentAction] = useState<ActionType | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Address Update State
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [addressSheetVisible, setAddressSheetVisible] = useState(false);
+  const addressSheetRef = React.useRef<BottomSheet>(null);
+
   // Review state
   const [rating, setRating] = useState(0);
   const [reviewTitle, setReviewTitle] = useState('');
@@ -77,6 +102,68 @@ const OrderDetails = () => {
 
   // Return/Replacement state
   const [returnReason, setReturnReason] = useState('');
+
+  // Reselling Edit State
+  const [resellEditModalVisible, setResellEditModalVisible] = useState(false);
+  const [editResellPrice, setEditResellPrice] = useState('');
+  const [editResellMargin, setEditResellMargin] = useState('');
+
+  const handleUpdateResellDetails = async () => {
+    if (!orderDetails) return;
+
+    const newPrice = parseFloat(editResellPrice);
+    const newMargin = parseFloat(editResellMargin);
+
+    if (isNaN(newPrice) || isNaN(newMargin)) {
+      Toast.show({ type: 'error', text1: 'Invalid Input', text2: 'Please enter valid numbers' });
+      return;
+    }
+
+    // Basic validation: Price should be at least (Base Price). 
+    // Base Price approx = current total - current margin.
+    // Actually, we can just trust the user's input but ensure consistency? 
+    // The requirement is: "Logic: Customer Price - Margin = Base Price (derived)."
+    // We update both fields in the DB.
+
+    try {
+      setSubmitting(true);
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          total_amount: newPrice,
+          reseller_margin_amount: newMargin,
+          reseller_profit: newMargin // Updating both for consistency as per schema likely usage
+        })
+        .eq('id', orderDetails.id);
+
+      if (error) throw error;
+
+      Toast.show({ type: 'success', text1: 'Updated', text2: 'Reselling details updated' });
+
+      setOrderDetails(prev => prev ? ({
+        ...prev,
+        total_amount: newPrice,
+        reseller_margin_amount: newMargin,
+        reseller_profit: newMargin
+      }) : null);
+
+      setResellEditModalVisible(false);
+    } catch (e) {
+      console.error(e);
+      Toast.show({ type: 'error', text1: 'Update Failed' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openResellEdit = () => {
+    if (!orderDetails) return;
+    setEditResellPrice(orderDetails.total_amount.toString());
+    // Use margin_amount or profit, defaulting to 0
+    const margin = orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0;
+    setEditResellMargin(margin.toString());
+    setResellEditModalVisible(true);
+  };
   const [returnDescription, setReturnDescription] = useState('');
   const [returnImages, setReturnImages] = useState<string[]>([]);
   const [replacementSize, setReplacementSize] = useState<string>('');
@@ -106,6 +193,21 @@ const OrderDetails = () => {
     'Missing parts/accessories',
     'Other',
   ];
+
+  const CANCELLATION_REASONS = [
+    'Changed my mind',
+    'Found better price elsewhere',
+    'Ordered by mistake',
+    'Delivery time too long',
+    'Payment issues',
+    'Product no longer needed',
+    'Other',
+  ];
+
+  // Cancel order state
+  const [cancelModalVisible, setCancelModalVisible] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelDescription, setCancelDescription] = useState('');
 
 
   useEffect(() => {
@@ -225,43 +327,7 @@ const OrderDetails = () => {
 
             const { data: resellerOrderData, error: resellerOrderError } = await supabase
               .from('reseller_orders')
-              .select(`
-                id,
-                order_number,
-                status,
-                total_amount,
-                created_at,
-                payment_status,
-                payment_method,
-                customer_name,
-                customer_phone,
-                customer_email,
-                customer_address,
-                customer_city,
-                customer_state,
-                customer_pincode,
-                tracking_number,
-                shipped_at,
-                delivered_at,
-                items:reseller_order_items(
-                  id,
-                  product_id,
-                  variant_id,
-                  quantity,
-                  unit_price,
-                  total_price,
-                  product:products(
-                    id,
-                    name,
-                    image_urls
-                  ),
-                  variant:product_variants(
-                    id,
-                    size_id,
-                    color_id
-                  )
-                )
-              `)
+              .select(`id, order_number, status, total_amount, created_at, payment_status, payment_method, customer_name, customer_phone, customer_email, customer_address, customer_city, customer_state, customer_pincode, tracking_number, shipped_at, delivered_at, items: reseller_order_items(id, product_id, variant_id, quantity, unit_price, total_price, product: products(id, name, image_urls), variant: product_variants(id, size_id, color_id))`)
               .eq('id', orderId)
               .eq('reseller_id', resellerProfile.id)
               .maybeSingle();
@@ -335,7 +401,10 @@ const OrderDetails = () => {
           tracking_number,
           shipped_at,
           delivered_at,
-          order_items (
+          is_reseller_order,
+          reseller_profit,
+          reseller_margin_amount,
+          order_items(
             id,
             product_id,
             product_name,
@@ -609,6 +678,68 @@ const OrderDetails = () => {
     }
   };
 
+  const submitCancelOrder = async () => {
+    if (!cancelReason) {
+      Toast.show({
+        type: 'error',
+        text1: 'Reason Required',
+        text2: 'Please select a reason for cancellation',
+      });
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      const userId = userData?.id || user?.id;
+
+      // Handle mock order
+      if (orderId === '00000000-0000-0000-0000-000000000001') {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        Toast.show({
+          type: 'success',
+          text1: 'Order Cancelled',
+          text2: 'Your order has been cancelled (Mock Order)',
+        });
+        setCancelModalVisible(false);
+        setSubmitting(false);
+        return;
+      }
+
+      // Update order status to cancelled
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          status: 'cancelled',
+          cancellation_reason: cancelReason,
+          cancellation_description: cancelDescription.trim() || null,
+          cancelled_at: new Date().toISOString(),
+        })
+        .eq('id', orderDetails?.id);
+
+      if (error) throw error;
+
+      Toast.show({
+        type: 'success',
+        text1: 'Order Cancelled',
+        text2: 'Your order has been cancelled successfully',
+      });
+
+      setCancelModalVisible(false);
+      setCancelReason('');
+      setCancelDescription('');
+      fetchOrderDetails(); // Refresh to show updated status
+    } catch (error) {
+      console.error('Error cancelling order:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to cancel order',
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = () => {
     if (currentAction === 'review') {
       submitReview();
@@ -718,6 +849,81 @@ const OrderDetails = () => {
     }
   };
 
+  const fetchAddresses = async () => {
+    try {
+      const userId = userData?.id || user?.id;
+      if (!userId) return;
+
+      const { data, error } = await supabase
+        .from('user_addresses')
+        .select('*')
+        .eq('user_id', userId)
+        .order('is_default', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching addresses:', error);
+        return;
+      }
+
+      if (data) {
+        setAddresses(data);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+    }
+  };
+
+  const handleUpdateAddress = async (address: Address) => {
+    try {
+      setSubmitting(true);
+
+      const updatedAddress = {
+        name: address.full_name,
+        phone: address.phone,
+        address_line1: address.street_line1,
+        address_line2: address.street_line2 || '',
+        landmark: address.landmark || '',
+        city: address.city,
+        state: address.state,
+        pincode: address.postal_code,
+        country: address.country || 'India',
+      };
+
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          shipping_address: updatedAddress
+        })
+        .eq('id', orderDetails?.id);
+
+      if (error) throw error;
+
+      Toast.show({
+        type: 'success',
+        text1: 'Address Updated',
+        text2: 'Shipping address has been updated successfully',
+      });
+
+      // Update local state immediately
+      setOrderDetails(prev => prev ? ({
+        ...prev,
+        shipping_address: updatedAddress
+      }) : null);
+
+      setAddressSheetVisible(false);
+      addressSheetRef.current?.close();
+    } catch (error) {
+      console.error('Error updating address:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Update Failed',
+        text2: 'Failed to update shipping address',
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.container}>
@@ -801,7 +1007,7 @@ const OrderDetails = () => {
               activeOpacity={0.7}
               onPress={() => {
                 if (item.product_id) {
-                  navigation.navigate('ProductDetails' as never, {
+                  (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
                     productId: item.product_id,
                     product: {
                       id: item.product_id,
@@ -809,7 +1015,7 @@ const OrderDetails = () => {
                       price: item.unit_price,
                       image: item.product_image,
                     }
-                  } as never);
+                  });
                 }
               }}
             >
@@ -831,9 +1037,9 @@ const OrderDetails = () => {
               <View style={styles.itemDetails}>
                 <Text style={styles.itemName}>{item.product_name}</Text>
                 <Text style={styles.itemMeta}>
-                  {item.size && `Size: ${item.size}`}
+                  {item.size && `Size: ${item.size} `}
                   {item.size && item.color && ' • '}
-                  {item.color && `Color: ${item.color}`}
+                  {item.color && `Color: ${item.color} `}
                 </Text>
                 <Text style={styles.itemMeta}>Qty: {item.quantity}</Text>
                 <Text style={styles.itemPrice}>₹{item.total_price}</Text>
@@ -850,17 +1056,6 @@ const OrderDetails = () => {
                     >
                       <Ionicons name="star-outline" size={16} color="#fff" />
                       <Text style={styles.actionButtonText}>Review</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.actionButtonOutline}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        openActionModal(item, 'return');
-                      }}
-                    >
-                      <Ionicons name="return-down-back-outline" size={16} color="#F53F7A" />
-                      <Text style={styles.actionButtonOutlineText}>Return</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -901,44 +1096,195 @@ const OrderDetails = () => {
           </View>
         </View>
 
-        {/* Shipping Information */}
-        {orderDetails.shipping_address && (
+        {/* Reselling Details Section */}
+        {orderDetails.is_reseller_order && (
           <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Shipping Address</Text>
-            <Text style={styles.addressText}>{JSON.stringify(orderDetails.shipping_address, null, 2)}</Text>
-          </View>
-        )}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Reselling Details</Text>
+              {orderDetails.status.toLowerCase() === 'pending' && (
+                <TouchableOpacity
+                  onPress={openResellEdit}
+                  style={{
+                    backgroundColor: '#FFF0F5',
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 20,
+                    borderWidth: 1,
+                    borderColor: 'rgba(245, 63, 122, 0.2)',
+                  }}
+                >
+                  <Text style={{ color: '#F53F7A', fontWeight: '600', fontSize: 13 }}>Change</Text>
+                </TouchableOpacity>
+              )}
+            </View>
 
-        {/* Tracking Information */}
-        {orderDetails.tracking_number && (
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Tracking Information</Text>
-            <View style={styles.trackingContainer}>
-              <Ionicons name="location-outline" size={20} color="#F53F7A" />
+            {/* Per-item breakdown like YourEarnings */}
+            {orderDetails.order_items.map((item, index) => {
+              // Calculate base and selling prices per item
+              // unit_price is the SOLD price (what customer pays per unit)
+              // basePrice = soldPrice - marginPerUnit
+              const totalMargin = orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0;
+              const totalItems = orderDetails.order_items.reduce((sum, i) => sum + i.quantity, 0);
+              const marginPerUnit = totalItems > 0 ? totalMargin / totalItems : 0;
+              const sellingPrice = item.unit_price; // This is what customer pays
+              const basePrice = item.unit_price - marginPerUnit; // Base = Sold - Margin
+              const itemProfit = marginPerUnit * item.quantity;
+
+              return (
+                <View
+                  key={item.id || index}
+                  style={{
+                    flexDirection: 'row',
+                    backgroundColor: '#FAFAFA',
+                    borderRadius: 12,
+                    padding: 12,
+                    marginBottom: index < orderDetails.order_items.length - 1 ? 10 : 0,
+                  }}
+                >
+                  {/* Product Image */}
+                  <View style={{ width: 56, height: 56, borderRadius: 8, overflow: 'hidden', backgroundColor: '#f0f0f0' }}>
+                    {item.product_image ? (
+                      <Image
+                        source={{ uri: item.product_image }}
+                        style={{ width: 56, height: 56 }}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={{ width: 56, height: 56, justifyContent: 'center', alignItems: 'center' }}>
+                        <Ionicons name="image-outline" size={24} color="#ccc" />
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Product Info */}
+                  <View style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 2 }} numberOfLines={1}>
+                      {item.product_name}
+                    </Text>
+                    {item.size && (
+                      <Text style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+                        Size: {item.size} {item.quantity > 1 ? `• Qty: ${item.quantity}` : ''}
+                      </Text>
+                    )}
+                    {/* Pricing Row: Base → Sold */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 12, color: '#888' }}>Base: </Text>
+                      <Text style={{ fontSize: 12, fontWeight: '500', color: '#666' }}>₹{basePrice.toFixed(0)}</Text>
+                      <Text style={{ fontSize: 12, color: '#F53F7A', marginHorizontal: 6 }}>→</Text>
+                      <Text style={{ fontSize: 12, color: '#888' }}>Sold: </Text>
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: '#333' }}>₹{sellingPrice.toFixed(0)}</Text>
+                    </View>
+                  </View>
+
+                  {/* Profit Badge */}
+                  <View style={{ justifyContent: 'center', alignItems: 'flex-end' }}>
+                    <View style={{
+                      backgroundColor: '#E8F5E8',
+                      paddingHorizontal: 10,
+                      paddingVertical: 5,
+                      borderRadius: 16,
+                    }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#4CAF50' }}>
+                        +₹{itemProfit.toFixed(0)}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+
+            {/* Total Summary */}
+            <View style={{ marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#eee' }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text style={{ fontSize: 14, color: '#666' }}>Customer Paid</Text>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#333' }}>₹{orderDetails.total_amount}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 14, color: '#666' }}>Your Total Profit</Text>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#4CAF50' }}>
+                  +₹{orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0}
+                </Text>
+              </View>
             </View>
           </View>
         )}
 
+        {/* Shipping Information */}
+        {orderDetails.shipping_address && (
+          <View style={styles.sectionCard}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Shipping Address</Text>
+              {orderDetails.status.toLowerCase() === 'pending' && (
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#FFF0F5',
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 20,
+                    borderWidth: 1,
+                    borderColor: 'rgba(245, 63, 122, 0.2)',
+                  }}
+                  onPress={() => {
+                    fetchAddresses();
+                    setAddressSheetVisible(true);
+                    addressSheetRef.current?.expand();
+                  }}
+                >
+                  <Text style={{ color: '#F53F7A', fontWeight: '600', fontSize: 13 }}>Change</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <Text style={[styles.addressText, { fontWeight: '600', marginBottom: 4 }]}>
+              {orderDetails.shipping_address.name || orderDetails.shipping_address.full_name}
+            </Text>
+            <Text style={[styles.addressText, { marginBottom: 4 }]}>
+              {orderDetails.shipping_address.address_line1 || orderDetails.shipping_address.street_address}
+            </Text>
+            {(orderDetails.shipping_address.address_line2 || orderDetails.shipping_address.landmark) && (
+              <Text style={[styles.addressText, { marginBottom: 4 }]}>
+                {orderDetails.shipping_address.address_line2 || orderDetails.shipping_address.landmark}
+              </Text>
+            )}
+            <Text style={[styles.addressText, { marginBottom: 4 }]}>
+              {orderDetails.shipping_address.city}, {orderDetails.shipping_address.state} - {orderDetails.shipping_address.pincode}
+            </Text>
+            <Text style={[styles.addressText, { color: '#333' }]}>
+              Phone: {orderDetails.shipping_address.phone || orderDetails.shipping_address.mobile}
+            </Text>
+          </View>
+        )
+        }
+
+        {/* Tracking Information */}
+        {
+          orderDetails.tracking_number && (
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Tracking Information</Text>
+              <View style={styles.trackingContainer}>
+                <Ionicons name="location-outline" size={20} color="#F53F7A" />
+              </View>
+            </View>
+          )
+        }
+
         {/* Track Order Button - Show for shipped/processing orders */}
-        {orderDetails.status.toLowerCase() !== 'delivered' &&
+        {
+          orderDetails.status.toLowerCase() !== 'delivered' &&
           orderDetails.status.toLowerCase() !== 'cancelled' && (
             <TouchableOpacity
               style={styles.trackOrderButton}
               onPress={() => {
-                if (orderDetails.tracking_number) {
-                  // Open tracking URL or show tracking info
-                  Toast.show({
-                    type: 'info',
-                    text1: 'Tracking Number',
-                    text2: orderDetails.tracking_number,
-                  });
-                } else {
-                  Toast.show({
-                    type: 'info',
-                    text1: 'Tracking Not Available',
-                    text2: 'Tracking information will be available once shipped',
-                  });
-                }
+                (navigation.navigate as (screen: string, params?: object) => void)('OrderTracking', {
+                  orderId: orderDetails.id,
+                  orderNumber: orderDetails.order_number,
+                  status: orderDetails.status,
+                  trackingNumber: orderDetails.tracking_number,
+                  createdAt: orderDetails.created_at,
+                  shippedAt: orderDetails.shipped_at,
+                  deliveredAt: orderDetails.delivered_at,
+                  productName: orderDetails.order_items?.[0]?.product_name,
+                  productImage: orderDetails.order_items?.[0]?.product_image,
+                });
               }}
               activeOpacity={0.8}
             >
@@ -952,12 +1298,37 @@ const OrderDetails = () => {
                 <Text style={styles.trackOrderButtonText}>Track My Order</Text>
               </LinearGradient>
             </TouchableOpacity>
-          )}
+          )
+        }
 
-      </ScrollView>
+        {/* Cancel Order Button - Only for pending orders */}
+        {orderDetails.status.toLowerCase() === 'pending' && (
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#FFF0F0',
+              marginHorizontal: 16,
+              marginBottom: 16,
+              paddingVertical: 14,
+              paddingHorizontal: 16,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: '#FFCDD2',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+            }}
+            onPress={() => setCancelModalVisible(true)}
+          >
+            <Ionicons name="close-circle-outline" size={20} color="#F44336" />
+            <Text style={{ color: '#F44336', fontWeight: '600', fontSize: 14 }}>Cancel Order</Text>
+          </TouchableOpacity>
+        )}
+
+      </ScrollView >
 
       {/* Action Modal */}
-      <Modal
+      < Modal
         visible={actionModalVisible}
         transparent
         animationType="slide"
@@ -986,9 +1357,9 @@ const OrderDetails = () => {
                 <View style={styles.modalProductInfo}>
                   <Text style={styles.modalProductName}>{selectedItem.product_name}</Text>
                   <Text style={styles.modalProductMeta}>
-                    {selectedItem.size && `Size: ${selectedItem.size}`}
+                    {selectedItem.size && `Size: ${selectedItem.size} `}
                     {selectedItem.size && selectedItem.color && ' • '}
-                    {selectedItem.color && `Color: ${selectedItem.color}`}
+                    {selectedItem.color && `Color: ${selectedItem.color} `}
                   </Text>
                 </View>
               )}
@@ -1126,7 +1497,305 @@ const OrderDetails = () => {
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
+      </Modal >
+      {/* Address Selection Bottom Sheet */}
+      {
+        addressSheetVisible && (
+          <BottomSheet
+            ref={addressSheetRef}
+            index={1}
+            snapPoints={['50%', '75%']}
+            enablePanDownToClose
+            onClose={() => setAddressSheetVisible(false)}
+            backgroundStyle={{ backgroundColor: '#fff', borderRadius: 24 }}
+          >
+            <View style={{ paddingHorizontal: 20, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#f0f0f0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#333' }}>Select Shipping Address</Text>
+              <TouchableOpacity onPress={() => {
+                setAddressSheetVisible(false);
+                addressSheetRef.current?.close();
+                navigation.navigate('AddAddress' as never);
+              }}>
+                <Text style={{ color: '#F53F7A', fontWeight: '600' }}>+ Add New</Text>
+              </TouchableOpacity>
+            </View>
+            <BottomSheetScrollView contentContainerStyle={{ padding: 20 }}>
+              {addresses.length === 0 ? (
+                <View style={{ alignItems: 'center', marginTop: 40 }}>
+                  <Ionicons name="location-outline" size={48} color="#999" />
+                  <Text style={{ marginTop: 12, fontSize: 16, color: '#666' }}>No addresses found</Text>
+                  <TouchableOpacity
+                    style={{ marginTop: 16, backgroundColor: '#F53F7A', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20 }}
+                    onPress={() => {
+                      setAddressSheetVisible(false);
+                      addressSheetRef.current?.close();
+                      navigation.navigate('AddAddress' as never);
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>Add Address</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                addresses.map((address) => (
+                  <View key={address.id} style={{ marginBottom: 12 }}>
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#fff',
+                        padding: 16,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: '#f0f0f0',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onPress={() => handleUpdateAddress(address)}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                          <Text style={{ fontSize: 16, fontWeight: '600', color: '#333' }}>{address.full_name}</Text>
+                          {address.is_default && (
+                            <View style={{ backgroundColor: '#E8F5E9', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, marginLeft: 8 }}>
+                              <Text style={{ fontSize: 10, color: '#4CAF50', fontWeight: '600' }}>Default</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={{ fontSize: 14, color: '#666', marginBottom: 2 }}>{address.street_line1}</Text>
+                        {address.street_line2 ? <Text style={{ fontSize: 14, color: '#666', marginBottom: 2 }}>{address.street_line2}</Text> : null}
+                        {address.landmark ? <Text style={{ fontSize: 14, color: '#666', marginBottom: 2 }}>{address.landmark}</Text> : null}
+                        <Text style={{ fontSize: 14, color: '#666' }}>{address.city}, {address.state} - {address.postal_code}</Text>
+                      </View>
+                      {(orderDetails?.shipping_address?.address_line1 === address.street_line1 &&
+                        orderDetails?.shipping_address?.pincode === address.postal_code) ? (
+                        <Ionicons name="checkmark-circle" size={24} color="#F53F7A" />
+                      ) : (
+                        <View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#ddd' }} />
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        position: 'absolute',
+                        top: 12,
+                        right: 12,
+                        padding: 8,
+                      }}
+                      onPress={() => {
+                        setAddressSheetVisible(false);
+                        addressSheetRef.current?.close();
+                        (navigation.navigate as (screen: string, params?: object) => void)('AddAddress', { addressToEdit: address });
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, color: '#F53F7A', fontWeight: '600' }}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+            </BottomSheetScrollView>
+          </BottomSheet>
+        )
+      }
+
+      {/* Resell Edit Modal */}
+      <Modal
+        visible={resellEditModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setResellEditModalVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20 }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' }}>Edit Sold Price</Text>
+            <Text style={{ fontSize: 13, color: '#888', marginBottom: 20, textAlign: 'center' }}>
+              Your profit is automatically calculated
+            </Text>
+
+            {/* Base Price Display (Read-only) */}
+            {(() => {
+              const oldTotal = orderDetails?.total_amount || 0;
+              const oldMargin = orderDetails?.reseller_margin_amount || orderDetails?.reseller_profit || 0;
+              const basePrice = oldTotal - oldMargin;
+              const newTotal = parseFloat(editResellPrice) || 0;
+              const profit = newTotal - basePrice;
+              const isValid = newTotal >= basePrice;
+
+              return (
+                <>
+                  <View style={{
+                    backgroundColor: '#F8F8F8',
+                    padding: 12,
+                    borderRadius: 10,
+                    marginBottom: 16,
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}>
+                    <Text style={{ fontSize: 14, color: '#666' }}>Base Price</Text>
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: '#333' }}>₹{basePrice.toFixed(0)}</Text>
+                  </View>
+
+                  <Text style={{ fontSize: 14, color: '#666', marginBottom: 8 }}>Sold Price (₹)</Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: isValid ? '#ddd' : '#F44336',
+                      borderRadius: 8,
+                      padding: 12,
+                      fontSize: 18,
+                      fontWeight: '600',
+                      marginBottom: 8,
+                    }}
+                    value={editResellPrice}
+                    keyboardType="numeric"
+                    onChangeText={(text) => {
+                      setEditResellPrice(text);
+                      const newVal = parseFloat(text);
+                      if (!isNaN(newVal)) {
+                        setEditResellMargin((newVal - basePrice).toFixed(0));
+                      }
+                    }}
+                  />
+                  {!isValid && (
+                    <Text style={{ fontSize: 12, color: '#F44336', marginBottom: 8 }}>
+                      Sold price cannot be less than base price (₹{basePrice.toFixed(0)})
+                    </Text>
+                  )}
+
+                  {/* Calculated Profit Display (Read-only) */}
+                  <View style={{
+                    backgroundColor: isValid ? '#F5FFF5' : '#FFF5F5',
+                    padding: 14,
+                    borderRadius: 10,
+                    marginTop: 8,
+                    marginBottom: 24,
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    borderWidth: 1,
+                    borderColor: isValid ? '#E8F5E8' : '#FFEBEE'
+                  }}>
+                    <Text style={{ fontSize: 14, color: '#666' }}>Your Profit</Text>
+                    <Text style={{ fontSize: 18, fontWeight: '700', color: isValid ? '#4CAF50' : '#F44336' }}>
+                      {isValid ? '+' : ''}₹{profit.toFixed(0)}
+                    </Text>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <TouchableOpacity
+                      style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#f5f5f5', alignItems: 'center' }}
+                      onPress={() => setResellEditModalVisible(false)}
+                    >
+                      <Text style={{ fontWeight: '600', color: '#666' }}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: isValid ? '#F53F7A' : '#ccc', alignItems: 'center' }}
+                      onPress={handleUpdateResellDetails}
+                      disabled={submitting || !isValid}
+                    >
+                      {submitting ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                      ) : (
+                        <Text style={{ fontWeight: '600', color: '#fff' }}>Update</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
+          </View>
+        </View>
       </Modal>
+
+      {/* Cancel Order Modal */}
+      <Modal
+        visible={cancelModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setCancelModalVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>Cancel Order</Text>
+              <TouchableOpacity onPress={() => setCancelModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={{ fontSize: 14, color: '#666', marginBottom: 16 }}>Please select a reason for cancellation:</Text>
+
+            <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                {CANCELLATION_REASONS.map((reason) => (
+                  <TouchableOpacity
+                    key={reason}
+                    style={{
+                      paddingHorizontal: 14,
+                      paddingVertical: 8,
+                      borderRadius: 20,
+                      borderWidth: 1,
+                      borderColor: cancelReason === reason ? '#F53F7A' : '#ddd',
+                      backgroundColor: cancelReason === reason ? '#FFF0F5' : '#fff',
+                    }}
+                    onPress={() => setCancelReason(reason)}
+                  >
+                    <Text style={{
+                      fontSize: 13,
+                      color: cancelReason === reason ? '#F53F7A' : '#666',
+                      fontWeight: cancelReason === reason ? '600' : '400',
+                    }}>{reason}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <Text style={{ fontSize: 14, color: '#666', marginBottom: 8 }}>Additional details (optional):</Text>
+            <TextInput
+              style={{
+                borderWidth: 1,
+                borderColor: '#ddd',
+                borderRadius: 12,
+                padding: 12,
+                fontSize: 14,
+                height: 80,
+                textAlignVertical: 'top',
+                marginBottom: 20,
+              }}
+              value={cancelDescription}
+              onChangeText={setCancelDescription}
+              placeholder="Tell us more about why you're cancelling..."
+              placeholderTextColor="#999"
+              multiline
+            />
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#f5f5f5', alignItems: 'center' }}
+                onPress={() => setCancelModalVisible(false)}
+              >
+                <Text style={{ fontWeight: '600', color: '#666' }}>Keep Order</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  padding: 14,
+                  borderRadius: 12,
+                  backgroundColor: cancelReason ? '#F53F7A' : '#ccc',
+                  alignItems: 'center',
+                }}
+                onPress={submitCancelOrder}
+                disabled={submitting || !cancelReason}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={{ fontWeight: '600', color: '#fff' }}>Cancel Order</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 };

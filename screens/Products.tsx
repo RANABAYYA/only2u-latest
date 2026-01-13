@@ -3024,8 +3024,8 @@ const Products = () => {
 
   // Filter categories and data
   const filterCategories = [
-    'Brand',
     'Size',
+    'Brand',
     'Price Range'
   ];
 
@@ -3141,12 +3141,18 @@ const Products = () => {
 
   // Onboarding states
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [onboardingStep, setOnboardingStep] = useState<'views' | 'swipe' | 'complete'>('views');
+  const [onboardingStep, setOnboardingStep] = useState<'views' | 'swipe' | 'filter' | 'complete'>('views');
   const onboardingAnimation = useRef(new Animated.Value(0)).current;
   const viewHighlightAnimation = useRef(new Animated.Value(0)).current;
   const swipeTutorialAnimation = useRef(new Animated.Value(0)).current;
   const spotlightAnimation = useRef(new Animated.Value(0)).current;
   const swipeSpotlightAnimation = useRef(new Animated.Value(0)).current;
+  const filterTutorialAnimation = useRef(new Animated.Value(0)).current;
+  const filterSpotlightAnimation = useRef(new Animated.Value(0)).current;
+
+  // Refs for measuring layouts
+  const filterButtonRef = useRef<TouchableOpacity>(null);
+  const [filterButtonLayout, setFilterButtonLayout] = useState({ x: 0, y: 0, width: 0, height: 0 });
 
   // Dynamic layout measurements for spotlight positioning
   const [viewToggleLayout, setViewToggleLayout] = useState({ x: -1, y: -1, width: 0, height: 0 });
@@ -3316,28 +3322,34 @@ const Products = () => {
 
   // Check if user wants to suppress tutorial - show every time unless "don't show again" is checked
   useEffect(() => {
-    const checkTutorialStatus = async () => {
-      try {
-        const dontShow = await AsyncStorage.getItem('products_view_tutorial_dont_show');
-        setProductsViewTutorialDontShowAgain(dontShow === 'true');
+    // TESTING: Always start filter tutorial immediately
+    setTimeout(() => {
+      startFilterTutorial();
+    }, 1000);
 
-        // Show tutorial every time unless user has explicitly chosen "don't show again"
-        if (dontShow !== 'true') {
-          // Show tutorial after screen loads
-          setTimeout(() => {
-            setShowProductsViewTutorial(true);
-          }, 800);
-        }
-      } catch (error) {
-        console.log('Error checking tutorial status:', error);
-        // If error, show tutorial anyway
-        setTimeout(() => {
-          setShowProductsViewTutorial(true);
-        }, 800);
-      }
-    };
+    // Original code commented out for testing:
+    // const checkTutorialStatus = async () => {
+    //   try {
+    //     const dontShow = await AsyncStorage.getItem('products_view_tutorial_dont_show');
+    //     setProductsViewTutorialDontShowAgain(dontShow === 'true');
 
-    checkTutorialStatus();
+    //     // Show tutorial every time unless user has explicitly chosen "don't show again"
+    //     if (dontShow !== 'true') {
+    //       // Show tutorial after screen loads
+    //       setTimeout(() => {
+    //         setShowProductsViewTutorial(true);
+    //       }, 800);
+    //     }
+    //   } catch (error) {
+    //     console.log('Error checking tutorial status:', error);
+    //     // If error, show tutorial anyway
+    //     setTimeout(() => {
+    //       setShowProductsViewTutorial(true);
+    //     }, 800);
+    //   }
+    // };
+
+    // checkTutorialStatus();
   }, []);
 
   // Onboarding logic disabled - only showing video tutorial modal now
@@ -3414,8 +3426,65 @@ const Products = () => {
           ]),
           { iterations: 3 }
         ),
-      ]).start();
+      ]).start(() => {
+        // Chain to filter tutorial
+        setTimeout(() => {
+          startFilterTutorial();
+        }, 500);
+      });
     }, 400);
+  };
+
+  const startFilterTutorial = () => {
+    setOnboardingStep('filter');
+
+    // Measure filter button
+    filterButtonRef.current?.measureInWindow((x, y, width, height) => {
+      console.log('Filter Button Layout:', { x, y, width, height });
+      setFilterButtonLayout({ x, y, width, height });
+    });
+
+    filterSpotlightAnimation.setValue(0);
+    filterTutorialAnimation.setValue(0);
+
+    Animated.sequence([
+      // Fade in filter spotlight
+      Animated.timing(filterSpotlightAnimation, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: false,
+      }),
+      // Bounce the instruction
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(filterTutorialAnimation, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: false,
+          }),
+          Animated.timing(filterTutorialAnimation, {
+            toValue: 0,
+            duration: 1000,
+            useNativeDriver: false,
+          })
+        ]),
+        { iterations: 3 }
+      ),
+      // Fade out
+      Animated.timing(filterSpotlightAnimation, {
+        toValue: 0,
+        duration: 500,
+        useNativeDriver: false,
+      })
+    ]).start(async () => {
+      // Complete all tutorials
+      setOnboardingStep('complete');
+      try {
+        await AsyncStorage.setItem('products_swipe_tutorial_dont_show', 'true');
+      } catch (error) {
+        console.log('Error saving tutorial preference:', error);
+      }
+    });
   };
 
   // Track if tutorial modal was just closed (to show swipe animation on first swipe view)
@@ -4165,7 +4234,7 @@ const Products = () => {
               <View style={styles.reviewsContainer}>
                 <Ionicons name="star" size={12} color="#FFD600" style={{ marginRight: 2 }} />
                 <Text style={styles.reviews}>
-                  {productRatings[String(product.id)]?.rating?.toFixed(1) || '0.0'}
+                  {ratingData.rating.toFixed(1)}
                 </Text>
                 {ratingData.reviews > 0 && (
                   <Text style={[styles.reviews, { marginLeft: 4, fontWeight: '500', color: '#666' }]}>
@@ -4435,6 +4504,7 @@ const Products = () => {
 
             {/* Filter Button */}
             <TouchableOpacity
+              ref={filterButtonRef}
               style={styles.filterButton}
               onPress={() => filterSheetRef.current?.present()}>
               <Ionicons name="filter-outline" size={16} color="#666" />
@@ -4502,13 +4572,13 @@ const Products = () => {
               numColumns={2}
               contentContainerStyle={styles.productList}
               showsVerticalScrollIndicator={false}
-              removeClippedSubviews={true}
+              removeClippedSubviews={false}
               maxToRenderPerBatch={10}
               windowSize={10}
               initialNumToRender={10}
               updateCellsBatchingPeriod={50}
-              extraData={productRatings}
-              key={`'normal'}`} // Force re-render on layout change
+              extraData={[productRatings, Object.keys(productRatings).length]}
+              key={`grid-${Object.keys(productRatings).length}`} // Force re-render when ratings load
             />
           </KeyboardAvoidingView>
         )}
@@ -4762,7 +4832,7 @@ const Products = () => {
         />
 
         {/* Spotlight Onboarding Overlays */}
-        {(showOnboarding || (onboardingStep === 'swipe' && !dontShowSwipeTutorial)) && (
+        {(showOnboarding || (onboardingStep === 'swipe' && !dontShowSwipeTutorial) || onboardingStep === 'filter') && (
           <>
             {/* Modal-based Onboarding */}
             <Modal
@@ -5022,26 +5092,26 @@ const Products = () => {
                       <TouchableOpacity
                         style={styles.swipeBackButton}
                         onPress={() => {
-                          // Just close the tutorial
+                          // Close swipe tutorial and start filter tutorial
                           setHasSeenSwipeTutorial(true);
-                          if (dontShowAgainChecked) {
-                            completeOnboarding(true);
-                          } else {
-                            Animated.parallel([
-                              Animated.timing(swipeSpotlightAnimation, {
-                                toValue: 0,
-                                duration: 300,
-                                useNativeDriver: false,
-                              }),
-                              Animated.timing(swipeTutorialAnimation, {
-                                toValue: 0,
-                                duration: 300,
-                                useNativeDriver: false,
-                              }),
-                            ]).start(() => {
-                              setOnboardingStep('views');
-                            });
-                          }
+                          Animated.parallel([
+                            Animated.timing(swipeSpotlightAnimation, {
+                              toValue: 0,
+                              duration: 300,
+                              useNativeDriver: false,
+                            }),
+                            Animated.timing(swipeTutorialAnimation, {
+                              toValue: 0,
+                              duration: 300,
+                              useNativeDriver: false,
+                            }),
+                          ]).start(() => {
+                            if (!dontShowAgainChecked) {
+                              startFilterTutorial();
+                            } else {
+                              completeOnboarding(true);
+                            }
+                          });
                         }}>
                         <Ionicons name="close" size={18} color="#F53F7A" style={{ marginRight: 6 }} />
                         <Text style={styles.swipeBackText}>Skip</Text>
@@ -5051,35 +5121,98 @@ const Products = () => {
                       style={styles.swipeDoneButton}
                       onPress={() => {
                         setHasSeenSwipeTutorial(true);
-                        if (showOnboarding) {
-                          completeOnboarding(dontShowAgainChecked);
-                        } else {
-                          if (dontShowAgainChecked) {
-                            completeOnboarding(true);
+
+                        Animated.parallel([
+                          Animated.timing(swipeSpotlightAnimation, {
+                            toValue: 0,
+                            duration: 300,
+                            useNativeDriver: false,
+                          }),
+                          Animated.timing(swipeTutorialAnimation, {
+                            toValue: 0,
+                            duration: 300,
+                            useNativeDriver: false,
+                          }),
+                        ]).start(() => {
+                          if (!dontShowAgainChecked) {
+                            startFilterTutorial();
                           } else {
-                            // Just close the tutorial
-                            Animated.parallel([
-                              Animated.timing(swipeSpotlightAnimation, {
-                                toValue: 0,
-                                duration: 300,
-                                useNativeDriver: false,
-                              }),
-                              Animated.timing(swipeTutorialAnimation, {
-                                toValue: 0,
-                                duration: 300,
-                                useNativeDriver: false,
-                              }),
-                            ]).start(() => {
-                              setOnboardingStep('views');
-                            });
+                            completeOnboarding(true);
                           }
-                        }
+                        });
                       }}>
                       <Text style={styles.swipeDoneText}>Got it!</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
               </Animated.View>
+            )}
+
+            {/* Filter Tutorial Overlay - Simple */}
+            {onboardingStep === 'filter' && (
+              <TouchableOpacity
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }}
+                activeOpacity={1}
+                onPress={async () => {
+                  setOnboardingStep('complete');
+                  try {
+                    await AsyncStorage.setItem('products_swipe_tutorial_dont_show', 'true');
+                  } catch (error) {
+                    console.log('Error saving tutorial preference:', error);
+                  }
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  {/* Simple tooltip with arrow */}
+                  <Animated.View
+                    style={{
+                      position: 'absolute',
+                      top: (filterButtonLayout.y >= 0 ? filterButtonLayout.y : 50) + (filterButtonLayout.height > 0 ? filterButtonLayout.height : 42) + 10,
+                      right: 15,
+                      alignItems: 'flex-end',
+                      transform: [{
+                        translateY: filterTutorialAnimation.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0, 5],
+                        })
+                      }],
+                    }}
+                  >
+                    {/* Arrow pointing up */}
+                    <View style={{
+                      marginRight: 15,
+                      marginBottom: -1,
+                    }}>
+                      <Ionicons name="caret-up" size={24} color="#F53F7A" />
+                    </View>
+
+                    {/* Simple pill label */}
+                    <View style={{
+                      backgroundColor: '#F53F7A',
+                      paddingVertical: 12,
+                      paddingHorizontal: 20,
+                      borderRadius: 25,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 8,
+                      shadowColor: '#F53F7A',
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.4,
+                      shadowRadius: 8,
+                      elevation: 8,
+                    }}>
+                      <Ionicons name="options" size={18} color="#fff" />
+                      <Text style={{
+                        color: '#fff',
+                        fontSize: 15,
+                        fontWeight: '600',
+                      }}>
+                        Filter by Size
+                      </Text>
+                    </View>
+                  </Animated.View>
+                </View>
+              </TouchableOpacity>
             )}
           </>
         )}

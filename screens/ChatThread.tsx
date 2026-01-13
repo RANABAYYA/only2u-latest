@@ -16,6 +16,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import moment from 'moment';
@@ -54,6 +55,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isOwn }) => {
 const ChatThreadScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const route = useRoute<ChatThreadRouteProp>();
+  const insets = useSafeAreaInsets();
   const { friendId, conversationId: initialConversationId } = route.params;
   const {
     conversations,
@@ -169,9 +171,9 @@ const ChatThreadScreen: React.FC = () => {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+      style={[styles.container, { paddingTop: insets.top }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
@@ -207,7 +209,7 @@ const ChatThreadScreen: React.FC = () => {
         />
       )}
 
-      <View style={styles.inputContainer}>
+      <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <TextInput
           value={inputValue}
           onChangeText={setInputValue}

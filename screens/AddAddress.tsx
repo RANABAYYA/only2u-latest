@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { supabase } from '~/utils/supabase';
 import { useUser } from '~/contexts/UserContext';
 import Toast from 'react-native-toast-message';
@@ -10,18 +10,22 @@ import { getGooglePlacesApiKey } from '~/utils/settings';
 
 const AddAddress = () => {
   const navigation = useNavigation();
+  const route = useRoute();
+  // params might contain addressToEdit
+  const { addressToEdit }: any = route.params || {};
+
   const { userData } = useUser();
 
-  const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [line1, setLine1] = useState('');
-  const [line2, setLine2] = useState('');
-  const [landmark, setLandmark] = useState('');
-  const [city, setCity] = useState('');
-  const [stateName, setStateName] = useState('');
-  const [postalCode, setPostalCode] = useState('');
-  const [country, setCountry] = useState('India');
-  const [isDefault, setIsDefault] = useState(false);
+  const [fullName, setFullName] = useState(addressToEdit?.full_name || '');
+  const [phone, setPhone] = useState(addressToEdit?.phone || '');
+  const [line1, setLine1] = useState(addressToEdit?.street_line1 || addressToEdit?.address_line1 || '');
+  const [line2, setLine2] = useState(addressToEdit?.street_line2 || addressToEdit?.address_line2 || '');
+  const [landmark, setLandmark] = useState(addressToEdit?.landmark || '');
+  const [city, setCity] = useState(addressToEdit?.city || '');
+  const [stateName, setStateName] = useState(addressToEdit?.state || '');
+  const [postalCode, setPostalCode] = useState(addressToEdit?.postal_code || addressToEdit?.pincode || '');
+  const [country, setCountry] = useState(addressToEdit?.country || 'India');
+  const [isDefault, setIsDefault] = useState(addressToEdit?.is_default || false);
 
   // City/State/Country autocomplete (kept)
   const [placeQuery, setPlaceQuery] = useState('');
@@ -62,7 +66,19 @@ const AddAddress = () => {
       country,
       is_default: isDefault,
     };
-    const { error } = await supabase.from('user_addresses').insert(payload);
+
+    let error;
+    if (addressToEdit?.id) {
+      const { error: updateError } = await supabase
+        .from('user_addresses')
+        .update(payload)
+        .eq('id', addressToEdit.id);
+      error = updateError;
+    } else {
+      const { error: insertError } = await supabase.from('user_addresses').insert(payload);
+      error = insertError;
+    }
+
     if (error) {
       Toast.show({ type: 'error', text1: 'Error', text2: 'Could not save address' });
       return;
@@ -128,7 +144,7 @@ const AddAddress = () => {
       if (admin1) setStateName(admin1);
       if (postal) setPostalCode(postal);
       if (countryName) setCountry(countryName);
-    } catch {}
+    } catch { }
   };
 
   useEffect(() => {
@@ -138,22 +154,22 @@ const AddAddress = () => {
   }, [addrQuery]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top','bottom']}>      
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={22} color="#111" />
         </TouchableOpacity>
-        <Text style={styles.title}>Add New Address</Text>
+        <Text style={styles.title}>{addressToEdit ? 'Edit Address' : 'Add New Address'}</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
-        <ScrollView 
-          style={styles.form} 
+        <ScrollView
+          style={styles.form}
           contentContainerStyle={{ paddingBottom: 32 }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
