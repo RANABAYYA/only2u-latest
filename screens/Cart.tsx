@@ -16,7 +16,9 @@ import {
   Platform,
   Animated,
   Easing,
+  FlatList,
 } from 'react-native';
+import { fetchRecentlyViewedProducts, RecentProduct } from '~/utils/recentlyViewedService';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -97,9 +99,15 @@ const Cart = () => {
   const [resellerPriceInput, setResellerPriceInput] = useState('');
   // Size selection modal state
   const [showSizeModal, setShowSizeModal] = useState(false);
+  const [isEditingSize, setIsEditingSize] = useState(false);
   const [selectedItemForSize, setSelectedItemForSize] = useState<any>(null);
   const [availableSizes, setAvailableSizes] = useState<string[]>([]);
   const [selectedNewSize, setSelectedNewSize] = useState<string>('');
+
+  // Quantity modal state
+  const [showQuantityModal, setShowQuantityModal] = useState(false);
+  const [selectedItemForQty, setSelectedItemForQty] = useState<any>(null);
+  const [tempQuantity, setTempQuantity] = useState(1);
 
   // Collection sheet state
   const [showCollectionSheet, setShowCollectionSheet] = useState(false);
@@ -132,6 +140,12 @@ const Cart = () => {
   const [couponDiscountAmount, setCouponDiscountAmount] = useState(0);
   const [availableCoupons, setAvailableCoupons] = useState<any[]>([]);
   const [loadingCoupons, setLoadingCoupons] = useState(false);
+
+  // Recently Viewed State
+  const [recentlyViewed, setRecentlyViewed] = useState<RecentProduct[]>([]);
+  const [recentlyViewedLoading, setRecentlyViewedLoading] = useState(false);
+  const recentlyViewedListRef = useRef<FlatList>(null);
+  const CARD_WIDTH = 160;
   const [referralRewardSummary, setReferralRewardSummary] = useState<{
     couponId: string;
     couponCode: string;
@@ -192,6 +206,7 @@ const Cart = () => {
   const [showPriceBreakdownSheet, setShowPriceBreakdownSheet] = useState(false);
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [successOrderNumber, setSuccessOrderNumber] = useState('');
+  const [wasResellerOrder, setWasResellerOrder] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const paymentOptions = useMemo<PaymentOption[]>(
     () => [
@@ -982,6 +997,7 @@ const Cart = () => {
       itemsToProcess.forEach(item => removeFromCart(item.id));
 
       setSuccessOrderNumber(orderData.order_number);
+      setWasResellerOrder(itemsToProcess.some(item => item.isReseller));
       setShowSuccessAnimation(true);
       await updateCoinBalanceAfterOrder();
 
@@ -1062,6 +1078,7 @@ const Cart = () => {
     itemsToProcess.forEach(item => removeFromCart(item.id));
 
     setSuccessOrderNumber(orderData.order_number);
+    setWasResellerOrder(itemsToProcess.some(item => item.isReseller));
     setShowSuccessAnimation(true);
     await updateCoinBalanceAfterOrder();
     return orderData;
@@ -1104,6 +1121,7 @@ const Cart = () => {
       if (inStockItems.length === 0) {
         if (draftOrderNumber) {
           setSuccessOrderNumber(draftOrderNumber);
+          setWasResellerOrder(cartItems.some(item => item.isReseller));
           setShowSuccessAnimation(true);
         } else {
           Toast.show({
@@ -1233,6 +1251,22 @@ const Cart = () => {
   useEffect(() => {
     fetchDefaultAddress();
   }, [fetchDefaultAddress]);
+
+  // Fetch recently viewed products
+  useEffect(() => {
+    const loadRecentlyViewed = async () => {
+      setRecentlyViewedLoading(true);
+      try {
+        const products = await fetchRecentlyViewedProducts();
+        setRecentlyViewed(products);
+      } catch (error) {
+        console.warn('Failed to load recently viewed:', error);
+      } finally {
+        setRecentlyViewedLoading(false);
+      }
+    };
+    loadRecentlyViewed();
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -1893,6 +1927,7 @@ const Cart = () => {
           setAvailableSizes(sizes);
           setSelectedItemForSize({ ...currentItem, newQuantity });
           setSelectedNewSize('');
+          setIsEditingSize(false);
           setShowSizeModal(true);
         } else {
           console.log('No sizes available, just updating quantity');
@@ -1908,6 +1943,64 @@ const Cart = () => {
     }
   };
 
+  const handleSizeEditRequest = async (item: any) => {
+    setSelectedItemForSize(item);
+    setSelectedNewSize(item.size);
+    setIsEditingSize(true);
+
+    try {
+      const { supabase } = await import('~/utils/supabase');
+      const productName = item.name;
+
+      const { data: allVariants, error: nameError } = await supabase
+        .from('product_variants')
+        .select(`
+          id,
+          quantity,
+          size_id,
+          product_id,
+          sizes (
+            id,
+            name
+          ),
+          products!inner (
+            id,
+            name
+          )
+        `)
+        .eq('products.name', productName)
+        .gt('quantity', 0);
+
+      if (nameError || !allVariants) {
+        console.error('Error fetching by product name:', nameError);
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Could not fetch available sizes',
+        });
+        return;
+      }
+
+      const sizes = allVariants
+        .filter((v: any) => v.sizes)
+        .map((v: any) => v.sizes.name)
+        .filter((size: string, index: number, self: string[]) => self.indexOf(size) === index) || [];
+
+      if (sizes.length > 0) {
+        setAvailableSizes(sizes);
+        setShowSizeModal(true);
+      } else {
+        Toast.show({
+          type: 'info',
+          text1: 'No options',
+          text2: 'No other sizes available for this product',
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching sizes:', error);
+    }
+  };
+
   const handleConfirmSizeSelection = () => {
     if (!selectedNewSize) {
       Alert.alert('Size Required', 'Please select a size for the additional item');
@@ -1916,25 +2009,47 @@ const Cart = () => {
 
     if (!selectedItemForSize) return;
 
-    // Add a new cart item with the selected size
-    const { id: _ignoreId, ...rest } = selectedItemForSize;
-    addToCart({
-      ...rest,
-      size: selectedNewSize,
-      quantity: 1, // Add 1 item with new size
-    });
+    // If editing existing item size
+    if (isEditingSize) {
+      const { id: oldId, quantity, ...rest } = selectedItemForSize;
+
+      // Remove old item
+      removeFromCart(oldId);
+
+      // Add as new item with updated size (this will handle merging if variant exists)
+      addToCart({
+        ...rest,
+        size: selectedNewSize,
+        quantity: quantity,
+      });
+
+      Toast.show({
+        type: 'success',
+        text1: 'Size Updated',
+        text2: `Size changed to ${selectedNewSize}`,
+      });
+    } else {
+      // Add a new cart item with the selected size (existing logic)
+      const { id: _ignoreId, ...rest } = selectedItemForSize;
+      addToCart({
+        ...rest,
+        size: selectedNewSize,
+        quantity: 1, // Add 1 item with new size
+      });
+
+      Toast.show({
+        type: 'success',
+        text1: 'Added to Cart 🎉',
+        text2: `1 more item added in size ${selectedNewSize}`,
+      });
+    }
 
     // Close modal
     setShowSizeModal(false);
     setSelectedItemForSize(null);
     setSelectedNewSize('');
     setAvailableSizes([]);
-
-    Toast.show({
-      type: 'success',
-      text1: 'Added to Cart 🎉',
-      text2: `1 more item added in size ${selectedNewSize}`,
-    });
+    setIsEditingSize(false);
   };
 
   // Cache variant pricing fetched from DB by SKU
@@ -2330,26 +2445,6 @@ const Cart = () => {
             >
               <Image source={{ uri: getSafeImageUrl(item.image || item.image_urls?.[0]) }} style={styles.itemImage} />
             </TouchableOpacity>
-
-            <View style={styles.imageQuantityWrapper}>
-              <View style={styles.quantityContainer}>
-                <TouchableOpacity
-                  onPress={() => handleUpdateQuantity(item.id, Math.max(1, item.quantity - 1), item)}
-                  disabled={item.quantity <= 1}
-                  style={[styles.quantityButton, item.quantity <= 1 && styles.quantityButtonDisabled]}
-                >
-                  <Ionicons name="remove" size={18} color={item.quantity <= 1 ? '#D1D5DB' : '#F53F7A'} />
-                </TouchableOpacity>
-                <Text style={styles.quantityText}>{item.quantity}</Text>
-                <TouchableOpacity
-                  onPress={() => handleUpdateQuantity(item.id, Math.min(item.stock || 10, item.quantity + 1), item)}
-                  disabled={item.quantity >= (item.stock || 10)}
-                  style={[styles.quantityButton, item.quantity >= (item.stock || 10) && styles.quantityButtonDisabled]}
-                >
-                  <Ionicons name="add" size={18} color={item.quantity >= (item.stock || 10) ? '#D1D5DB' : '#F53F7A'} />
-                </TouchableOpacity>
-              </View>
-            </View>
           </View>
 
           <View style={styles.itemDetails}>
@@ -2364,46 +2459,67 @@ const Cart = () => {
                 }}
                 activeOpacity={0.7}
               >
-                <View style={styles.itemNameRow}>
-                  <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-                </View>
-                <View style={styles.itemAttributes}>
-                  {item.size && (
-                    <View style={styles.attributeChip}>
-                      <Text style={styles.attributeText}>Size: {item.size}</Text>
-                    </View>
-                  )}
-                  {/* {item.color && (
-                <View style={styles.attributeChip}>
-                  <Text style={styles.attributeText}>{item.color}</Text>
-                </View>
-              )} */}
-                </View>
+                <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
+                {/* Sold by - Vendor Info */}
+                {(item.vendor_name || item.alias_vendor) && (
+                  <Text style={styles.soldByText} numberOfLines={1}>
+                    Sold by: {item.alias_vendor || item.vendor_name}
+                  </Text>
+                )}
               </TouchableOpacity>
             </View>
 
-            <View style={styles.itemFooter}>
-              <View style={styles.priceContainer}>
-                {mrp > rsp && (
-                  <Text style={styles.itemMrpStriked}>₹{totalMrp.toFixed(2)}</Text>
-                )}
-                <Text style={styles.itemPrice}>₹{displayLineTotal.toFixed(2)}</Text>
-              </View>
+            {/* Size & Qty Row */}
+            <View style={styles.sizeQtyRow}>
+              {item.size && (
+                <TouchableOpacity
+                  style={styles.attributeChip}
+                  onPress={() => handleSizeEditRequest(item)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.attributeText}>Size: {item.size}</Text>
+                  <Ionicons name="chevron-down" size={12} color="#F53F7A" style={{ marginLeft: 4 }} />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.qtyChip}
+                onPress={() => {
+                  setSelectedItemForQty(item);
+                  setTempQuantity(item.quantity);
+                  setShowQuantityModal(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.qtyChipText}>Qty: {item.quantity}</Text>
+                <Ionicons name="chevron-down" size={12} color="#F53F7A" />
+              </TouchableOpacity>
             </View>
 
-            {saveAmount > 0 && (
-              <Text style={styles.itemSavingsTextFull}>
-                You save ₹{saveAmount.toFixed(0)} ({discountPct}% OFF)
+            {/* Price Row */}
+            <View style={styles.priceRow}>
+              <Text style={styles.itemPrice}>₹{displayLineTotal.toFixed(0)}</Text>
+              {mrp > rsp && (
+                <Text style={styles.itemMrpStriked}>₹{totalMrp.toFixed(0)}</Text>
+              )}
+              {discountPct > 0 && (
+                <Text style={styles.discountBadge}>{discountPct}% OFF</Text>
+              )}
+            </View>
+
+            {/* Return Policy - inline */}
+            {item.return_policy && (
+              <Text style={styles.returnPolicyInline}>
+                <Ionicons name="checkmark-circle" size={12} color="#10B981" /> {item.return_policy}
               </Text>
             )}
 
-            {/* {item.stock && item.stock <= 5 && (
-          <View style={styles.stockWarning}>
-            <Ionicons name="alert-circle" size={14} color="#F59E0B" />
-            <Text style={styles.stockWarningText}>Only {item.stock} left in stock</Text>
-          </View>
-          )} */}
-
+            {/* Delivery Info - inline */}
+            <Text style={styles.deliveryInline}>
+              <Ionicons name="cube-outline" size={12} color="#F53F7A" /> Delivery by{' '}
+              <Text style={styles.deliveryDateInline}>
+                {new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+              </Text>
+            </Text>
 
           </View>
         </View>
@@ -2558,10 +2674,15 @@ const Cart = () => {
         onClose={() => setShowSuccessAnimation(false)}
         onViewOrders={() => {
           setShowSuccessAnimation(false);
-          (navigation as any).navigate('TabNavigator', {
-            screen: 'Home',
-            params: { screen: 'MyOrders' },
-          });
+          // If reseller order, navigate to YourEarnings (reseller earnings), otherwise MyOrders
+          if (wasResellerOrder) {
+            (navigation as any).navigate('YourEarnings');
+          } else {
+            (navigation as any).navigate('TabNavigator', {
+              screen: 'Home',
+              params: { screen: 'MyOrders' },
+            });
+          }
         }}
       />
 
@@ -2594,14 +2715,18 @@ const Cart = () => {
         </ScrollView>
       ) : (
         // Cart with Items
-        <>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+        >
           <ScrollView
             ref={scrollViewRef}
             style={styles.contentScroll}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={[
               styles.scrollContent,
-              { paddingBottom: 140 + footerBottomPadding },
+              { paddingBottom: 20 },
             ]}
           >
             {/* Address Summary */}
@@ -2835,62 +2960,136 @@ const Cart = () => {
               )}
             </View>
 
-          </ScrollView>
-
-          {/* Sticky Checkout Footer */}
-          <View style={[styles.checkoutFooter, { paddingBottom: footerBottomPadding }]}>
-            <View style={styles.footerPriceInfo}>
-              <View style={styles.totalPriceLabelRow}>
-                <Text style={styles.footerPriceLabel}>Total Price</Text>
+            {/* Recently Viewed Section */}
+            {recentlyViewed.length > 0 && (
+              <View style={styles.recentlyViewedSection}>
+                <View style={styles.recentlyViewedHeader}>
+                  <Text style={styles.recentlyViewedTitle}>Recently Viewed</Text>
+                  <TouchableOpacity
+                    style={styles.scrollArrowButton}
+                    onPress={() => {
+                      if (recentlyViewedListRef.current) {
+                        recentlyViewedListRef.current.scrollToOffset({ offset: CARD_WIDTH * 2, animated: true });
+                      }
+                    }}
+                  >
+                    <Ionicons name="chevron-forward" size={24} color="#F53F7A" />
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  ref={recentlyViewedListRef}
+                  data={recentlyViewed}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.recentlyViewedList}
+                  renderItem={({ item }) => (
+                    <View style={styles.recentProductCard}>
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => {
+                          (navigation as any).navigate('ProductDetails', {
+                            productId: item.id,
+                            product: {
+                              id: item.id,
+                              name: item.name,
+                              price: item.price,
+                              image: item.image_url,
+                            }
+                          });
+                        }}
+                      >
+                        <Image
+                          source={{ uri: item.image_url }}
+                          style={styles.recentProductImage}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.recentProductInfo}>
+                          <Text style={styles.recentProductName} numberOfLines={2}>{item.name}</Text>
+                          <View style={styles.recentProductPriceRow}>
+                            {item.mrp_price && item.mrp_price > item.price && (
+                              <Text style={styles.recentProductOriginalPrice}>₹{item.mrp_price}</Text>
+                            )}
+                            <Text style={styles.recentProductPrice}>₹{item.price}</Text>
+                            {item.discount_percentage && item.discount_percentage > 0 && (
+                              <Text style={styles.recentProductDiscountBadge}>{item.discount_percentage}% OFF</Text>
+                            )}
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                />
               </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={styles.footerPriceValue}>₹{finalTotal.toFixed(2)}</Text>
+            )}
+
+            {/* Inline Checkout Footer */}
+            <View style={[
+              styles.checkoutFooter,
+              {
+                position: 'relative',
+                borderTopWidth: 0,
+                shadowOpacity: 0,
+                shadowColor: 'transparent',
+                elevation: 0,
+                paddingTop: 20,
+                paddingBottom: 20,
+              }
+            ]}>
+              <View style={styles.footerPriceInfo}>
+                <View style={styles.totalPriceLabelRow}>
+                  <Text style={styles.footerPriceLabel}>Total Price</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={styles.footerPriceValue}>₹{finalTotal.toFixed(2)}</Text>
+                  <TouchableOpacity
+                    onPress={() => setShowPriceBreakdownSheet(true)}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="chevron-down" size={18} color="#6B7280" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={styles.footerButtonsRow}>
                 <TouchableOpacity
-                  onPress={() => setShowPriceBreakdownSheet(true)}
-                  activeOpacity={0.7}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  style={styles.paymentSelectButton}
+                  onPress={() => setShowPaymentModal(true)}
+                  activeOpacity={0.9}
                 >
-                  <Ionicons name="chevron-down" size={18} color="#6B7280" />
+                  <View style={styles.paymentSelectContent}>
+                    <View style={styles.paymentSelectTexts}>
+                      <Text style={styles.paymentSelectLabel}>Pay using</Text>
+                      <Text style={styles.paymentSelectValue}>{activePayment.title}</Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.checkoutButton,
+                    placingOrder && { opacity: 0.7 },
+                  ]}
+                  onPress={handlePlaceOrder}
+                  activeOpacity={0.8}
+                  disabled={placingOrder}
+                >
+                  {placingOrder ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Text style={styles.checkoutButtonText}>Place Order</Text>
+                      <Ionicons name="arrow-forward" size={20} color="#fff" />
+                    </>
+                  )}
                 </TouchableOpacity>
               </View>
             </View>
+          </ScrollView>
 
-            <View style={styles.footerButtonsRow}>
-              <TouchableOpacity
-                style={styles.paymentSelectButton}
-                onPress={() => setShowPaymentModal(true)}
-                activeOpacity={0.9}
-              >
-                <View style={styles.paymentSelectContent}>
-                  <View style={styles.paymentSelectTexts}>
-                    <Text style={styles.paymentSelectLabel}>Pay using</Text>
-                    <Text style={styles.paymentSelectValue}>{activePayment.title}</Text>
-                  </View>
-                </View>
-                <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.checkoutButton,
-                  placingOrder && { opacity: 0.7 },
-                ]}
-                onPress={handlePlaceOrder}
-                activeOpacity={0.8}
-                disabled={placingOrder}
-              >
-                {placingOrder ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <>
-                    <Text style={styles.checkoutButtonText}>Place Order</Text>
-                    <Ionicons name="arrow-forward" size={20} color="#fff" />
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </>
+        </KeyboardAvoidingView>
       )}
 
       {/* Payment Method Modal */}
@@ -3182,9 +3381,9 @@ const Cart = () => {
               <View style={styles.modalIconBadge}>
                 <Ionicons name="resize" size={24} color="#F53F7A" />
               </View>
-              <Text style={styles.modalTitle}>Select Size</Text>
+              <Text style={styles.modalTitle}>{isEditingSize ? 'Change Size' : 'Select Size'}</Text>
               <Text style={styles.modalSubtitle}>
-                Choose a size for the additional item
+                {isEditingSize ? 'Select a new size for this item' : 'Choose a size for the additional item'}
               </Text>
             </View>
 
@@ -3212,7 +3411,10 @@ const Cart = () => {
               <View style={styles.modalInfo}>
                 <Ionicons name="information-circle" size={16} color="#666" />
                 <Text style={styles.modalInfoText}>
-                  This will add 1 more item with the selected size to your cart
+                  {isEditingSize
+                    ? `This will update the size of the item to ${selectedNewSize || '...'}`
+                    : 'This will add 1 more item with the selected size to your cart'
+                  }
                 </Text>
               </View>
             </View>
@@ -3226,7 +3428,7 @@ const Cart = () => {
               <TouchableOpacity
                 style={[styles.modalConfirmButton, styles.sizeModalConfirmButton]}
                 onPress={handleConfirmSizeSelection}>
-                <Text style={styles.modalConfirmText}>Add to Cart</Text>
+                <Text style={styles.modalConfirmText}>{isEditingSize ? 'Update Size' : 'Add to Cart'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -3302,6 +3504,70 @@ const Cart = () => {
               >
                 <Text style={styles.removeKeepEmoji}>😊</Text>
                 <Text style={styles.removeKeepText}>No</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Quantity Selection Modal */}
+      <Modal
+        visible={showQuantityModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowQuantityModal(false)}
+      >
+        <View style={styles.qtyModalOverlay}>
+          <View style={styles.qtyModalContent}>
+            <Text style={styles.qtyModalTitle}>Select Quantity</Text>
+            {selectedItemForQty && (
+              <Text style={styles.qtyModalProductName} numberOfLines={1}>
+                {selectedItemForQty.name}
+              </Text>
+            )}
+
+            <View style={styles.qtyModalSelector}>
+              <TouchableOpacity
+                style={[styles.qtyModalButton, tempQuantity <= 1 && styles.qtyModalButtonDisabled]}
+                onPress={() => setTempQuantity(Math.max(1, tempQuantity - 1))}
+                disabled={tempQuantity <= 1}
+              >
+                <Ionicons name="remove" size={24} color={tempQuantity <= 1 ? '#D1D5DB' : '#F53F7A'} />
+              </TouchableOpacity>
+
+              <Text style={styles.qtyModalValue}>{tempQuantity}</Text>
+
+              <TouchableOpacity
+                style={[styles.qtyModalButton, tempQuantity >= (selectedItemForQty?.stock || 10) && styles.qtyModalButtonDisabled]}
+                onPress={() => setTempQuantity(Math.min(selectedItemForQty?.stock || 10, tempQuantity + 1))}
+                disabled={tempQuantity >= (selectedItemForQty?.stock || 10)}
+              >
+                <Ionicons name="add" size={24} color={tempQuantity >= (selectedItemForQty?.stock || 10) ? '#D1D5DB' : '#F53F7A'} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedItemForQty?.stock && (
+              <Text style={styles.qtyModalStock}>{selectedItemForQty.stock} in stock</Text>
+            )}
+
+            <View style={styles.qtyModalActions}>
+              <TouchableOpacity
+                style={styles.qtyModalCancel}
+                onPress={() => setShowQuantityModal(false)}
+              >
+                <Text style={styles.qtyModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.qtyModalConfirm}
+                onPress={() => {
+                  if (selectedItemForQty) {
+                    handleUpdateQuantity(selectedItemForQty.id, tempQuantity, selectedItemForQty);
+                  }
+                  setShowQuantityModal(false);
+                }}
+              >
+                <Text style={styles.qtyModalConfirmText}>Update</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -4142,44 +4408,37 @@ const styles = StyleSheet.create({
   cartItem: {
     backgroundColor: '#fff',
     marginHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 12,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   cartItemContent: {
     flexDirection: 'row',
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     alignItems: 'flex-start',
   },
   itemImageContainer: {
-    position: 'relative',
-    marginRight: 14,
-    marginTop: 2,
+    marginRight: 12,
   },
   itemImage: {
-    width: 75,
-    height: 96,
-    borderRadius: 12,
+    width: 80,
+    height: 100,
+    borderRadius: 10,
     backgroundColor: '#F9FAFB',
   },
   itemDetails: {
     flex: 1,
-  },
-  itemImageColumn: {
-    alignItems: 'center',
     justifyContent: 'flex-start',
   },
-  imageQuantityWrapper: {
-    marginTop: 8,
-    width: '100%',
+  itemImageColumn: {
     alignItems: 'flex-start',
   },
   itemHeader: {
@@ -4210,15 +4469,18 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   attributeChip: {
-    backgroundColor: '#FFF0F5',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#F53F7A',
+    backgroundColor: '#FFF1F5',
   },
   attributeText: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#F53F7A',
     fontWeight: '600',
   },
@@ -4791,14 +5053,13 @@ const styles = StyleSheet.create({
   // Action Buttons Section
   actionButtonsSection: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 12,
-    marginTop: 12,
-    paddingTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
-    paddingHorizontal: 14,
+    borderTopColor: '#F3F4F6',
+    backgroundColor: '#FAFAFA',
   },
   saveForLaterButton: {
     flexDirection: 'row',
@@ -5475,6 +5736,234 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#6B7280',
+  },
+  // Cart item enhancements
+  soldByText: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  sizeQtyRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  discountBadge: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#10B981',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  returnPolicyInline: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 6,
+  },
+  deliveryInline: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  deliveryDateInline: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#F53F7A',
+  },
+  // Qty chip styles
+  qtyChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#F53F7A',
+    backgroundColor: '#FFF1F5',
+  },
+  qtyChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#F53F7A',
+  },
+  // Quantity modal styles
+  qtyModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  qtyModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 320,
+    alignItems: 'center',
+  },
+  qtyModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 8,
+  },
+  qtyModalProductName: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  qtyModalSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 20,
+    marginBottom: 12,
+  },
+  qtyModalButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyModalButtonDisabled: {
+    backgroundColor: '#F9FAFB',
+  },
+  qtyModalValue: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#1F2937',
+    minWidth: 50,
+    textAlign: 'center',
+  },
+  qtyModalStock: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginBottom: 20,
+  },
+  qtyModalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  qtyModalCancel: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+  },
+  qtyModalCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  qtyModalConfirm: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#F53F7A',
+    alignItems: 'center',
+  },
+  qtyModalConfirmText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  // Recently Viewed Section Styles
+  recentlyViewedSection: {
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  recentlyViewedHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  recentlyViewedTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  scrollArrowButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFF5F7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recentlyViewedList: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  recentProductCard: {
+    width: 160,
+    backgroundColor: '#fff',
+    borderRadius: 12, // More rounded
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    marginRight: 12,
+  },
+  recentProductImage: {
+    width: 160,
+    height: 180, // Taller image
+    backgroundColor: '#F9FAFB',
+    resizeMode: 'cover',
+  },
+  recentProductInfo: {
+    padding: 10,
+  },
+  recentProductImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recentProductDiscountBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#F53F7A',
+    backgroundColor: '#FFF0F5',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  recentProductName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  recentProductPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  recentProductPrice: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#F53F7A',
+  },
+  recentProductOriginalPrice: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
   },
 });
 

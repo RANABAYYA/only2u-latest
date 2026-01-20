@@ -194,6 +194,8 @@ const MyOrders = () => {
         return { color: '#F53F7A', bg: '#FFF0F5' };
       case 'cancelled':
         return { color: '#F44336', bg: '#FFEBEE' };
+      case 'rejected':
+        return { color: '#F44336', bg: '#FFEBEE' };
       default:
         return { color: '#666', bg: '#F5F5F5' };
     }
@@ -450,9 +452,11 @@ const MyOrders = () => {
           ? `Delivered on ${formatDate(order.created_at)}`
           : order.status === 'cancelled'
             ? 'Order was cancelled'
-            : order.status === 'shipped'
-              ? 'Out for delivery'
-              : `Expected by ${formatDate(new Date(new Date(order.created_at).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString())}`;
+            : order.status === 'rejected'
+              ? 'Order was rejected by seller'
+              : order.status === 'shipped'
+                ? 'Out for delivery'
+                : `Expected by ${formatDate(new Date(new Date(order.created_at).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString())}`;
 
         order.order_items?.forEach((item: any) => {
           flattenedItems.push({
@@ -864,6 +868,8 @@ const MyOrders = () => {
           return 'Order Placed';
         case 'cancelled':
           return 'Order Cancelled';
+        case 'rejected':
+          return 'Order Rejected';
         default:
           return 'Order Placed';
       }
@@ -874,7 +880,7 @@ const MyOrders = () => {
         key={`${item.orderId}-${item.itemId}`}
         style={styles.orderCard}
         activeOpacity={0.7}
-        onPress={() => navigation.navigate('OrderDetails', { orderId: item.orderId })}
+        onPress={() => navigation.navigate('OrderDetails', { orderId: item.orderId, itemId: item.itemId })}
       >
         {/* Product Image */}
         <View style={styles.productImageSection}>

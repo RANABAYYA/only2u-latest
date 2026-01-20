@@ -441,18 +441,27 @@ export default function ResellerEarnings() {
         orders.forEach(order => {
           const orderTotalAmount = Number(order.total_amount || 0);
           const orderOriginalTotal = Number(order.original_total || 0);
-          const orderProfit = Number(order.reseller_profit || order.reseller_margin_amount || 0);
+          // Calculate profit: use reseller_profit, fallback to margin_amount, then calculate from totals
+          let orderProfit = Number(order.reseller_profit || order.reseller_margin_amount || 0);
+          // If profit is 0 but we have total and original, calculate profit from difference
+          if (orderProfit === 0 && orderTotalAmount > 0 && orderOriginalTotal > 0) {
+            orderProfit = orderTotalAmount - orderOriginalTotal;
+          }
           const itemsCount = order.items?.length || 1;
 
-          // Calculate profit margin percentage for proportional distribution
-          const marginRatio = orderOriginalTotal > 0
-            ? (orderTotalAmount - orderOriginalTotal) / orderOriginalTotal
-            : 0;
+          // Calculate profit margin per unit to match OrderDetails logic
+          const totalItemsCount = order.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 1;
+          const marginPerUnit = totalItemsCount > 0 ? orderProfit / totalItemsCount : 0;
 
           order.items?.forEach((item, index) => {
-            const itemBasePrice = Number(item.unit_price || 0) * (item.quantity || 1);
-            const itemSellingPrice = itemBasePrice * (1 + marginRatio);
-            const itemProfit = itemSellingPrice - itemBasePrice;
+            const quantity = item.quantity || 1;
+            // In reseller orders, unit_price is the Selling Price (what customer paid)
+            const unitSellingPrice = Number(item.unit_price || 0);
+            const unitBasePrice = unitSellingPrice - marginPerUnit;
+
+            const itemSellingPrice = unitSellingPrice * quantity;
+            const itemBasePrice = unitBasePrice * quantity;
+            const itemProfit = marginPerUnit * quantity;
 
             flattenedItems.push({
               // Order info
@@ -471,12 +480,12 @@ export default function ResellerEarnings() {
               productImage: item.product_image,
               size: item.size,
               color: item.color,
-              quantity: item.quantity || 1,
+              quantity: quantity,
 
               // Pricing
               itemBasePrice: itemBasePrice,
               itemSellingPrice: itemSellingPrice,
-              itemProfit: itemProfit > 0 ? itemProfit : 0,
+              itemProfit: itemProfit,
             });
           });
         });
@@ -512,7 +521,7 @@ export default function ResellerEarnings() {
           const itemDate = new Date(item.createdAt);
           return itemDate >= startOfMonth;
         })
-        .reduce((sum, item) => sum + item.itemSellingPrice, 0);
+        .reduce((sum, item) => sum + item.itemProfit, 0);
       const derivedTier = getTierForSales(monthlyTotal);
       setMonthlySales(monthlyTotal);
       setCurrentTier(derivedTier);

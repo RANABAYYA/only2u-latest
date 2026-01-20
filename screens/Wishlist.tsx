@@ -457,7 +457,7 @@ const Wishlist = () => {
 
     return (
       <TouchableOpacity
-        style={styles.previewCard}
+        style={styles.previewGridCard}
         onPress={() => {
           // Navigate to PersonalizedProductResult screen
           (navigation as any).navigate('PersonalizedProductResult', {
@@ -474,17 +474,17 @@ const Wishlist = () => {
             }
           });
         }}
+        activeOpacity={0.9}
       >
-        <View style={styles.previewImageContainer}>
+        <View style={styles.previewGridImageContainer}>
           {isVideo ? (
             <>
               <Image
                 source={{ uri: item.originalProductImage || getFirstSafeImageUrl(item.image_urls || [item.image_url]) }}
-                style={styles.previewImage}
+                style={styles.previewGridImage}
               />
-              <View style={styles.videoOverlay}>
-                <Ionicons name="play-circle" size={40} color="rgba(255, 255, 255, 0.9)" />
-                <Text style={styles.videoLabel}>VIDEO</Text>
+              <View style={styles.previewVideoOverlay}>
+                <Ionicons name="play-circle" size={32} color="rgba(255, 255, 255, 0.9)" />
               </View>
             </>
           ) : (
@@ -495,52 +495,53 @@ const Wishlist = () => {
               return (
                 <Image
                   source={{ uri: url }}
-                  style={styles.previewImage}
+                  style={styles.previewGridImage}
                 />
               );
             })()
           )}
-        </View>
-        <View style={styles.previewContent}>
-          <Text style={styles.previewTitle} numberOfLines={2}>{item.name}</Text>
-          <Text style={styles.previewSubtitle} numberOfLines={2}>{item.description}</Text>
-          <View style={styles.previewMetaRow}>
-            <View style={styles.previewBadge}>
-              <Ionicons name="sparkles" size={12} color="#F53F7A" />
-              <Text style={styles.previewBadgeText}>Personalized</Text>
+
+
+
+          {/* Video Badge Overlay if applicable */}
+          {isVideoPreview && (
+            <View style={styles.gridVideoBadge}>
+              <Ionicons name="videocam" size={10} color="#fff" />
             </View>
-            <Text style={styles.previewTimestamp}>
-              {item.faceSwapDate ?
-                new Date(item.faceSwapDate).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                }) :
-                new Date().toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric'
-                })
-              }
-            </Text>
-            {isVideoPreview && (
-              <View style={styles.videoPreviewBadge}>
-                <Ionicons name="videocam" size={10} color="#3B82F6" />
-                <Text style={styles.videoPreviewText}>Video</Text>
-              </View>
-            )}
-          </View>
+          )}
+
+          {/* Delete Button Overlay */}
+          <TouchableOpacity
+            style={styles.gridDeleteButton}
+            onPress={(e) => {
+              e.stopPropagation();
+              setItemToRemove(item);
+              setShowRemoveModal(true);
+            }}
+          >
+            <Ionicons name="trash-outline" size={18} color="#FF3B30" />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={styles.previewDeleteButton}
-          onPress={(e) => {
-            e.stopPropagation();
-            removeFromPreview(item.id);
-          }}
-        >
-          <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-        </TouchableOpacity>
+
+        <View style={styles.previewGridContent}>
+          <Text style={styles.previewGridTitle} numberOfLines={2}>{item.name}</Text>
+          <Text style={styles.previewGridDate}>
+            Created: {item.faceSwapDate ?
+              new Date(item.faceSwapDate).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              }) :
+              new Date().toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            }
+          </Text>
+        </View>
       </TouchableOpacity>
     );
   };
@@ -664,10 +665,10 @@ const Wishlist = () => {
             data={previewSafe}
             renderItem={renderPreviewItem}
             keyExtractor={item => `preview-${item.id}`}
-            contentContainerStyle={styles.previewList}
-            numColumns={1}
+            contentContainerStyle={styles.productList}
+            numColumns={2}
             showsVerticalScrollIndicator={false}
-            key="preview-list"
+            key="preview-grid"
           />
         );
       default:
@@ -734,13 +735,19 @@ const Wishlist = () => {
             </View>
 
             {/* Title */}
-            <Text style={styles.modalTitle}>Remove from Wishlist?</Text>
+            <Text style={styles.modalTitle}>
+              {activeTab === 'preview' ? 'Delete Preview?' : 'Remove from Wishlist?'}
+            </Text>
 
             {/* Product Info */}
             {itemToRemove && (
               <View style={styles.modalProductInfo}>
                 <Image
-                  source={{ uri: getFirstSafeProductImage(itemToRemove) }}
+                  source={{
+                    uri: activeTab === 'preview'
+                      ? (itemToRemove.originalProductImage || getFirstSafeImageUrl(itemToRemove.image_urls || [itemToRemove.image_url]))
+                      : getFirstSafeProductImage(itemToRemove)
+                  }}
                   style={styles.modalProductImage}
                 />
                 <Text style={styles.modalProductName} numberOfLines={2}>
@@ -751,7 +758,10 @@ const Wishlist = () => {
 
             {/* Message */}
             <Text style={styles.modalMessage}>
-              This item will be removed from all your collections
+              {activeTab === 'preview'
+                ? 'This personalized preview will be permanently deleted.'
+                : 'This item will be removed from all your collections'
+              }
             </Text>
 
             {/* Buttons */}
@@ -775,31 +785,45 @@ const Wishlist = () => {
                   // Close modal
                   setShowRemoveModal(false);
 
-                  // Remove from wishlist
-                  removeFromWishlist(itemToRemove.id);
+                  if (activeTab === 'preview') {
+                    // Remove from preview
+                    removeFromPreview(itemToRemove.id);
 
-                  // Remove from database
-                  if (userData?.id) {
-                    await supabase
-                      .from('collection_products')
-                      .delete()
-                      .match({ product_id: itemToRemove.id });
+                    Toast.show({
+                      type: 'success',
+                      text1: 'Deleted Preview',
+                      text2: itemToRemove.name,
+                      position: 'top',
+                    });
+                  } else {
+                    // Remove from wishlist
+                    removeFromWishlist(itemToRemove.id);
+
+                    // Remove from database
+                    if (userData?.id) {
+                      await supabase
+                        .from('collection_products')
+                        .delete()
+                        .match({ product_id: itemToRemove.id });
+                    }
+
+                    // Show success toast
+                    Toast.show({
+                      type: 'success',
+                      text1: 'Removed from Wishlist',
+                      text2: itemToRemove.name,
+                      position: 'top',
+                    });
                   }
-
-                  // Show success toast
-                  Toast.show({
-                    type: 'success',
-                    text1: 'Removed from Wishlist',
-                    text2: itemToRemove.name,
-                    position: 'top',
-                  });
 
                   // Clear item
                   setItemToRemove(null);
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={styles.modalRemoveText}>Remove</Text>
+                <Text style={styles.modalRemoveText}>
+                  {activeTab === 'preview' ? 'Delete' : 'Remove'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1455,6 +1479,79 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#fff',
+  },
+
+  // Preview Grid Styles
+  previewGridCard: {
+    width: (width - 32) / 2,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    margin: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+    overflow: 'hidden',
+  },
+  previewGridImageContainer: {
+    width: '100%',
+    height: 180,
+    backgroundColor: '#f0f0f0',
+    position: 'relative',
+  },
+  previewGridImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  previewVideoOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  gridVideoBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 6,
+    borderRadius: 20,
+    zIndex: 5,
+  },
+  gridDeleteButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 16,
+    padding: 6,
+    zIndex: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  previewGridContent: {
+    padding: 12,
+  },
+  previewGridTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+    lineHeight: 18,
+  },
+  previewGridDate: {
+    fontSize: 11,
+    color: '#888',
+    fontWeight: '500',
   },
 });
 

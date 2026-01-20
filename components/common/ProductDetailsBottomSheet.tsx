@@ -1390,9 +1390,22 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       };
 
       await addToCart(cartItem);
-      onClose();
+
+      // Show success toast with themed colors - don't close sheet
+      Toast.show({
+        type: 'success',
+        text1: 'Added to Cart! 🛒',
+        text2: `${product.name} (${size})`,
+        visibilityTime: 2500,
+        topOffset: 60,
+      });
     } catch (error) {
       console.error('Error adding to cart:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Failed to add to cart',
+        text2: 'Please try again',
+      });
     } finally {
       setAddToCartLoading(false);
     }

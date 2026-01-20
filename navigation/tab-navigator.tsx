@@ -897,75 +897,6 @@ export default function TabLayout() {
                   />
                 </View>
 
-                {/* Referral code input */}
-                <View style={{ marginTop: 16 }}>
-                  <Text style={{ fontSize: 12, color: '#666', marginBottom: 6, fontWeight: '700', letterSpacing: 0.2 }}>
-                    Have a referral code? (optional)
-                  </Text>
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#F4F5F7',
-                      borderRadius: 14,
-                      paddingHorizontal: 12,
-                      borderWidth: 1,
-                      borderColor:
-                        referralCodeState === 'valid'
-                          ? '#A7F3D0'
-                          : referralCodeState === 'invalid'
-                            ? '#FECACA'
-                            : '#EAECF0',
-                    }}
-                  >
-                    <TextInput
-                      value={referralCodeInput}
-                      onChangeText={(text) => {
-                        setReferralCodeInput(text.toUpperCase());
-                        if (referralCodeState !== 'idle') {
-                          setReferralCodeState('idle');
-                          setReferralCodeMessage('');
-                          setAppliedReferralCoupon(null);
-                        }
-                      }}
-                      placeholder="ENTER CODE"
-                      placeholderTextColor="#9CA3AF"
-                      style={{ flex: 1, fontSize: 14, color: '#111', paddingVertical: Platform.OS === 'android' ? 10 : 14 }}
-                      autoCapitalize="characters"
-                    />
-                    <TouchableOpacity
-                      style={{
-                        paddingHorizontal: 14,
-                        paddingVertical: 8,
-                        backgroundColor: referralCodeState === 'valid' ? '#10B981' : '#F53F7A',
-                        borderRadius: 12,
-                        marginLeft: 8,
-                      }}
-                      onPress={handleApplyReferralCodeInput}
-                      disabled={referralCodeState === 'checking'}
-                    >
-                      {referralCodeState === 'checking' ? (
-                        <ActivityIndicator color="#fff" size="small" />
-                      ) : (
-                        <Text style={{ color: '#fff', fontWeight: '700' }}>
-                          {referralCodeState === 'valid' ? 'Applied' : 'Apply'}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                  {!!referralCodeMessage && (
-                    <Text
-                      style={{
-                        marginTop: 6,
-                        fontSize: 12,
-                        color: referralCodeState === 'valid' ? '#047857' : '#B91C1C',
-                      }}
-                    >
-                      {referralCodeMessage}
-                    </Text>
-                  )}
-                </View>
-
                 {/* Primary CTA send/resend */}
                 {!otpSent ? (
                   <TouchableOpacity disabled={sending} onPress={handleSendOtp} style={{ marginTop: 14, backgroundColor: sending ? '#F7A3BD' : '#F53F7A', borderRadius: 14, paddingVertical: 14, alignItems: 'center', shadowColor: '#F53F7A', shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
@@ -1006,6 +937,76 @@ export default function TabLayout() {
                         maxLength={6}
                       />
                     </View>
+
+                    {/* Referral code input - moved below OTP */}
+                    <View style={{ marginTop: 16 }}>
+                      <Text style={{ fontSize: 12, color: '#666', marginBottom: 6, fontWeight: '700', letterSpacing: 0.2 }}>
+                        Have a referral code? (optional)
+                      </Text>
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          backgroundColor: '#F4F5F7',
+                          borderRadius: 14,
+                          paddingHorizontal: 12,
+                          borderWidth: 1,
+                          borderColor:
+                            referralCodeState === 'valid'
+                              ? '#A7F3D0'
+                              : referralCodeState === 'invalid'
+                                ? '#FECACA'
+                                : '#EAECF0',
+                        }}
+                      >
+                        <TextInput
+                          value={referralCodeInput}
+                          onChangeText={(text) => {
+                            setReferralCodeInput(text.toUpperCase());
+                            if (referralCodeState !== 'idle') {
+                              setReferralCodeState('idle');
+                              setReferralCodeMessage('');
+                              setAppliedReferralCoupon(null);
+                            }
+                          }}
+                          placeholder="ENTER CODE"
+                          placeholderTextColor="#9CA3AF"
+                          style={{ flex: 1, fontSize: 14, color: '#111', paddingVertical: Platform.OS === 'android' ? 10 : 14 }}
+                          autoCapitalize="characters"
+                        />
+                        <TouchableOpacity
+                          style={{
+                            paddingHorizontal: 14,
+                            paddingVertical: 8,
+                            backgroundColor: referralCodeState === 'valid' ? '#10B981' : '#F53F7A',
+                            borderRadius: 12,
+                            marginLeft: 8,
+                          }}
+                          onPress={handleApplyReferralCodeInput}
+                          disabled={referralCodeState === 'checking'}
+                        >
+                          {referralCodeState === 'checking' ? (
+                            <ActivityIndicator color="#fff" size="small" />
+                          ) : (
+                            <Text style={{ color: '#fff', fontWeight: '700' }}>
+                              {referralCodeState === 'valid' ? 'Applied' : 'Apply'}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                      {!!referralCodeMessage && (
+                        <Text
+                          style={{
+                            marginTop: 6,
+                            fontSize: 12,
+                            color: referralCodeState === 'valid' ? '#047857' : '#B91C1C',
+                          }}
+                        >
+                          {referralCodeMessage}
+                        </Text>
+                      )}
+                    </View>
+
                     <TouchableOpacity disabled={verifying} onPress={handleVerifyOtp} style={{ marginTop: 14, backgroundColor: verifying ? '#F7A3BD' : '#F53F7A', borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
                       <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>{verifying ? tt('verifying', 'Verifying...') : tt('verify_continue', 'Verify & Continue')}</Text>
                     </TouchableOpacity>

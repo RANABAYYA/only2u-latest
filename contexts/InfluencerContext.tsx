@@ -58,7 +58,7 @@ interface InfluencerContextType {
   // Influencer actions
   fetchInfluencers: () => Promise<void>;
   fetchInfluencerById: (influencerId: string) => Promise<Influencer | null>;
-  fetchInfluencerPosts: (influencerId?: string) => Promise<void>;
+  fetchInfluencerPosts: (influencerId?: string) => Promise<InfluencerPost[]>;
   fetchFollowedInfluencers: () => Promise<void>;
 
   // Follow actions
@@ -139,7 +139,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
   };
 
   // Fetch influencer posts (all or specific influencer)
-  const fetchInfluencerPosts = async (influencerId?: string) => {
+  const fetchInfluencerPosts = async (influencerId?: string): Promise<InfluencerPost[]> => {
     try {
       setLoading(true);
       setError(null);
@@ -175,9 +175,11 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
       );
 
       setInfluencerPosts(postsWithLikes);
+      return postsWithLikes;
     } catch (err) {
       console.error('Error fetching influencer posts:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch posts');
+      return [];
     } finally {
       setLoading(false);
     }
@@ -375,7 +377,8 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
           category:categories(name),
           product_variants (
             price,
-            image_urls
+            image_urls,
+            discount_percentage
           )
         `)
         .eq('influencer_id', influencerId)

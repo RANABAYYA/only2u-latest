@@ -938,6 +938,8 @@ const ProductCardSwipe = React.memo(({
   const [uploadingProfilePhoto, setUploadingProfilePhoto] = useState(false);
   const [permissionModal, setPermissionModal] = useState<{ visible: boolean; context: 'camera' | 'gallery' }>({ visible: false, context: 'camera' });
   const [completedFaceSwapProduct, setCompletedFaceSwapProduct] = useState<any>(null);
+  const [isTutorialVideoPlaying, setIsTutorialVideoPlaying] = useState(true);
+  const tutorialVideoRef = useRef<any>(null);
 
   // Refs for cleanup
   const faceSwapPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -1942,14 +1944,55 @@ const ProductCardSwipe = React.memo(({
               </TouchableOpacity>
             </View>
             <View style={styles.resellTutorialVideoWrapper}>
-              <Video
-                source={{ uri: TRYON_TUTORIAL_VIDEO_URL }}
-                style={styles.resellTutorialVideo}
-                resizeMode={ResizeMode.COVER}
-                shouldPlay
-                isLooping
-                isMuted
-              />
+              <TouchableOpacity
+                style={{ flex: 1 }}
+                activeOpacity={0.9}
+                onPress={() => {
+                  if (tutorialVideoRef.current) {
+                    if (isTutorialVideoPlaying) {
+                      tutorialVideoRef.current.pauseAsync();
+                    } else {
+                      tutorialVideoRef.current.playAsync();
+                    }
+                    setIsTutorialVideoPlaying(!isTutorialVideoPlaying);
+                  }
+                }}
+              >
+                <Video
+                  ref={tutorialVideoRef}
+                  source={{ uri: TRYON_TUTORIAL_VIDEO_URL }}
+                  style={styles.resellTutorialVideo}
+                  resizeMode={ResizeMode.COVER}
+                  shouldPlay={isTutorialVideoPlaying}
+                  isLooping
+                  isMuted
+                />
+                {/* Play/Pause Overlay Button */}
+                <View style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}>
+                  <View style={{
+                    width: 50,
+                    height: 50,
+                    borderRadius: 25,
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}>
+                    <Ionicons
+                      name={isTutorialVideoPlaying ? 'pause' : 'play'}
+                      size={24}
+                      color="#fff"
+                    />
+                  </View>
+                </View>
+              </TouchableOpacity>
             </View>
             <Text style={styles.resellTutorialDescription}>
               Upload a clear photo, pick your size, and instantly preview outfits. Share your looks
@@ -1991,15 +2034,23 @@ const ProductCardSwipe = React.memo(({
         </View>
       </Modal>
 
-      {/* Try On Modal */}
-      {showTryOnModal && (
+      {/* Try On Modal - Using proper Modal component to prevent swipe-through */}
+      <Modal
+        visible={showTryOnModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowTryOnModal(false);
+          setSelectedSize(null);
+          setSizeSelectionDraft(null);
+        }}
+      >
         <View
           style={{
-            ...StyleSheet.absoluteFillObject,
+            flex: 1,
             justifyContent: 'center',
             alignItems: 'center',
-            backgroundColor: 'rgba(0,0,0,0.3)',
-            zIndex: 9999,
+            backgroundColor: 'rgba(0,0,0,0.5)',
           }}>
           <View style={styles.akoolModal}>
             <TouchableOpacity
@@ -2063,7 +2114,7 @@ const ProductCardSwipe = React.memo(({
             </TouchableOpacity>
           </View>
         </View>
-      )}
+      </Modal>
 
       {/* Size Selection Modal */}
       <Modal
@@ -2644,6 +2695,13 @@ const CustomSwipeView = ({
             },
           ]}
         >
+          {/* Debug: Log what rating is being passed */}
+          {(() => {
+            const productId = String(products[currentIndex]?.id);
+            const rating = productRatings[productId];
+            console.log(`🎴 Front card product: ${productId}, rating found:`, rating, 'keys in productRatings:', Object.keys(productRatings).length);
+            return null;
+          })()}
           <ProductCardSwipe
             product={products[currentIndex]}
             cardHeight={cardHeight}
@@ -3004,6 +3062,11 @@ const Products = () => {
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [selectedDeliveryTimes, setSelectedDeliveryTimes] = useState<string[]>([]);
+  const [selectedInfluencerIds, setSelectedInfluencerIds] = useState<string[]>([]);
+  const [influencerSearchQuery, setInfluencerSearchQuery] = useState('');
+  const [showInfluencerSuggestions, setShowInfluencerSuggestions] = useState(false);
+  const [activeBrandInfluencerTab, setActiveBrandInfluencerTab] = useState<'brands' | 'influencers'>('brands');
+  const [filteredInfluencers, setFilteredInfluencers] = useState<any[]>([]);
 
   useEffect(() => {
     if (vendorId) {
@@ -3022,12 +3085,20 @@ const Products = () => {
   const [vendorSearchQuery, setVendorSearchQuery] = useState('');
   const [filteredVendors, setFilteredVendors] = useState<any[]>([]);
 
-  // Filter categories and data
-  const filterCategories = [
-    'Size',
-    'Brand',
-    'Price Range'
-  ];
+  // Filter categories - Category only shows for best_seller section
+  const filterCategories = useMemo(() => {
+    const base = ['Size', 'Brand/Influencer', 'Price Range'];
+    return featuredType === 'best_seller' ? ['Category', ...base] : base;
+  }, [featuredType]);
+
+  // Set default active filter category based on available filters
+  useEffect(() => {
+    if (featuredType === 'best_seller') {
+      setActiveFilterCategory('Category');
+    } else {
+      setActiveFilterCategory('Size');
+    }
+  }, [featuredType]);
 
   // Helper functions for other filter types
   const toggleVendorSelection = (vendorId: string) => {
@@ -3078,12 +3149,34 @@ const Products = () => {
     );
   };
 
+  const toggleInfluencerSelection = (influencerId: string) => {
+    setSelectedInfluencerIds(prev =>
+      prev.includes(influencerId)
+        ? prev.filter(i => i !== influencerId)
+        : [...prev, influencerId]
+    );
+  };
+
+  // Calculate influencer suggestions based on search query
+  const influencerSuggestions = useMemo(() => {
+    if (!influencerSearchQuery.trim()) return [];
+    const query = influencerSearchQuery.toLowerCase();
+    const suggestions = filteredInfluencers
+      .filter(influencer =>
+        influencer.name?.toLowerCase().includes(query) ||
+        influencer.username?.toLowerCase().includes(query)
+      )
+      .slice(0, 5);
+    return suggestions;
+  }, [influencerSearchQuery, filteredInfluencers]);
+
   const handleClearAllFilters = () => {
     setSelectedVendorIds(vendorId ? [vendorId] : []);
     setSelectedCategories([]);
     setSelectedCountries([]);
     setSelectedSizes([]);
     setSelectedDeliveryTimes([]);
+    setSelectedInfluencerIds([]);
     setFilterMinPrice('');
     setFilterMaxPrice('');
     setFilterInStock(false);
@@ -3093,14 +3186,16 @@ const Products = () => {
   const hasActiveFilters = (category: string): boolean => {
     switch (category) {
       case 'Brand':
-        // If vendorId is provided from route, check if additional vendors are selected
-        // or if the selected vendors differ from the default vendorId
+      case 'Brand/Influencer':
+        // Check vendors and influencers
         if (vendorId) {
-          // Has filters if more than one vendor selected, or if the single selected vendor is not the default
-          return selectedVendorIds.length > 1 || (selectedVendorIds.length === 1 && selectedVendorIds[0] !== vendorId);
+          return selectedVendorIds.length > 1 ||
+            (selectedVendorIds.length === 1 && selectedVendorIds[0] !== vendorId) ||
+            selectedInfluencerIds.length > 0;
         }
-        // No vendorId from route, so any selected vendors count as filters
-        return selectedVendorIds.length > 0;
+        return selectedVendorIds.length > 0 || selectedInfluencerIds.length > 0;
+      case 'Category':
+        return selectedCategories.length > 0;
       case 'Size':
         return selectedSizes.length > 0;
       case 'Price Range':
@@ -3141,18 +3236,12 @@ const Products = () => {
 
   // Onboarding states
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [onboardingStep, setOnboardingStep] = useState<'views' | 'swipe' | 'filter' | 'complete'>('views');
+  const [onboardingStep, setOnboardingStep] = useState<'views' | 'swipe' | 'complete'>('views');
   const onboardingAnimation = useRef(new Animated.Value(0)).current;
   const viewHighlightAnimation = useRef(new Animated.Value(0)).current;
   const swipeTutorialAnimation = useRef(new Animated.Value(0)).current;
   const spotlightAnimation = useRef(new Animated.Value(0)).current;
   const swipeSpotlightAnimation = useRef(new Animated.Value(0)).current;
-  const filterTutorialAnimation = useRef(new Animated.Value(0)).current;
-  const filterSpotlightAnimation = useRef(new Animated.Value(0)).current;
-
-  // Refs for measuring layouts
-  const filterButtonRef = useRef<TouchableOpacity>(null);
-  const [filterButtonLayout, setFilterButtonLayout] = useState({ x: 0, y: 0, width: 0, height: 0 });
 
   // Dynamic layout measurements for spotlight positioning
   const [viewToggleLayout, setViewToggleLayout] = useState({ x: -1, y: -1, width: 0, height: 0 });
@@ -3204,10 +3293,22 @@ const Products = () => {
   // Fetch filter data (vendors, categories, sizes, etc.)
   const fetchFilterData = async () => {
     try {
-      // Fetch vendors
+      // Fetch vendors that have active products
+      const { data: activeProducts, error: productError } = await supabase
+        .from('products')
+        .select('vendor_id')
+        .eq('is_active', true);
+
+      if (productError) {
+        console.error('Error fetching active product vendors:', productError);
+      }
+
+      const activeVendorIds = [...new Set(activeProducts?.map(p => p.vendor_id).filter(Boolean))];
+
       const { data: vendorsData, error: vendorsError } = await supabase
         .from('vendors')
-        .select('business_name, id')
+        .select('business_name, id, profile_image_url')
+        .in('id', activeVendorIds)
         .order('business_name');
 
       if (vendorsError) {
@@ -3302,6 +3403,30 @@ const Products = () => {
         { id: '4', name: '2 Weeks' },
       ]);
 
+      // Fetch influencers that have products
+      const { data: productsWithInfluencers } = await supabase
+        .from('products')
+        .select('influencer_id')
+        .not('influencer_id', 'is', null)
+        .eq('is_active', true);
+
+      if (productsWithInfluencers) {
+        const influencerIds = [...new Set(productsWithInfluencers.map((p: any) => p.influencer_id).filter(Boolean))];
+
+        if (influencerIds.length > 0) {
+          const { data: influencersData, error: influencersError } = await supabase
+            .from('influencer_profiles')
+            .select('*')
+            .in('id', influencerIds)
+            .order('name');
+
+          if (!influencersError && influencersData) {
+            console.log('Fetched influencers with products:', influencersData.length);
+            setFilteredInfluencers(influencersData);
+          }
+        }
+      }
+
     } catch (error) {
       console.error('Error fetching filter data:', error);
     }
@@ -3322,34 +3447,28 @@ const Products = () => {
 
   // Check if user wants to suppress tutorial - show every time unless "don't show again" is checked
   useEffect(() => {
-    // TESTING: Always start filter tutorial immediately
-    setTimeout(() => {
-      startFilterTutorial();
-    }, 1000);
+    const checkTutorialStatus = async () => {
+      try {
+        const dontShow = await AsyncStorage.getItem('products_view_tutorial_dont_show');
+        setProductsViewTutorialDontShowAgain(dontShow === 'true');
 
-    // Original code commented out for testing:
-    // const checkTutorialStatus = async () => {
-    //   try {
-    //     const dontShow = await AsyncStorage.getItem('products_view_tutorial_dont_show');
-    //     setProductsViewTutorialDontShowAgain(dontShow === 'true');
+        // Show tutorial every time unless user has explicitly chosen "don't show again"
+        if (dontShow !== 'true') {
+          // Show tutorial after screen loads
+          setTimeout(() => {
+            setShowProductsViewTutorial(true);
+          }, 800);
+        }
+      } catch (error) {
+        console.log('Error checking tutorial status:', error);
+        // If error, show tutorial anyway
+        setTimeout(() => {
+          setShowProductsViewTutorial(true);
+        }, 800);
+      }
+    };
 
-    //     // Show tutorial every time unless user has explicitly chosen "don't show again"
-    //     if (dontShow !== 'true') {
-    //       // Show tutorial after screen loads
-    //       setTimeout(() => {
-    //         setShowProductsViewTutorial(true);
-    //       }, 800);
-    //     }
-    //   } catch (error) {
-    //     console.log('Error checking tutorial status:', error);
-    //     // If error, show tutorial anyway
-    //     setTimeout(() => {
-    //       setShowProductsViewTutorial(true);
-    //     }, 800);
-    //   }
-    // };
-
-    // checkTutorialStatus();
+    checkTutorialStatus();
   }, []);
 
   // Onboarding logic disabled - only showing video tutorial modal now
@@ -3426,65 +3545,8 @@ const Products = () => {
           ]),
           { iterations: 3 }
         ),
-      ]).start(() => {
-        // Chain to filter tutorial
-        setTimeout(() => {
-          startFilterTutorial();
-        }, 500);
-      });
+      ]).start();
     }, 400);
-  };
-
-  const startFilterTutorial = () => {
-    setOnboardingStep('filter');
-
-    // Measure filter button
-    filterButtonRef.current?.measureInWindow((x, y, width, height) => {
-      console.log('Filter Button Layout:', { x, y, width, height });
-      setFilterButtonLayout({ x, y, width, height });
-    });
-
-    filterSpotlightAnimation.setValue(0);
-    filterTutorialAnimation.setValue(0);
-
-    Animated.sequence([
-      // Fade in filter spotlight
-      Animated.timing(filterSpotlightAnimation, {
-        toValue: 1,
-        duration: 500,
-        useNativeDriver: false,
-      }),
-      // Bounce the instruction
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(filterTutorialAnimation, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: false,
-          }),
-          Animated.timing(filterTutorialAnimation, {
-            toValue: 0,
-            duration: 1000,
-            useNativeDriver: false,
-          })
-        ]),
-        { iterations: 3 }
-      ),
-      // Fade out
-      Animated.timing(filterSpotlightAnimation, {
-        toValue: 0,
-        duration: 500,
-        useNativeDriver: false,
-      })
-    ]).start(async () => {
-      // Complete all tutorials
-      setOnboardingStep('complete');
-      try {
-        await AsyncStorage.setItem('products_swipe_tutorial_dont_show', 'true');
-      } catch (error) {
-        console.log('Error saving tutorial preference:', error);
-      }
-    });
   };
 
   // Track if tutorial modal was just closed (to show swipe animation on first swipe view)
@@ -3555,22 +3617,35 @@ const Products = () => {
   // Function to fetch ratings for products
   const fetchProductRatings = async (productIds: string[]) => {
     try {
-      if (productIds.length === 0) return;
+      if (productIds.length === 0) return {};
 
       // Convert all product IDs to strings for consistent handling
       const stringProductIds = productIds.map(id => String(id));
 
-      const { data, error } = await supabase
-        .from('product_reviews')
-        .select('product_id, rating')
-        .in('product_id', stringProductIds);
+      // Fetch in batches to avoid Supabase query limits
+      const batchSize = 50;
+      let allReviews: { product_id: string; rating: number }[] = [];
 
-      if (error) {
-        console.error('Error fetching product ratings:', error);
-        return;
+      for (let i = 0; i < stringProductIds.length; i += batchSize) {
+        const batch = stringProductIds.slice(i, i + batchSize);
+        const { data, error } = await supabase
+          .from('product_reviews')
+          .select('product_id, rating')
+          .in('product_id', batch);
+
+        if (error) {
+          console.error('Error fetching product ratings batch:', error);
+          continue;
+        }
+
+        if (data) {
+          allReviews = [...allReviews, ...data];
+        }
       }
 
-      console.log('📊 Fetched reviews data:', data?.length || 0, 'reviews for', stringProductIds.length, 'products');
+      console.log('📊 Fetched reviews data:', allReviews.length, 'reviews for', stringProductIds.length, 'products');
+      console.log('📊 Product IDs queried:', stringProductIds.slice(0, 5), '...');
+      console.log('📊 Reviews returned for products:', allReviews.slice(0, 5).map(r => r.product_id), '...');
 
       // Calculate average rating and count for each product
       const ratings: { [productId: string]: { rating: number; reviews: number } } = {};
@@ -3584,8 +3659,8 @@ const Products = () => {
       });
 
       // Group the fetched reviews
-      if (data && data.length > 0) {
-        data.forEach((review) => {
+      if (allReviews && allReviews.length > 0) {
+        allReviews.forEach((review) => {
           const reviewProductId = String(review.product_id);
           if (reviewsByProduct[reviewProductId]) {
             reviewsByProduct[reviewProductId].push(review.rating);
@@ -3617,8 +3692,10 @@ const Products = () => {
       });
 
       setProductRatings((prev) => ({ ...prev, ...ratings }));
+      return ratings; // Return ratings so caller can use them immediately
     } catch (error) {
       console.error('Error fetching product ratings:', error);
+      return {}; // Return empty object on error
     }
   };
 
@@ -3834,6 +3911,11 @@ const Products = () => {
         query = query.in('vendor_id', selectedVendorIds);
       }
 
+      // Apply influencer filter
+      if (selectedInfluencerIds.length > 0) {
+        query = query.in('influencer_id', selectedInfluencerIds);
+      }
+
       // Apply category filters
       if (selectedCategories.length > 0) {
         query = query.in('category_id', selectedCategories);
@@ -3975,12 +4057,19 @@ const Products = () => {
         });
       }
 
+      // Fetch ratings BEFORE setting products so they're available when cards render
+      const productIds = fixedData.map((product) => product.id);
+      const fetchedRatings = await fetchProductRatings(productIds);
+
+      // Force a synchronous state update with the ratings FIRST, then products
+      // This ensures ratings are committed before products trigger card rendering
+      setProductRatings(prev => ({ ...prev, ...fetchedRatings }));
+
+      // Use a microtask to ensure ratings state is committed before products
+      await new Promise(resolve => setTimeout(resolve, 50));
+
       setProducts(sortedData);
       setCurrentCardIndex(0); // Reset card index when products change
-
-      // Fetch ratings for products
-      const productIds = fixedData.map((product) => product.id);
-      await fetchProductRatings(productIds);
     } catch (error) {
       console.error('Error fetching products:', error);
     } finally {
@@ -4234,7 +4323,7 @@ const Products = () => {
               <View style={styles.reviewsContainer}>
                 <Ionicons name="star" size={12} color="#FFD600" style={{ marginRight: 2 }} />
                 <Text style={styles.reviews}>
-                  {ratingData.rating.toFixed(1)}
+                  {productRatings[String(product.id)]?.rating?.toFixed(1) || '0.0'}
                 </Text>
                 {ratingData.reviews > 0 && (
                   <Text style={[styles.reviews, { marginLeft: 4, fontWeight: '500', color: '#666' }]}>
@@ -4504,7 +4593,6 @@ const Products = () => {
 
             {/* Filter Button */}
             <TouchableOpacity
-              ref={filterButtonRef}
               style={styles.filterButton}
               onPress={() => filterSheetRef.current?.present()}>
               <Ionicons name="filter-outline" size={16} color="#666" />
@@ -4541,7 +4629,7 @@ const Products = () => {
               });
             }}>
             <CustomSwipeView
-              key={`swipe-${Object.keys(productRatings).length}`}
+              key={`swipe-${Object.keys(productRatings).length}-${Object.values(productRatings).reduce((sum, r) => sum + r.reviews, 0)}`}
               products={products}
               cardHeight={cardHeight}
               onSwipeRight={handleSwipeRight}
@@ -4572,13 +4660,13 @@ const Products = () => {
               numColumns={2}
               contentContainerStyle={styles.productList}
               showsVerticalScrollIndicator={false}
-              removeClippedSubviews={false}
+              removeClippedSubviews={true}
               maxToRenderPerBatch={10}
               windowSize={10}
               initialNumToRender={10}
               updateCellsBatchingPeriod={50}
-              extraData={[productRatings, Object.keys(productRatings).length]}
-              key={`grid-${Object.keys(productRatings).length}`} // Force re-render when ratings load
+              extraData={productRatings}
+              key={`'normal'}`} // Force re-render on layout change
             />
           </KeyboardAvoidingView>
         )}
@@ -4652,58 +4740,272 @@ const Products = () => {
 
               {/* Right Column - Filter Options */}
               <View style={styles.filterRightColumn}>
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  {activeFilterCategory === 'Brand' && (
+                <View style={{ flex: 1 }}>
+                  {/* Category Filter - Only for Best Seller */}
+                  {activeFilterCategory === 'Category' && (
                     <View style={styles.filterOptionsContainer}>
-                      <View style={styles.filterSectionHeader}>
-                        <Text style={styles.filterSectionTitle}>
-                          {filteredVendors.length} {filteredVendors.length === 1 ? 'Vendor' : 'Vendors'} Available
-                        </Text>
-                        {filteredVendors.length > 0 && (
-                          <TouchableOpacity onPress={toggleSelectAllVendors}>
-                            <Text style={styles.selectAllText}>
-                              {selectedVendorIds.length === filteredVendors.length ? 'Clear All' : 'Select All'}
-                            </Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                      <TextInput
-                        style={styles.vendorSearchInput}
-                        placeholder="Search vendors..."
-                        value={vendorSearchQuery}
-                        onChangeText={handleVendorSearch}
-                        placeholderTextColor="#999"
-                      />
-                      <ScrollView style={styles.vendorList} showsVerticalScrollIndicator={true}>
-                        {filteredVendors.length === 0 ? (
-                          <View style={styles.emptyFilterState}>
-                            <Text style={styles.emptyFilterText}>No vendors found</Text>
-                          </View>
-                        ) : (
-                          filteredVendors.map((vendor: any) => (
+                      <Text style={styles.filterSectionTitle}>
+                        {categories.length} {categories.length === 1 ? 'Category' : 'Categories'} Available
+                      </Text>
+                      <BottomSheetScrollView showsVerticalScrollIndicator={false}>
+                        {categories.length > 0 ? (
+                          categories.map((cat) => (
                             <TouchableOpacity
-                              key={vendor.id}
+                              key={cat.id}
                               style={styles.filterOptionRow}
-                              onPress={() => toggleVendorSelection(vendor.id)}>
+                              onPress={() => toggleCategorySelection(cat.id)}>
                               <View style={styles.checkboxContainer}>
                                 <Ionicons
-                                  name={selectedVendorIds.includes(vendor.id) ? 'checkmark-circle' : 'ellipse-outline'}
+                                  name={selectedCategories.includes(cat.id) ? 'checkmark-circle' : 'ellipse-outline'}
                                   size={20}
-                                  color={selectedVendorIds.includes(vendor.id) ? '#F53F7A' : '#999'}
+                                  color={selectedCategories.includes(cat.id) ? '#F53F7A' : '#999'}
                                 />
                               </View>
-                              <Text style={styles.filterOptionText}>{vendor.business_name}</Text>
+                              <Text style={styles.filterOptionText}>{cat.name}</Text>
                             </TouchableOpacity>
                           ))
+                        ) : (
+                          <View style={styles.emptyFilterState}>
+                            <Text style={styles.emptyFilterText}>No categories available</Text>
+                          </View>
                         )}
-                      </ScrollView>
+                      </BottomSheetScrollView>
+                    </View>
+                  )}
+
+                  {/* Brand/Influencer Filter with Tabs */}
+                  {activeFilterCategory === 'Brand/Influencer' && (
+                    <View style={styles.filterOptionsContainer}>
+                      {/* Tabs for Brands and Influencers */}
+                      <View style={styles.brandInfluencerTabs}>
+                        <TouchableOpacity
+                          style={[
+                            styles.brandInfluencerTab,
+                            activeBrandInfluencerTab === 'brands' && styles.brandInfluencerTabActive
+                          ]}
+                          onPress={() => setActiveBrandInfluencerTab('brands')}
+                        >
+                          <Text style={[
+                            styles.brandInfluencerTabText,
+                            activeBrandInfluencerTab === 'brands' && styles.brandInfluencerTabTextActive
+                          ]}>
+                            Brands ({filteredVendors.length})
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.brandInfluencerTab,
+                            activeBrandInfluencerTab === 'influencers' && styles.brandInfluencerTabActive
+                          ]}
+                          onPress={() => setActiveBrandInfluencerTab('influencers')}
+                        >
+                          <Text style={[
+                            styles.brandInfluencerTabText,
+                            activeBrandInfluencerTab === 'influencers' && styles.brandInfluencerTabTextActive
+                          ]}>
+                            Influencers ({filteredInfluencers.length})
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Brands Tab */}
+                      {activeBrandInfluencerTab === 'brands' && (
+                        <>
+                          <TextInput
+                            style={styles.vendorSearchInput}
+                            placeholder="Search brands..."
+                            value={vendorSearchQuery}
+                            onChangeText={handleVendorSearch}
+                            placeholderTextColor="#999"
+                          />
+                          <BottomSheetScrollView style={styles.vendorList} showsVerticalScrollIndicator={true}>
+                            {filteredVendors.length === 0 ? (
+                              <View style={styles.emptyFilterState}>
+                                <Ionicons name="business-outline" size={40} color="#ccc" />
+                                <Text style={styles.emptyFilterText}>No brands available</Text>
+                              </View>
+                            ) : (
+                              filteredVendors.map((vendor: any) => {
+                                const isSelected = selectedVendorIds.includes(vendor.id);
+                                return (
+                                  <TouchableOpacity
+                                    key={vendor.id}
+                                    style={[
+                                      styles.filterOptionRow,
+                                      { paddingVertical: 10 }
+                                    ]}
+                                    onPress={() => toggleVendorSelection(vendor.id)}>
+                                    <View style={{
+                                      width: 44,
+                                      height: 44,
+                                      borderRadius: 22,
+                                      borderWidth: isSelected ? 3 : 2,
+                                      borderColor: isSelected ? '#F53F7A' : '#E5E5E5',
+                                      backgroundColor: isSelected ? '#FFF0F5' : '#F5F5F5',
+                                      justifyContent: 'center',
+                                      alignItems: 'center',
+                                      marginRight: 12,
+                                      overflow: 'hidden',
+                                    }}>
+                                      {vendor.profile_image_url ? (
+                                        <Image
+                                          source={{ uri: vendor.profile_image_url }}
+                                          style={{ width: 40, height: 40, borderRadius: 20 }}
+                                        />
+                                      ) : (
+                                        <View style={{
+                                          width: 40,
+                                          height: 40,
+                                          borderRadius: 20,
+                                          backgroundColor: isSelected ? '#FFF0F5' : '#E8E8E8',
+                                          justifyContent: 'center',
+                                          alignItems: 'center',
+                                        }}>
+                                          <Ionicons
+                                            name="business"
+                                            size={20}
+                                            color={isSelected ? '#F53F7A' : '#999'}
+                                          />
+                                        </View>
+                                      )}
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                      <Text style={[
+                                        styles.filterOptionText,
+                                        isSelected && { color: '#F53F7A', fontWeight: '600' }
+                                      ]}>{vendor.business_name}</Text>
+                                    </View>
+                                    {isSelected && (
+                                      <View style={{
+                                        width: 24,
+                                        height: 24,
+                                        borderRadius: 12,
+                                        backgroundColor: '#F53F7A',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                      }}>
+                                        <Ionicons name="checkmark" size={16} color="#fff" />
+                                      </View>
+                                    )}
+                                  </TouchableOpacity>
+                                );
+                              })
+                            )}
+                          </BottomSheetScrollView>
+                        </>
+                      )}
+
+                      {/* Influencers Tab */}
+                      {activeBrandInfluencerTab === 'influencers' && (
+                        <>
+                          <TextInput
+                            style={styles.vendorSearchInput}
+                            placeholder="Search influencers..."
+                            value={influencerSearchQuery}
+                            onChangeText={setInfluencerSearchQuery}
+                            placeholderTextColor="#999"
+                          />
+                          <BottomSheetScrollView style={styles.vendorList} showsVerticalScrollIndicator={true}>
+                            {filteredInfluencers.length === 0 ? (
+                              <View style={styles.emptyFilterState}>
+                                <Ionicons name="person-outline" size={40} color="#ccc" />
+                                <Text style={styles.emptyFilterText}>No influencers available</Text>
+                              </View>
+                            ) : (
+                              filteredInfluencers
+                                .filter(influencer =>
+                                  !influencerSearchQuery.trim() ||
+                                  influencer.name?.toLowerCase().includes(influencerSearchQuery.toLowerCase()) ||
+                                  influencer.username?.toLowerCase().includes(influencerSearchQuery.toLowerCase())
+                                )
+                                .map((influencer: any) => {
+                                  const isSelected = selectedInfluencerIds.includes(influencer.id);
+                                  return (
+                                    <TouchableOpacity
+                                      key={influencer.id}
+                                      style={[
+                                        styles.filterOptionRow,
+                                        { paddingVertical: 10 }
+                                      ]}
+                                      onPress={() => toggleInfluencerSelection(influencer.id)}>
+                                      <View style={{
+                                        width: 44,
+                                        height: 44,
+                                        borderRadius: 22,
+                                        borderWidth: isSelected ? 3 : 2,
+                                        borderColor: isSelected ? '#F53F7A' : '#E5E5E5',
+                                        backgroundColor: isSelected ? '#FFF0F5' : '#F5F5F5',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        marginRight: 12,
+                                        overflow: 'hidden',
+                                      }}>
+                                        {influencer.profile_photo ? (
+                                          <Image
+                                            source={{ uri: influencer.profile_photo }}
+                                            style={{ width: 40, height: 40, borderRadius: 20 }}
+                                          />
+                                        ) : (
+                                          <View style={{
+                                            width: 40,
+                                            height: 40,
+                                            borderRadius: 20,
+                                            backgroundColor: isSelected ? '#FFF0F5' : '#E8E8E8',
+                                            justifyContent: 'center',
+                                            alignItems: 'center',
+                                          }}>
+                                            <Ionicons
+                                              name="person"
+                                              size={20}
+                                              color={isSelected ? '#F53F7A' : '#999'}
+                                            />
+                                          </View>
+                                        )}
+                                      </View>
+                                      <View style={{ flex: 1 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                          <Text style={[
+                                            styles.filterOptionText,
+                                            isSelected && { color: '#F53F7A', fontWeight: '600' }
+                                          ]}>
+                                            {influencer.name || influencer.username}
+                                          </Text>
+                                          {influencer.is_verified && (
+                                            <Ionicons name="checkmark-circle" size={14} color="#1DA1F2" style={{ marginLeft: 4 }} />
+                                          )}
+                                        </View>
+                                        {influencer.username && influencer.name && (
+                                          <Text style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
+                                            @{influencer.username}
+                                          </Text>
+                                        )}
+                                      </View>
+                                      {isSelected && (
+                                        <View style={{
+                                          width: 24,
+                                          height: 24,
+                                          borderRadius: 12,
+                                          backgroundColor: '#F53F7A',
+                                          justifyContent: 'center',
+                                          alignItems: 'center',
+                                        }}>
+                                          <Ionicons name="checkmark" size={16} color="#fff" />
+                                        </View>
+                                      )}
+                                    </TouchableOpacity>
+                                  );
+                                })
+                            )}
+                          </BottomSheetScrollView>
+                        </>
+                      )}
                     </View>
                   )}
 
                   {/* Size Filter */}
                   {activeFilterCategory === 'Size' && (
                     <View style={styles.filterOptionsContainer}>
-                      <ScrollView showsVerticalScrollIndicator={false}>
+                      <BottomSheetScrollView showsVerticalScrollIndicator={false}>
                         {sizes.length > 0 ? (
                           sizes.map((size) => {
                             const productCount = sizeProductCounts[size.id] || 0;
@@ -4733,7 +5035,7 @@ const Products = () => {
                             </Text>
                           </View>
                         )}
-                      </ScrollView>
+                      </BottomSheetScrollView>
                     </View>
                   )}
 
@@ -4764,7 +5066,7 @@ const Products = () => {
                   )}
 
 
-                </ScrollView>
+                </View>
               </View>
             </View>
 
@@ -4832,7 +5134,7 @@ const Products = () => {
         />
 
         {/* Spotlight Onboarding Overlays */}
-        {(showOnboarding || (onboardingStep === 'swipe' && !dontShowSwipeTutorial) || onboardingStep === 'filter') && (
+        {(showOnboarding || (onboardingStep === 'swipe' && !dontShowSwipeTutorial)) && (
           <>
             {/* Modal-based Onboarding */}
             <Modal
@@ -5092,26 +5394,26 @@ const Products = () => {
                       <TouchableOpacity
                         style={styles.swipeBackButton}
                         onPress={() => {
-                          // Close swipe tutorial and start filter tutorial
+                          // Just close the tutorial
                           setHasSeenSwipeTutorial(true);
-                          Animated.parallel([
-                            Animated.timing(swipeSpotlightAnimation, {
-                              toValue: 0,
-                              duration: 300,
-                              useNativeDriver: false,
-                            }),
-                            Animated.timing(swipeTutorialAnimation, {
-                              toValue: 0,
-                              duration: 300,
-                              useNativeDriver: false,
-                            }),
-                          ]).start(() => {
-                            if (!dontShowAgainChecked) {
-                              startFilterTutorial();
-                            } else {
-                              completeOnboarding(true);
-                            }
-                          });
+                          if (dontShowAgainChecked) {
+                            completeOnboarding(true);
+                          } else {
+                            Animated.parallel([
+                              Animated.timing(swipeSpotlightAnimation, {
+                                toValue: 0,
+                                duration: 300,
+                                useNativeDriver: false,
+                              }),
+                              Animated.timing(swipeTutorialAnimation, {
+                                toValue: 0,
+                                duration: 300,
+                                useNativeDriver: false,
+                              }),
+                            ]).start(() => {
+                              setOnboardingStep('views');
+                            });
+                          }
                         }}>
                         <Ionicons name="close" size={18} color="#F53F7A" style={{ marginRight: 6 }} />
                         <Text style={styles.swipeBackText}>Skip</Text>
@@ -5121,98 +5423,35 @@ const Products = () => {
                       style={styles.swipeDoneButton}
                       onPress={() => {
                         setHasSeenSwipeTutorial(true);
-
-                        Animated.parallel([
-                          Animated.timing(swipeSpotlightAnimation, {
-                            toValue: 0,
-                            duration: 300,
-                            useNativeDriver: false,
-                          }),
-                          Animated.timing(swipeTutorialAnimation, {
-                            toValue: 0,
-                            duration: 300,
-                            useNativeDriver: false,
-                          }),
-                        ]).start(() => {
-                          if (!dontShowAgainChecked) {
-                            startFilterTutorial();
-                          } else {
+                        if (showOnboarding) {
+                          completeOnboarding(dontShowAgainChecked);
+                        } else {
+                          if (dontShowAgainChecked) {
                             completeOnboarding(true);
+                          } else {
+                            // Just close the tutorial
+                            Animated.parallel([
+                              Animated.timing(swipeSpotlightAnimation, {
+                                toValue: 0,
+                                duration: 300,
+                                useNativeDriver: false,
+                              }),
+                              Animated.timing(swipeTutorialAnimation, {
+                                toValue: 0,
+                                duration: 300,
+                                useNativeDriver: false,
+                              }),
+                            ]).start(() => {
+                              setOnboardingStep('views');
+                            });
                           }
-                        });
+                        }
                       }}>
                       <Text style={styles.swipeDoneText}>Got it!</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
               </Animated.View>
-            )}
-
-            {/* Filter Tutorial Overlay - Simple */}
-            {onboardingStep === 'filter' && (
-              <TouchableOpacity
-                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }}
-                activeOpacity={1}
-                onPress={async () => {
-                  setOnboardingStep('complete');
-                  try {
-                    await AsyncStorage.setItem('products_swipe_tutorial_dont_show', 'true');
-                  } catch (error) {
-                    console.log('Error saving tutorial preference:', error);
-                  }
-                }}
-              >
-                <View style={{ flex: 1 }}>
-                  {/* Simple tooltip with arrow */}
-                  <Animated.View
-                    style={{
-                      position: 'absolute',
-                      top: (filterButtonLayout.y >= 0 ? filterButtonLayout.y : 50) + (filterButtonLayout.height > 0 ? filterButtonLayout.height : 42) + 10,
-                      right: 15,
-                      alignItems: 'flex-end',
-                      transform: [{
-                        translateY: filterTutorialAnimation.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0, 5],
-                        })
-                      }],
-                    }}
-                  >
-                    {/* Arrow pointing up */}
-                    <View style={{
-                      marginRight: 15,
-                      marginBottom: -1,
-                    }}>
-                      <Ionicons name="caret-up" size={24} color="#F53F7A" />
-                    </View>
-
-                    {/* Simple pill label */}
-                    <View style={{
-                      backgroundColor: '#F53F7A',
-                      paddingVertical: 12,
-                      paddingHorizontal: 20,
-                      borderRadius: 25,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 8,
-                      shadowColor: '#F53F7A',
-                      shadowOffset: { width: 0, height: 4 },
-                      shadowOpacity: 0.4,
-                      shadowRadius: 8,
-                      elevation: 8,
-                    }}>
-                      <Ionicons name="options" size={18} color="#fff" />
-                      <Text style={{
-                        color: '#fff',
-                        fontSize: 15,
-                        fontWeight: '600',
-                      }}>
-                        Filter by Size
-                      </Text>
-                    </View>
-                  </Animated.View>
-                </View>
-              </TouchableOpacity>
             )}
           </>
         )}
@@ -8034,11 +8273,44 @@ const styles = StyleSheet.create({
     backgroundColor: '#F53F7A',
   },
   filterRightColumn: {
+    flex: 1,
     width: '67%',
     backgroundColor: '#fff',
   },
   filterOptionsContainer: {
+    flex: 1,
     padding: 16,
+  },
+  brandInfluencerTabs: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    borderRadius: 8,
+    backgroundColor: '#f5f5f5',
+    padding: 4,
+  },
+  brandInfluencerTab: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  brandInfluencerTabActive: {
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  brandInfluencerTabText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#666',
+  },
+  brandInfluencerTabTextActive: {
+    color: '#F53F7A',
+    fontWeight: '600',
   },
   checkboxContainer: {
     width: 24,

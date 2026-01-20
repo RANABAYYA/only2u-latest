@@ -61,6 +61,60 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const { userData } = useUser();
+
+  // Check for existing application on mount
+  useEffect(() => {
+    const checkExistingApplication = async () => {
+      // Check local storage first (fallback mechanism)
+      try {
+        const localApp = await AsyncStorage.getItem('seller_application');
+        if (localApp) {
+          setHasSubmitted(true);
+          return;
+        }
+      } catch (e) {
+        console.log('Error checking local storage for application', e);
+      }
+
+      // Check database if user is logged in
+      if (userData?.id) {
+        try {
+          // Check by user_id
+          const { data, error } = await supabase
+            .from('seller_applications')
+            .select('id, status')
+            .eq('user_id', userData.id) // Assuming user_id column exists or we check by phone
+            .maybeSingle();
+
+          if (data) {
+            setHasSubmitted(true);
+            return;
+          }
+
+          // Also check by phone if available
+          if (userData.phone) {
+            const { data: phoneData } = await supabase
+              .from('seller_applications')
+              .select('id, status')
+              .eq('phone', userData.phone)
+              .maybeSingle();
+
+            if (phoneData) {
+              setHasSubmitted(true);
+              return;
+            }
+          }
+
+        } catch (error) {
+          console.error('Error checking existing application:', error);
+        }
+      }
+    };
+
+    checkExistingApplication();
+  }, [userData]);
 
   const validateStep = (step: number) => {
     const newErrors: { [key: string]: string } = {};
@@ -319,115 +373,84 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         style={styles.keyboardView}
       >
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.formContainer}>
-            <View style={styles.progressContainer}>
-              <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: `${(currentStep / 2) * 100}%` }]} />
-              </View>
-              <Text style={styles.progressText}>Step {currentStep} of 2</Text>
-            </View>
-
-            {currentStep === 1 && renderStep1()}
-            {currentStep === 2 && renderStep2()}
-
-            <View style={styles.buttonContainer}>
-              {currentStep > 1 && (
-                <TouchableOpacity style={styles.previousButton} onPress={handlePrevious}>
-                  <Text style={styles.previousButtonText}>Previous</Text>
-                </TouchableOpacity>
-              )}
-
-              {currentStep < 2 ? (
-                <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
-                  <Text style={styles.nextButtonText}>Next</Text>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={[styles.submitButton, isSubmitting && styles.disabledButton]}
-                  onPress={handleSubmit}
-                  disabled={isSubmitting}
+          {hasSubmitted ? (
+            <View style={styles.formContainer}>
+              <View style={styles.successIconContainer}>
+                <LinearGradient
+                  colors={['#10B981', '#059669']}
+                  style={styles.successIconGradient}
                 >
-                  {isSubmitting ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.submitButtonText}>Submit Application</Text>
-                  )}
-                </TouchableOpacity>
-              )}
+                  <Ionicons name="checkmark-circle" size={60} color="#fff" />
+                </LinearGradient>
+              </View>
+
+              {/* Title */}
+              <Text style={styles.successModalTitle}>Application Already Submitted!</Text>
+
+              {/* Message */}
+              <Text style={styles.successModalMessage}>
+                You have already submitted a seller application. We show this because we haven't reviewed it yet.
+              </Text>
+
+              {/* Timeline Info */}
+              <View style={styles.successTimelineCard}>
+                <Ionicons name="time-outline" size={20} color="#F59E0B" />
+                <Text style={styles.successTimelineText}>
+                  Our team will review your application and contact you within <Text style={styles.successTimelineBold}>2-3 business days</Text>
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.successModalButton}
+                onPress={() => navigation.goBack()}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.successModalButtonText}>Go Back</Text>
+              </TouchableOpacity>
             </View>
-          </View>
+          ) : (
+            <View style={styles.formContainer}>
+              <View style={styles.progressContainer}>
+                <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${(currentStep / 2) * 100}%` }]} />
+                </View>
+                <Text style={styles.progressText}>Step {currentStep} of 2</Text>
+              </View>
+
+              {currentStep === 1 && renderStep1()}
+              {currentStep === 2 && renderStep2()}
+
+              <View style={styles.buttonContainer}>
+                {currentStep > 1 && (
+                  <TouchableOpacity style={styles.previousButton} onPress={handlePrevious}>
+                    <Text style={styles.previousButtonText}>Previous</Text>
+                  </TouchableOpacity>
+                )}
+
+                {currentStep < 2 ? (
+                  <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
+                    <Text style={styles.nextButtonText}>Next</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.submitButton, isSubmitting && styles.disabledButton]}
+                    onPress={handleSubmit}
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.submitButtonText}>Submit Application</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Success Modal */}
-      <Modal
-        visible={showSuccessModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          setShowSuccessModal(false);
-          navigation.goBack();
-        }}
-      >
-        <View style={styles.successOverlay}>
-          <View style={styles.successModalCard}>
-            {/* Success Icon */}
-            <View style={styles.successIconContainer}>
-              <LinearGradient
-                colors={['#10B981', '#059669']}
-                style={styles.successIconGradient}
-              >
-                <Ionicons name="checkmark-circle" size={60} color="#fff" />
-              </LinearGradient>
-            </View>
 
-            {/* Title */}
-            <Text style={styles.successModalTitle}>Application Submitted! 🎉</Text>
-
-            {/* Message */}
-            <Text style={styles.successModalMessage}>
-              Thank you for your interest in becoming a seller! Your application has been received successfully.
-            </Text>
-
-            {/* Application Details Card */}
-            <View style={styles.successDetailsCard}>
-              <Text style={styles.successDetailsTitle}>Application Details</Text>
-              <View style={styles.successDetailRow}>
-                <Ionicons name="business-outline" size={16} color="#6B7280" />
-                <Text style={styles.successDetailText}>{formData.businessName}</Text>
-              </View>
-              <View style={styles.successDetailRow}>
-                <Ionicons name="person-outline" size={16} color="#6B7280" />
-                <Text style={styles.successDetailText}>{formData.contactName}</Text>
-              </View>
-              <View style={styles.successDetailRow}>
-                <Ionicons name="call-outline" size={16} color="#6B7280" />
-                <Text style={styles.successDetailText}>{formData.phone}</Text>
-              </View>
-            </View>
-
-            {/* Timeline Info */}
-            <View style={styles.successTimelineCard}>
-              <Ionicons name="time-outline" size={20} color="#F59E0B" />
-              <Text style={styles.successTimelineText}>
-                Our team will review your application and contact you within <Text style={styles.successTimelineBold}>2-3 business days</Text>
-              </Text>
-            </View>
-
-            {/* Close Button */}
-            <TouchableOpacity
-              style={styles.successModalButton}
-              onPress={() => {
-                setShowSuccessModal(false);
-                navigation.goBack();
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.successModalButtonText}>Got it!</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 };
@@ -469,6 +492,7 @@ const VendorProfile: React.FC = () => {
 
   // UGC Actions Sheet
   const ugcActionsSheetRef = useRef<BottomSheet>(null);
+  const shareSheetRef = useRef<BottomSheet>(null);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [blockedVendorNames, setBlockedVendorNames] = useState<string[]>([]);
   const [supportsVendorNameBlocking, setSupportsVendorNameBlocking] = useState(true);
@@ -562,8 +586,8 @@ const VendorProfile: React.FC = () => {
         setAllCategories(catData);
       }
 
-      await fetchVendorPosts(vendorId);
-      setVendorPosts(vendorPosts.filter(post => post.vendor_id === vendorId));
+      const fetchedPosts = await fetchVendorPosts(vendorId);
+      setVendorPosts(fetchedPosts.filter(post => post.vendor_id === vendorId));
 
       // Load vendor products
       const { data: prodData, error: prodErr } = await supabase
@@ -1198,7 +1222,7 @@ const VendorProfile: React.FC = () => {
             {/* Stats */}
             <View style={styles.statsRow}>
               <TouchableOpacity style={styles.statItem}>
-                <Text style={styles.statNumber}>{vendorPosts.length}</Text>
+                <Text style={styles.statNumber}>{vendorProducts.length}</Text>
                 <Text style={styles.statLabel}>posts</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.statItem}>
@@ -1285,12 +1309,7 @@ const VendorProfile: React.FC = () => {
 
             <TouchableOpacity
               style={styles.iconActionButton}
-              onPress={async () => {
-                const vendorName = vendor?.business_name || 'this vendor';
-                const vendorUrl = vendor?.id ? `https://only2u.app/vendor/${vendor.id}` : 'https://only2u.app';
-                const message = `Check out ${vendorName} on Only2U 👇\n${vendorUrl}`;
-                await shareToWhatsApp(message);
-              }}
+              onPress={() => shareSheetRef.current?.expand()}
             >
               <Ionicons name="share-social-outline" size={20} color="#000" />
             </TouchableOpacity>
@@ -1677,6 +1696,67 @@ const VendorProfile: React.FC = () => {
             </View>
           </TouchableOpacity>
 
+        </View>
+      </BottomSheet>
+
+      {/* Share Bottom Sheet */}
+      <BottomSheet
+        ref={shareSheetRef}
+        index={-1}
+        snapPoints={['35%']}
+        enablePanDownToClose
+        backgroundStyle={{ backgroundColor: '#fff' }}
+        handleIndicatorStyle={{ backgroundColor: '#ddd', width: 40 }}
+      >
+        <View style={styles.shareContainer}>
+          <View style={styles.shareHeader}>
+            <Text style={styles.shareTitle}>Share Vendor</Text>
+            <TouchableOpacity onPress={() => shareSheetRef.current?.close()}>
+              <Ionicons name="close-circle" size={28} color="#999" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.shareSubtitle}>Share this vendor's profile with your friends!</Text>
+
+          {/* Share Options */}
+          <View style={styles.shareOptionsContainer}>
+            {/* WhatsApp Button */}
+            <TouchableOpacity
+              style={styles.whatsappButton}
+              activeOpacity={0.8}
+              onPress={async () => {
+                try {
+                  const vendorName = vendor?.business_name || 'this vendor';
+                  const vendorUrl = vendor?.id ? `https://only2u.app/vendor/${vendor.id}` : 'https://only2u.app';
+                  const shareMessage = `Check out ${vendorName} on Only2U 👇\n${vendorUrl}`;
+                  const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(shareMessage)}`;
+
+                  const canOpen = await Linking.canOpenURL(whatsappUrl);
+                  if (canOpen) {
+                    await Linking.openURL(whatsappUrl);
+                  } else {
+                    Toast.show({
+                      type: 'error',
+                      text1: 'WhatsApp not installed',
+                      text2: 'Please install WhatsApp to share'
+                    });
+                  }
+                  shareSheetRef.current?.close();
+                } catch (error) {
+                  Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to share via WhatsApp' });
+                }
+              }}
+            >
+              <View style={styles.whatsappIconContainer}>
+                <Ionicons name="logo-whatsapp" size={28} color="#fff" />
+              </View>
+              <View style={styles.shareButtonContent}>
+                <Text style={styles.shareButtonTitle}>Share on WhatsApp</Text>
+                <Text style={styles.shareButtonSubtitle}>Send to friends & groups</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
         </View>
       </BottomSheet>
     </SafeAreaView>
@@ -2353,14 +2433,18 @@ const styles = StyleSheet.create({
   seeMoreButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: 'rgba(245, 63, 122, 0.1)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 63, 122, 0.2)',
   },
   seeMoreText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#F53F7A',
-    marginRight: 2,
+    marginRight: 4,
   },
   taggedGrid: {
     flex: 1,
@@ -2724,6 +2808,68 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.3,
+  },
+  // Share Bottom Sheet Styles
+  shareContainer: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+  },
+  shareHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  shareTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111',
+  },
+  shareSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  shareOptionsContainer: {
+    marginTop: 24,
+    gap: 16,
+  },
+  whatsappButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#25D366',
+    borderRadius: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    shadowColor: '#25D366',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  whatsappIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  shareButtonContent: {
+    flex: 1,
+  },
+  shareButtonTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 2,
+  },
+  shareButtonSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.9)',
   },
 });
 

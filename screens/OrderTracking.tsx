@@ -71,6 +71,7 @@ const OrderTracking = () => {
     const [trackingNumber, setTrackingNumber] = useState(initialTrackingNumber);
     const [shippedAt, setShippedAt] = useState(initialShippedAt);
     const [deliveredAt, setDeliveredAt] = useState(initialDeliveredAt);
+    const [updatedAt, setUpdatedAt] = useState<string | undefined>(undefined);
 
     // Fetch order status from database
     useEffect(() => {
@@ -84,7 +85,7 @@ const OrderTracking = () => {
                 // First try orders table
                 const { data: orderData, error: orderError } = await supabase
                     .from('orders')
-                    .select('status, tracking_number, shipped_at, delivered_at, created_at')
+                    .select('status, tracking_number, shipped_at, delivered_at, created_at, updated_at')
                     .eq('id', orderId)
                     .maybeSingle();
 
@@ -93,6 +94,7 @@ const OrderTracking = () => {
                     setTrackingNumber(orderData.tracking_number || initialTrackingNumber);
                     setShippedAt(orderData.shipped_at || initialShippedAt);
                     setDeliveredAt(orderData.delivered_at || initialDeliveredAt);
+                    setUpdatedAt(orderData.updated_at || orderData.created_at);
                     setLoading(false);
                     return;
                 }
@@ -101,7 +103,7 @@ const OrderTracking = () => {
                 // Note: reseller_orders may not have tracking_number column
                 const { data: resellerData, error: resellerError } = await supabase
                     .from('reseller_orders')
-                    .select('status, shipped_at, delivered_at, created_at')
+                    .select('status, shipped_at, delivered_at, created_at, updated_at')
                     .eq('id', orderId)
                     .maybeSingle();
 
@@ -110,6 +112,7 @@ const OrderTracking = () => {
                     // Keep initial tracking number for reseller orders
                     setShippedAt(resellerData.shipped_at || initialShippedAt);
                     setDeliveredAt(resellerData.delivered_at || initialDeliveredAt);
+                    setUpdatedAt(resellerData.updated_at || resellerData.created_at);
                 }
             } catch (error) {
                 console.error('Error fetching order status:', error);
@@ -126,6 +129,51 @@ const OrderTracking = () => {
     const getTrackingStages = (): TrackingStage[] => {
         const orderStatus = status?.toLowerCase() || 'pending';
 
+        // For rejected orders - show only Order Placed -> Order Rejected
+        if (orderStatus === 'rejected') {
+            return [
+                {
+                    id: 'placed',
+                    title: 'Order Placed',
+                    description: 'Your order has been placed successfully',
+                    icon: 'cart-outline',
+                    status: 'completed',
+                    date: formatDateTime(createdAt),
+                },
+                {
+                    id: 'rejected',
+                    title: 'Order Rejected',
+                    description: 'This order has been rejected by the seller',
+                    icon: 'close-circle-outline',
+                    status: 'current',
+                    date: updatedAt ? formatDateTime(updatedAt) : undefined,
+                },
+            ];
+        }
+
+        // For cancelled orders - show only Order Placed -> Order Cancelled
+        if (orderStatus === 'cancelled') {
+            return [
+                {
+                    id: 'placed',
+                    title: 'Order Placed',
+                    description: 'Your order has been placed successfully',
+                    icon: 'cart-outline',
+                    status: 'completed',
+                    date: formatDateTime(createdAt),
+                },
+                {
+                    id: 'cancelled',
+                    title: 'Order Cancelled',
+                    description: 'This order has been cancelled',
+                    icon: 'close-circle-outline',
+                    status: 'current',
+                    date: updatedAt ? formatDateTime(updatedAt) : undefined,
+                },
+            ];
+        }
+
+        // Normal order flow stages
         const stages: TrackingStage[] = [
             {
                 id: 'placed',
@@ -229,6 +277,7 @@ const OrderTracking = () => {
 
     const stages = getTrackingStages();
     const isCancelled = status?.toLowerCase() === 'cancelled';
+    const isRejected = status?.toLowerCase() === 'rejected';
 
     const handleContactSupport = () => {
         // Open support - could also navigate to a support screen
@@ -304,76 +353,91 @@ const OrderTracking = () => {
                     </View>
                 )}
 
-                {/* Tracking Timeline */}
-                {!isCancelled && (
-                    <View style={styles.timelineCard}>
-                        <Text style={styles.sectionTitle}>Delivery Status</Text>
-
-                        <View style={styles.timeline}>
-                            {stages.map((stage, index) => (
-                                <View key={stage.id} style={styles.timelineItem}>
-                                    {/* Vertical Line */}
-                                    {index < stages.length - 1 && (
-                                        <View
-                                            style={[
-                                                styles.timelineLine,
-                                                {
-                                                    backgroundColor: stage.status === 'completed' ? '#4CAF50' : '#E0E0E0',
-                                                }
-                                            ]}
-                                        />
-                                    )}
-
-                                    {/* Icon Circle */}
-                                    <View
-                                        style={[
-                                            styles.timelineIcon,
-                                            {
-                                                backgroundColor: stage.status === 'pending' ? '#fff' : getStatusColor(stage.status),
-                                                borderColor: getStatusColor(stage.status),
-                                            }
-                                        ]}
-                                    >
-                                        <Ionicons
-                                            name={stage.status === 'completed' ? 'checkmark' : stage.icon}
-                                            size={stage.status === 'current' ? 20 : 16}
-                                            color={stage.status === 'pending' ? '#ccc' : '#fff'}
-                                        />
-                                    </View>
-
-                                    {/* Content */}
-                                    <View style={styles.timelineContent}>
-                                        <Text
-                                            style={[
-                                                styles.timelineTitle,
-                                                {
-                                                    color: stage.status === 'pending' ? '#999' : '#333',
-                                                    fontWeight: stage.status === 'current' ? '700' : '600',
-                                                }
-                                            ]}
-                                        >
-                                            {stage.title}
-                                        </Text>
-                                        <Text
-                                            style={[
-                                                styles.timelineDescription,
-                                                { color: stage.status === 'pending' ? '#bbb' : '#666' }
-                                            ]}
-                                        >
-                                            {stage.description}
-                                        </Text>
-                                        {stage.date && stage.status !== 'pending' && (
-                                            <Text style={styles.timelineDate}>{stage.date}</Text>
-                                        )}
-                                    </View>
-                                </View>
-                            ))}
+                {/* Rejected Order Banner */}
+                {isRejected && (
+                    <View style={styles.rejectedBanner}>
+                        <Ionicons name="close-circle" size={24} color="#F44336" />
+                        <View style={styles.rejectedTextContainer}>
+                            <Text style={styles.rejectedTitle}>Order Rejected</Text>
+                            <Text style={styles.rejectedSubtitle}>This order has been rejected by the seller</Text>
                         </View>
                     </View>
                 )}
 
+                {/* Tracking Timeline */}
+                <View style={styles.timelineCard}>
+                    <Text style={styles.sectionTitle}>{isCancelled || isRejected ? 'Order Status' : 'Delivery Status'}</Text>
+
+                    <View style={styles.timeline}>
+                        {stages.map((stage, index) => (
+                            <View key={stage.id} style={styles.timelineItem}>
+                                {/* Vertical Line */}
+                                {index < stages.length - 1 && (
+                                    <View
+                                        style={[
+                                            styles.timelineLine,
+                                            {
+                                                backgroundColor: stage.status === 'completed' ? '#4CAF50' : '#E0E0E0',
+                                            }
+                                        ]}
+                                    />
+                                )}
+
+                                {/* Icon Circle */}
+                                <View
+                                    style={[
+                                        styles.timelineIcon,
+                                        {
+                                            backgroundColor: stage.status === 'pending'
+                                                ? '#fff'
+                                                : (stage.id === 'rejected' || stage.id === 'cancelled')
+                                                    ? '#F44336'
+                                                    : getStatusColor(stage.status),
+                                            borderColor: (stage.id === 'rejected' || stage.id === 'cancelled')
+                                                ? '#F44336'
+                                                : getStatusColor(stage.status),
+                                        }
+                                    ]}
+                                >
+                                    <Ionicons
+                                        name={stage.status === 'completed' ? 'checkmark' : stage.icon}
+                                        size={stage.status === 'current' ? 20 : 16}
+                                        color={stage.status === 'pending' ? '#ccc' : '#fff'}
+                                    />
+                                </View>
+
+                                {/* Content */}
+                                <View style={styles.timelineContent}>
+                                    <Text
+                                        style={[
+                                            styles.timelineTitle,
+                                            {
+                                                color: stage.status === 'pending' ? '#999' : '#333',
+                                                fontWeight: stage.status === 'current' ? '700' : '600',
+                                            }
+                                        ]}
+                                    >
+                                        {stage.title}
+                                    </Text>
+                                    <Text
+                                        style={[
+                                            styles.timelineDescription,
+                                            { color: stage.status === 'pending' ? '#bbb' : '#666' }
+                                        ]}
+                                    >
+                                        {stage.description}
+                                    </Text>
+                                    {stage.date && stage.status !== 'pending' && (
+                                        <Text style={styles.timelineDate}>{stage.date}</Text>
+                                    )}
+                                </View>
+                            </View>
+                        ))}
+                    </View>
+                </View>
+
                 {/* Expected Delivery */}
-                {!isCancelled && !deliveredAt && (
+                {!isCancelled && !isRejected && !deliveredAt && (
                     <View style={styles.expectedDeliveryCard}>
                         <View style={styles.expectedDeliveryIcon}>
                             <Ionicons name="calendar-outline" size={24} color="#F53F7A" />
@@ -511,6 +575,29 @@ const styles = StyleSheet.create({
         color: '#F44336',
     },
     cancelledSubtitle: {
+        fontSize: 14,
+        color: '#666',
+        marginTop: 2,
+    },
+    rejectedBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFEBEE',
+        marginHorizontal: 16,
+        marginTop: 16,
+        borderRadius: 12,
+        padding: 16,
+        gap: 12,
+    },
+    rejectedTextContainer: {
+        flex: 1,
+    },
+    rejectedTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#F44336',
+    },
+    rejectedSubtitle: {
         fontSize: 14,
         color: '#666',
         marginTop: 2,

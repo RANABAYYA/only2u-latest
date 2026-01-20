@@ -18,6 +18,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Linking,
+  BackHandler,
 } from 'react-native';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
@@ -544,9 +545,23 @@ const TrendingScreen = () => {
   // Filter state
   const [allProducts, setAllProducts] = useState<Product[]>([]); // Store original unfiltered products
   const filterSheetRef = useRef<BottomSheetModal>(null);
+  const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
+
+  // Handle back button when filter sheet is open
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isFilterSheetOpen) {
+        filterSheetRef.current?.dismiss();
+        return true; // Prevent default back behavior
+      }
+      return false; // Allow default back behavior
+    });
+
+    return () => backHandler.remove();
+  }, [isFilterSheetOpen]);
 
   // Filter states
-  const [activeFilterCategory, setActiveFilterCategory] = useState('Brand/Influencer');
+  const [activeFilterCategory, setActiveFilterCategory] = useState('Categories');
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
   const [selectedInfluencerIds, setSelectedInfluencerIds] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -582,9 +597,9 @@ const TrendingScreen = () => {
 
   // Filter categories
   const filterCategories = [
-    'Brand/Influencer',
     'Categories',
     'Sizes',
+    'Brand/Influencer',
     'Price Range',
   ];
 
@@ -1173,6 +1188,7 @@ const TrendingScreen = () => {
       const { data: productsWithVendors } = await supabase
         .from('products')
         .select('vendor_id')
+        .eq('is_active', true)
         .not('vendor_id', 'is', null);
 
       if (productsWithVendors) {
@@ -1248,19 +1264,38 @@ const TrendingScreen = () => {
         setFilteredCategories(categoriesData);
       }
 
-      // Fetch sizes
-      const { data: sizesData } = await supabase
-        .from('sizes')
-        .select('id, name');
-
-      if (sizesData) {
-        setFilteredSizes(sortSizesAscending(sizesData));
-      }
+      // Fetch sizes - REMOVED, now derived from products to ensure relevance
+      // const { data: sizesData } = await supabase
+      //   .from('sizes')
+      //   .select('id, name');
+      //
+      // if (sizesData) {
+      //   setFilteredSizes(sortSizesAscending(sizesData));
+      // }
 
     } catch (error) {
       console.error('[Trending] Error fetching filter data:', error);
     }
   };
+
+  // Derive available sizes from loaded products
+  useEffect(() => {
+    if (allProducts.length > 0) {
+      const availableSizeSet = new Set<string>();
+      allProducts.forEach(product => {
+        product.variants?.forEach(variant => {
+          // check if this variant has videos
+          const hasVariantVideos = variant.video_urls && Array.isArray(variant.video_urls) && variant.video_urls.some(url => isVideoUrl(url));
+          if (hasVariantVideos && variant.size?.name) {
+            availableSizeSet.add(variant.size.name);
+          }
+        });
+      });
+
+      const derivedSizes = Array.from(availableSizeSet).map(name => ({ id: name, name }));
+      setFilteredSizes(sortSizesAscending(derivedSizes));
+    }
+  }, [allProducts]);
 
   const fetchUserLikes = async () => {
     if (!userData?.id) return;
@@ -2102,6 +2137,7 @@ const TrendingScreen = () => {
           setVideoFallbackOverrides={setVideoFallbackOverrides}
           videoReady={videoReadyStates[product.id] || false}
           setVideoReady={setVideoReady}
+          selectedSizes={selectedSizes}
         />
       </View>
     );
@@ -2254,7 +2290,9 @@ const TrendingScreen = () => {
       if (selectedSizes.length > 0) {
         result = result.filter(product => {
           return product.variants?.some((variant: any) => {
-            return variant.size?.name && selectedSizes.includes(variant.size.name);
+            // Strict check: must match size AND have videos
+            const hasVideos = variant.video_urls && Array.isArray(variant.video_urls) && variant.video_urls.some((url: string) => isVideoUrl(url));
+            return variant.size?.name && selectedSizes.includes(variant.size.name) && hasVideos;
           });
         });
       }
@@ -3407,6 +3445,7 @@ const TrendingScreen = () => {
           enablePanDownToClose
           backgroundStyle={{ backgroundColor: '#fff' }}
           handleIndicatorStyle={{ backgroundColor: '#ddd' }}
+          onChange={(index) => setIsFilterSheetOpen(index >= 0)}
         >
           <View style={styles.filterContainer}>
             {/* Filter Header */}

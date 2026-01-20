@@ -190,6 +190,7 @@ const Profile = () => {
   const [newFeedbackVideos, setNewFeedbackVideos] = useState<string[]>([]);
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
   const [showImageViewerModal, setShowImageViewerModal] = useState(false);
+  const [isViewingProfilePhoto, setIsViewingProfilePhoto] = useState(false);
   const [selectedImageUri, setSelectedImageUri] = useState('');
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [referralCodeState, setReferralCodeState] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle');
@@ -300,12 +301,8 @@ const Profile = () => {
   };
 
   const handleBecomeSeller = () => {
-    // Show tutorial if not seen before
-    if (!hasSeenSellerTutorial) {
-      setShowSellerTutorialModal(true);
-    } else {
-      navigation.navigate('VendorProfile' as never);
-    }
+    // Directly navigate to VendorProfile - no tutorial needed
+    navigation.navigate('VendorProfile' as never);
   };
 
   const handleVendorDashboard = () => {
@@ -313,12 +310,8 @@ const Profile = () => {
   };
 
   const handleJoinInfluencer = () => {
-    // Show tutorial if not seen before
-    if (!hasSeenInfluencerTutorial) {
-      setShowInfluencerTutorialModal(true);
-    } else {
-      navigation.navigate('JoinInfluencer' as never);
-    }
+    // Directly navigate to JoinInfluencer - no tutorial needed
+    navigation.navigate('JoinInfluencer' as never);
   };
 
   const generateReferralCode = useCallback(() => {
@@ -1819,12 +1812,25 @@ const Profile = () => {
       return;
     }
 
-    if (!hasSeenPhotoTutorial) {
-      setShowPhotoTutorialModal(true);
+    if (userData?.profilePhoto) {
+      setSelectedImageUri(userData.profilePhoto);
+      setIsViewingProfilePhoto(true);
+      setShowImageViewerModal(true);
       return;
     }
 
+    // Directly show photo picker - no tutorial needed
     setShowPhotoPickerModal(true);
+  };
+
+  const handleChangePhotoFromViewer = () => {
+    setShowImageViewerModal(false);
+    setIsViewingProfilePhoto(false);
+    // Slight delay to allow modal to close smoothly
+    setTimeout(() => {
+      // Directly show photo picker - no tutorial needed
+      setShowPhotoPickerModal(true);
+    }, 300);
   };
 
   return (
@@ -1859,13 +1865,19 @@ const Profile = () => {
           ) : (userData || user ? (
             <>
               <View style={styles.avatarContainer}>
-                {userData?.profilePhoto ? (
-                  <Image source={{ uri: userData.profilePhoto }} style={styles.avatarImage} />
-                ) : (
-                  <View style={styles.avatar}>
-                    <Ionicons name="person" size={40} color="#F53F7A" />
-                  </View>
-                )}
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={handlePhotoPress}
+                  disabled={uploadingPhoto}
+                >
+                  {userData?.profilePhoto ? (
+                    <Image source={{ uri: userData.profilePhoto }} style={styles.avatarImage} />
+                  ) : (
+                    <View style={styles.avatar}>
+                      <Ionicons name="person" size={40} color="#F53F7A" />
+                    </View>
+                  )}
+                </TouchableOpacity>
                 {/* Camera/Edit Button */}
                 <TouchableOpacity
                   style={styles.cameraButton}
@@ -2518,68 +2530,73 @@ const Profile = () => {
                 <Ionicons name="storefront" size={22} color="#F53F7A" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.photoTutorialTitle}>How to Become a Vendor</Text>
-                <Text style={styles.photoTutorialSubtitle}>
-                  Learn the simple steps to start selling on Only2U
-                </Text>
+                <Text style={styles.photoTutorialTitle}>Become a Vendor</Text>
               </View>
               <TouchableOpacity onPress={() => setShowSellerTutorialModal(false)}>
                 <Ionicons name="close" size={20} color="#9CA3AF" />
               </TouchableOpacity>
             </View>
 
-            <View style={styles.photoTutorialVideoWrapper}>
-              <Video
-                source={{ uri: SELLER_TUTORIAL_VIDEO }}
-                style={styles.photoTutorialVideo}
-                resizeMode={ResizeMode.COVER}
-                shouldPlay
-                useNativeControls
-                isLooping
-              />
-            </View>
-
-            <Text style={styles.photoTutorialDescription}>
-              Set up your seller profile, add products, manage inventory, and start earning.
-              Watch this video to learn how our platform works for sellers.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.photoTutorialCheckboxRow}
-              onPress={() => setSellerTutorialDontShowAgain(!sellerTutorialDontShowAgain)}
-              activeOpacity={0.8}
-            >
-              <View
-                style={[
-                  styles.photoTutorialCheckbox,
-                  sellerTutorialDontShowAgain && styles.photoTutorialCheckboxChecked,
-                ]}
-              >
-                {sellerTutorialDontShowAgain && (
-                  <Ionicons name="checkmark" size={14} color="#fff" />
-                )}
+            <View style={{ marginBottom: 24, marginTop: 10 }}>
+              <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                <View style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: 36,
+                  backgroundColor: '#FFF0F5',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <Ionicons name="storefront-outline" size={36} color="#F53F7A" />
+                </View>
               </View>
-              <Text style={styles.photoTutorialCheckboxText}>Do not show again</Text>
-            </TouchableOpacity>
+
+              <View style={{ gap: 14, paddingHorizontal: 4 }}>
+                {[
+                  { text: "Showcase product to lakhs of people with no investment" },
+                  { text: "No marketing costs" },
+                  { text: "Get your product photoshoots done with zero costs" },
+                  { text: "Get your first 5 orders for free" },
+                  { text: "Decide Your own return and replacement policy", highlight: true }
+                ].map((item, index) => (
+                  <View key={index} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                    <View style={{ marginTop: 2 }}>
+                      <Ionicons
+                        name={item.highlight ? "star" : "checkmark-circle"}
+                        size={18}
+                        color={item.highlight ? "#F53F7A" : "#10B981"}
+                      />
+                    </View>
+                    <Text style={{
+                      fontSize: 14,
+                      color: item.highlight ? '#111' : '#374151',
+                      lineHeight: 20,
+                      flex: 1,
+                      fontWeight: item.highlight ? '700' : '500'
+                    }}>
+                      {item.text}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
 
             <TouchableOpacity
               style={styles.photoTutorialPrimaryBtn}
               onPress={async () => {
                 try {
-                  if (sellerTutorialDontShowAgain) {
-                    await AsyncStorage.setItem(SELLER_TUTORIAL_KEY, 'true');
-                    setHasSeenSellerTutorial(true);
-                  }
+                  // Always mark as seen when proceeding
+                  await AsyncStorage.setItem(SELLER_TUTORIAL_KEY, 'true');
+                  setHasSeenSellerTutorial(true);
                 } catch (error) {
                   console.warn('Failed to save seller tutorial preference', error);
                 } finally {
                   setShowSellerTutorialModal(false);
-                  setSellerTutorialDontShowAgain(false);
                   setTimeout(() => navigation.navigate('VendorProfile' as never), 200);
                 }
               }}
             >
-              <Text style={styles.photoTutorialPrimaryText}>Get Started</Text>
+              <Text style={styles.photoTutorialPrimaryText}>Continue</Text>
               <Ionicons name="arrow-forward" size={18} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -3294,6 +3311,16 @@ const Profile = () => {
                 resizeMode="contain"
               />
             ) : null}
+
+            {isViewingProfilePhoto && (
+              <TouchableOpacity
+                style={styles.changePhotoButton}
+                onPress={handleChangePhotoFromViewer}
+              >
+                <Ionicons name="camera-reverse" size={20} color="#fff" style={{ marginRight: 8 }} />
+                <Text style={styles.changePhotoText}>Change Photo</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal >
@@ -3305,6 +3332,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  changePhotoButton: {
+    position: 'absolute',
+    bottom: 40,
+    backgroundColor: 'rgba(245, 63, 122, 0.9)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 25,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  changePhotoText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
   header: {
     flexDirection: 'row',

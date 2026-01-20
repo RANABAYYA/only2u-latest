@@ -1,123 +1,107 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, StyleSheet } from 'react-native';
+import Animated, {
+    useSharedValue,
+    useAnimatedStyle,
+    withRepeat,
+    withTiming,
+    interpolateColor,
+    Easing,
+    useDerivedValue
+} from 'react-native-reanimated';
 
 const DashboardLoader = () => {
-    // Shared animation value for scaling/opacity
-    const animValue = useRef(new Animated.Value(0)).current;
+    // Animation progress value that moves from left to right across the characters
+    const progress = useSharedValue(-2);
 
     useEffect(() => {
-        Animated.loop(
-            Animated.timing(animValue, {
-                toValue: 1,
+        progress.value = withRepeat(
+            withTiming(8, {
                 duration: 2000,
-                easing: Easing.bezier(0.4, 0, 0.2, 1),
-                useNativeDriver: true,
-            })
-        ).start();
-    }, [animValue]);
-
-    return (
-        <View style={styles.container}>
-            {/* Ripple Circles */}
-            {[0, 1, 2].map((i) => {
-                const inputRange = [0, 0.5, 1];
-                // Stagger ripples: first one starts at 0, second midway
-                const startOff = i * 0.3;
-
-                // Infinite expanding logic for multiple ripples is complex with single value
-                // Let's use a simpler approach: One main ripple or simpler loop
-
-                // Redoing logic for a clean single ripple + breathing logo
-                return null;
-            })}
-
-            {/* 
-               Better implementation: 
-               Pulsing Logo in center.
-               Two rings radiating out.
-             */}
-
-            {/* Outer Ring 1 */}
-            <Animated.View style={[
-                styles.ring,
-                {
-                    transform: [{ scale: animValue.interpolate({ inputRange: [0, 1], outputRange: [1, 2.5] }) }],
-                    opacity: animValue.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.3, 0.1, 0] })
-                }
-            ]} />
-
-            {/* Outer Ring 2 (Delayed/Staggered - simplified to just one ring for cleaner look or recreate staggering if needed) */}
-            {/* A single clean ripple is often more elegant. Let's stick to one nice ripple and a breathing core. */}
-
-            <Animated.View style={styles.centerCircle}>
-                <Text style={styles.logoText}>
-                    O<Text style={styles.accentText}>2</Text>U
-                </Text>
-            </Animated.View>
-        </View>
-    );
-};
-
-// Re-implementing with proper separate animations for maximum smoothness
-const DashboardLoaderFinal = () => {
-    const scaleAnim = useRef(new Animated.Value(1)).current;
-
-    // Multiple ripples
-    const ripple1 = useRef(new Animated.Value(0)).current;
-    const ripple2 = useRef(new Animated.Value(0)).current;
-
-    useEffect(() => {
-        // Breathing logo
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(scaleAnim, { toValue: 1.1, duration: 800, useNativeDriver: true }),
-                Animated.timing(scaleAnim, { toValue: 1, duration: 800, useNativeDriver: true })
-            ])
-        ).start();
-
-        // Ripple 1
-        Animated.loop(
-            Animated.timing(ripple1, {
-                toValue: 1,
-                duration: 2500,
-                easing: Easing.out(Easing.ease),
-                useNativeDriver: true,
-            })
-        ).start();
-
-        // Ripple 2 (Delay start)
-        setTimeout(() => {
-            Animated.loop(
-                Animated.timing(ripple2, {
-                    toValue: 1,
-                    duration: 2500,
-                    easing: Easing.out(Easing.ease),
-                    useNativeDriver: true,
-                })
-            ).start();
-        }, 1250);
-
+                easing: Easing.linear,
+            }),
+            -1, // Infinite repeat
+            false // No reverse, just restart
+        );
     }, []);
 
-    const renderRipple = (anim: Animated.Value) => (
-        <Animated.View style={[
-            styles.ring,
-            {
-                transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [1, 3] }) }],
-                opacity: anim.interpolate({ inputRange: [0, 0.7, 1], outputRange: [0.4, 0.1, 0] })
-            }
-        ]} />
-    );
+    const LETTERS = [
+        { char: 'O', color: '#1a1a1a' },
+        { char: 'n', color: '#1a1a1a' },
+        { char: 'l', color: '#1a1a1a' },
+        { char: 'y', color: '#1a1a1a' },
+        { char: '2', color: '#F53F7A' },
+        { char: 'U', color: '#1a1a1a' },
+    ];
+
+    const FONT_FAMILY = 'Riccione-Serial-Bold';
+    // Highlight color to slide across (Brand Pink for black text, White for pink text)
+    const HIGHLIGHT_COLOR = '#F53F7A';
+    const ALT_HIGHLIGHT_COLOR = '#FFFFFF'; // or a lighter pink like '#FF8FA3'
 
     return (
         <View style={styles.container}>
-            {renderRipple(ripple1)}
-            {renderRipple(ripple2)}
+            <View style={styles.logoContainer}>
+                {LETTERS.map((item, index) => {
+                    // Create an animated style for each letter
+                    const animatedStyle = useAnimatedStyle(() => {
+                        // Calculate distance of this letter from the current "wave" position
+                        // We want a gaussian-like or triangular window passing through
+                        const distance = Math.abs(progress.value - index);
 
-            {/* Main Logo Circle */}
-            <Animated.View style={[styles.centerCircle, { transform: [{ scale: scaleAnim }] }]}>
-                <Text style={styles.logoText}>O2U</Text>
-            </Animated.View>
+                        // Interaction window size
+                        const windowSize = 1.5;
+
+                        // If within window, interpolate color
+                        // For black letters (Only, U): Black -> Pink -> Black
+                        // For pink letter (2): Pink -> White -> Pink
+
+                        let targetColor;
+                        if (item.color === '#F53F7A') {
+                            // It's the '2'
+                            // Interpolate towards white/light pink
+                            // 0 distance = full effect
+                            const intensity = Math.max(0, 1 - distance / windowSize);
+                            return {
+                                color: interpolateColor(
+                                    intensity,
+                                    [0, 1],
+                                    [item.color, '#FFB6C1'] // Light pink highlight
+                                ),
+                                transform: [
+                                    { scale: 1 + (intensity * 0.1) } // Slight scale up
+                                ]
+                            };
+                        } else {
+                            // It's black text
+                            const intensity = Math.max(0, 1 - distance / windowSize);
+                            return {
+                                color: interpolateColor(
+                                    intensity,
+                                    [0, 1],
+                                    [item.color, '#F53F7A']
+                                ),
+                                transform: [
+                                    { scale: 1 + (intensity * 0.1) } // Slight scale up
+                                ]
+                            };
+                        }
+                    });
+
+                    return (
+                        <Animated.Text
+                            key={index}
+                            style={[
+                                styles.text,
+                                { fontFamily: FONT_FAMILY },
+                                animatedStyle
+                            ]}
+                        >
+                            {item.char}
+                        </Animated.Text>
+                    );
+                })}
+            </View>
         </View>
     );
 };
@@ -127,41 +111,17 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#fff', // Clean white background
-    },
-    ring: {
-        position: 'absolute',
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        backgroundColor: '#FF3F6C', // Brand pink
-        zIndex: 0,
-    },
-    centerCircle: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
         backgroundColor: '#fff',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1,
-        shadowColor: "#000",
-        shadowOffset: {
-            width: 0,
-            height: 2,
-        },
-        shadowOpacity: 0.15,
-        shadowRadius: 3.84,
-        elevation: 5,
-        borderWidth: 1,
-        borderColor: '#f0f0f0'
     },
-    logoText: {
-        fontSize: 18,
-        fontWeight: '900',
-        color: '#FF3F6C',
-        includeFontPadding: false,
-    }
+    logoContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    text: {
+        fontSize: 32, // Large size as requested
+        fontWeight: 'normal', // Font handles weight
+        letterSpacing: -0.5,
+    },
 });
 
-export default DashboardLoaderFinal;
+export default DashboardLoader;

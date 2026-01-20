@@ -73,7 +73,7 @@ interface VendorContextType {
   // Vendor actions
   fetchVendors: () => Promise<void>;
   fetchVendorById: (vendorId: string) => Promise<Vendor | null>;
-  fetchVendorPosts: (vendorId?: string) => Promise<void>;
+  fetchVendorPosts: (vendorId?: string) => Promise<VendorPost[]>;
   fetchVendorStories: (vendorId?: string) => Promise<void>;
   fetchFollowedVendors: () => Promise<void>;
 
@@ -192,9 +192,11 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
       );
 
       setVendorPosts(postsWithLikes);
+      return postsWithLikes;
     } catch (err) {
       console.error('Error fetching vendor posts:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch posts');
+      return [];
     } finally {
       setLoading(false);
     }

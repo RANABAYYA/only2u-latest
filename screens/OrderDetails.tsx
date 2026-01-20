@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  FlatList,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -23,6 +25,8 @@ import Toast from 'react-native-toast-message';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
+import { fetchRecentlyViewedProducts, RecentProduct } from '~/utils/recentlyViewedService';
+import TrackingProgressBar from '~/components/TrackingProgressBar';
 
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 
@@ -81,6 +85,7 @@ const OrderDetails = () => {
   const insets = useSafeAreaInsets();
 
   const orderId = (route.params as any)?.orderId;
+  const itemId = (route.params as any)?.itemId;
 
   const [loading, setLoading] = useState(true);
   const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null);
@@ -103,67 +108,13 @@ const OrderDetails = () => {
   // Return/Replacement state
   const [returnReason, setReturnReason] = useState('');
 
-  // Reselling Edit State
-  const [resellEditModalVisible, setResellEditModalVisible] = useState(false);
-  const [editResellPrice, setEditResellPrice] = useState('');
-  const [editResellMargin, setEditResellMargin] = useState('');
+  // Recently Viewed State
+  const [recentlyViewed, setRecentlyViewed] = useState<RecentProduct[]>([]);
+  const [recentlyViewedLoading, setRecentlyViewedLoading] = useState(false);
+  const recentlyViewedListRef = useRef<FlatList>(null);
+  const CARD_WIDTH = 160;
 
-  const handleUpdateResellDetails = async () => {
-    if (!orderDetails) return;
 
-    const newPrice = parseFloat(editResellPrice);
-    const newMargin = parseFloat(editResellMargin);
-
-    if (isNaN(newPrice) || isNaN(newMargin)) {
-      Toast.show({ type: 'error', text1: 'Invalid Input', text2: 'Please enter valid numbers' });
-      return;
-    }
-
-    // Basic validation: Price should be at least (Base Price). 
-    // Base Price approx = current total - current margin.
-    // Actually, we can just trust the user's input but ensure consistency? 
-    // The requirement is: "Logic: Customer Price - Margin = Base Price (derived)."
-    // We update both fields in the DB.
-
-    try {
-      setSubmitting(true);
-      const { error } = await supabase
-        .from('orders')
-        .update({
-          total_amount: newPrice,
-          reseller_margin_amount: newMargin,
-          reseller_profit: newMargin // Updating both for consistency as per schema likely usage
-        })
-        .eq('id', orderDetails.id);
-
-      if (error) throw error;
-
-      Toast.show({ type: 'success', text1: 'Updated', text2: 'Reselling details updated' });
-
-      setOrderDetails(prev => prev ? ({
-        ...prev,
-        total_amount: newPrice,
-        reseller_margin_amount: newMargin,
-        reseller_profit: newMargin
-      }) : null);
-
-      setResellEditModalVisible(false);
-    } catch (e) {
-      console.error(e);
-      Toast.show({ type: 'error', text1: 'Update Failed' });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const openResellEdit = () => {
-    if (!orderDetails) return;
-    setEditResellPrice(orderDetails.total_amount.toString());
-    // Use margin_amount or profit, defaulting to 0
-    const margin = orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0;
-    setEditResellMargin(margin.toString());
-    setResellEditModalVisible(true);
-  };
   const [returnDescription, setReturnDescription] = useState('');
   const [returnImages, setReturnImages] = useState<string[]>([]);
   const [replacementSize, setReplacementSize] = useState<string>('');
@@ -215,6 +166,32 @@ const OrderDetails = () => {
       fetchOrderDetails();
     }
   }, [orderId]);
+
+  // Fetch recently viewed products
+  useEffect(() => {
+    const loadRecentlyViewed = async () => {
+      setRecentlyViewedLoading(true);
+      try {
+        const products = await fetchRecentlyViewedProducts();
+        setRecentlyViewed(products);
+      } catch (error) {
+        console.warn('Failed to load recently viewed:', error);
+      } finally {
+        setRecentlyViewedLoading(false);
+      }
+    };
+    loadRecentlyViewed();
+  }, []);
+
+  // Scroll recently viewed list
+  const scrollRecentlyViewed = useCallback((direction: 'left' | 'right') => {
+    if (!recentlyViewedListRef.current || recentlyViewed.length === 0) return;
+    const scrollAmount = CARD_WIDTH * 2;
+    recentlyViewedListRef.current.scrollToOffset({
+      offset: direction === 'right' ? scrollAmount : 0,
+      animated: true,
+    });
+  }, [recentlyViewed.length]);
 
   const fetchOrderDetails = async () => {
     try {
@@ -844,10 +821,28 @@ const OrderDetails = () => {
         return { color: '#FF5722', bg: '#FFEBEE', icon: 'hourglass' };
       case 'cancelled':
         return { color: '#F44336', bg: '#FFEBEE', icon: 'close-circle' };
+      case 'rejected':
+        return { color: '#F44336', bg: '#FFEBEE', icon: 'close-circle' };
       default:
         return { color: '#666', bg: '#F5F5F5', icon: 'information-circle' };
     }
   };
+
+  // Helper functions for cancelled/rejected orders
+  const isCancelledOrRejected = orderDetails?.status && ['cancelled', 'rejected'].includes(orderDetails.status.toLowerCase());
+
+  const getCancellationMessage = () => {
+    if (!orderDetails) return '';
+    const status = orderDetails.status.toLowerCase();
+    if (status === 'cancelled') {
+      const cancelDate = (orderDetails as any).cancelled_at || orderDetails.created_at;
+      return `As per your request on ${formatDate(cancelDate)}`;
+    }
+    return 'Order is rejected by seller';
+  };
+
+  const isCOD = orderDetails?.payment_method?.toLowerCase() === 'cod' ||
+    orderDetails?.payment_method?.toLowerCase() === 'cash on delivery';
 
   const fetchAddresses = async () => {
     try {
@@ -979,350 +974,696 @@ const OrderDetails = () => {
         contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Order Header Card */}
-        <View style={styles.orderHeaderCard}>
-          <View style={styles.orderHeaderTop}>
-            <View style={styles.orderNumberContainer}>
-              <Ionicons name="bag-handle-outline" size={24} color="#F53F7A" />
-              <Text style={styles.orderNumber}>{orderDetails.order_number}</Text>
-            </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
-              <Ionicons name={statusStyle.icon as any} size={16} color={statusStyle.color} />
-              <Text style={[styles.statusText, { color: statusStyle.color }]}>{orderDetails.status}</Text>
-            </View>
-          </View>
-          <Text style={styles.orderDate}>Ordered on {formatDate(orderDetails.created_at)}</Text>
-          {orderDetails.delivered_at && (
-            <Text style={styles.orderDate}>Delivered on {formatDate(orderDetails.delivered_at)}</Text>
-          )}
-        </View>
-
-        {/* Order Items */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Items in Your Order</Text>
-          {orderDetails.order_items.map((item) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.itemCard}
-              activeOpacity={0.7}
-              onPress={() => {
-                if (item.product_id) {
-                  (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
-                    productId: item.product_id,
-                    product: {
-                      id: item.product_id,
-                      name: item.product_name,
-                      price: item.unit_price,
-                      image: item.product_image,
-                    }
-                  });
-                }
-              }}
-            >
-              {/* Product Image */}
-              <View style={styles.itemImageContainer}>
-                {item.product_image ? (
-                  <Image
-                    source={{ uri: item.product_image }}
-                    style={styles.itemImage}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
-                    <Ionicons name="image-outline" size={32} color="#ccc" />
-                  </View>
-                )}
+        {/* ===================== CANCELLED/REJECTED ORDER LAYOUT ===================== */}
+        {isCancelledOrRejected ? (
+          <>
+            {/* First Card: Order ID + Order Item */}
+            <View style={styles.orderHeaderCard}>
+              <View style={styles.orderNumberContainer}>
+                <Ionicons name="bag-handle-outline" size={24} color="#F53F7A" />
+                <Text style={styles.orderNumber}>Order #{orderDetails.order_number}</Text>
               </View>
 
-              <View style={styles.itemDetails}>
-                <Text style={styles.itemName}>{item.product_name}</Text>
-                <Text style={styles.itemMeta}>
-                  {item.size && `Size: ${item.size} `}
-                  {item.size && item.color && ' • '}
-                  {item.color && `Color: ${item.color} `}
+              {/* Order Item in same card */}
+              {orderDetails.order_items.length > 0 && (() => {
+                const item = itemId
+                  ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                  : orderDetails.order_items[0];
+                return (
+                  <TouchableOpacity
+                    style={styles.cancelledOrderItem}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      if (item.product_id) {
+                        (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                          productId: item.product_id,
+                          product: {
+                            id: item.product_id,
+                            name: item.product_name,
+                            price: item.unit_price,
+                            image: item.product_image,
+                          }
+                        });
+                      }
+                    }}
+                  >
+                    <View style={styles.itemImageContainer}>
+                      {item.product_image ? (
+                        <Image
+                          source={{ uri: item.product_image }}
+                          style={styles.itemImage}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+                          <Ionicons name="image-outline" size={32} color="#ccc" />
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.itemDetails}>
+                      <Text style={styles.itemName} numberOfLines={2}>{item.product_name}</Text>
+                      <Text style={styles.itemMeta}>
+                        {item.size && `${item.size}`}
+                        {item.size && item.color && ' • '}
+                        {item.color && item.color}
+                        {(item.size || item.color) && ' • '}
+                        {orderDetails.payment_method?.toUpperCase() || 'Cash'}
+                      </Text>
+                      <Text style={styles.itemPrice}>₹{item.total_price}</Text>
+                      <Text style={styles.itemMetaSmall}>All issue easy returns</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#999" />
+                  </TouchableOpacity>
+                );
+              })()}
+            </View>
+
+            {/* Second Card: Cancellation/Rejection Message */}
+            <View style={styles.cancellationCard}>
+              <View style={styles.cancellationIconContainer}>
+                <Ionicons
+                  name={orderDetails.status.toLowerCase() === 'cancelled' ? 'close-circle' : 'alert-circle'}
+                  size={32}
+                  color={statusStyle.color}
+                />
+              </View>
+              <View style={styles.cancellationTextContainer}>
+                <Text style={[styles.cancellationTitle, { color: statusStyle.color }]}>
+                  {orderDetails.status.toLowerCase() === 'cancelled' ? 'Cancelled' : 'Rejected'}
                 </Text>
-                <Text style={styles.itemMeta}>Qty: {item.quantity}</Text>
-                <Text style={styles.itemPrice}>₹{item.total_price}</Text>
-
-                {/* Action Buttons - Only show for delivered orders */}
-                {orderDetails.status.toLowerCase() === 'delivered' && (
-                  <View style={styles.itemActions}>
-                    <TouchableOpacity
-                      style={styles.actionButton}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        openActionModal(item, 'review');
-                      }}
-                    >
-                      <Ionicons name="star-outline" size={16} color="#fff" />
-                      <Text style={styles.actionButtonText}>Review</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.actionButtonOutline}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        openActionModal(item, 'replacement');
-                      }}
-                    >
-                      <Ionicons name="swap-horizontal-outline" size={16} color="#F53F7A" />
-                      <Text style={styles.actionButtonOutlineText}>Replace</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
+                <Text style={styles.cancellationMessage}>
+                  {getCancellationMessage()}
+                </Text>
               </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Payment Information */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Payment Information</Text>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Payment Method</Text>
-            <Text style={styles.infoValue}>{orderDetails.payment_method?.toUpperCase() || 'N/A'}</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Payment Status</Text>
-            <Text style={[styles.infoValue, { color: orderDetails.payment_status === 'paid' ? '#4CAF50' : '#FF9800' }]}>
-              {orderDetails.payment_status}
-            </Text>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.infoRow}>
-            <Text style={styles.totalLabel}>Total Amount</Text>
-            <Text style={styles.totalValue}>₹{orderDetails.total_amount}</Text>
-          </View>
-        </View>
-
-        {/* Reselling Details Section */}
-        {orderDetails.is_reseller_order && (
-          <View style={styles.sectionCard}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Reselling Details</Text>
-              {orderDetails.status.toLowerCase() === 'pending' && (
-                <TouchableOpacity
-                  onPress={openResellEdit}
-                  style={{
-                    backgroundColor: '#FFF0F5',
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: 20,
-                    borderWidth: 1,
-                    borderColor: 'rgba(245, 63, 122, 0.2)',
-                  }}
-                >
-                  <Text style={{ color: '#F53F7A', fontWeight: '600', fontSize: 13 }}>Change</Text>
-                </TouchableOpacity>
-              )}
             </View>
 
-            {/* Per-item breakdown like YourEarnings */}
-            {orderDetails.order_items.map((item, index) => {
-              // Calculate base and selling prices per item
-              // unit_price is the SOLD price (what customer pays per unit)
-              // basePrice = soldPrice - marginPerUnit
-              const totalMargin = orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0;
-              const totalItems = orderDetails.order_items.reduce((sum, i) => sum + i.quantity, 0);
-              const marginPerUnit = totalItems > 0 ? totalMargin / totalItems : 0;
-              const sellingPrice = item.unit_price; // This is what customer pays
-              const basePrice = item.unit_price - marginPerUnit; // Base = Sold - Margin
-              const itemProfit = marginPerUnit * item.quantity;
+            {/* Action Buttons: Buy Again & Continue Shopping */}
+            <View style={styles.actionButtonsContainer}>
+              <TouchableOpacity
+                style={styles.buyAgainButton}
+                onPress={() => {
+                  if (orderDetails.order_items.length > 0) {
+                    const item = itemId
+                      ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                      : orderDetails.order_items[0];
+                    if (item.product_id) {
+                      (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                        productId: item.product_id,
+                        product: {
+                          id: item.product_id,
+                          name: item.product_name,
+                          price: item.unit_price,
+                          image: item.product_image,
+                        }
+                      });
+                    }
+                  }
+                }}
+              >
+                <Text style={styles.buyAgainButtonText}>BUY AGAIN</Text>
+              </TouchableOpacity>
 
-              return (
-                <View
-                  key={item.id || index}
-                  style={{
-                    flexDirection: 'row',
-                    backgroundColor: '#FAFAFA',
-                    borderRadius: 12,
-                    padding: 12,
-                    marginBottom: index < orderDetails.order_items.length - 1 ? 10 : 0,
-                  }}
-                >
-                  {/* Product Image */}
-                  <View style={{ width: 56, height: 56, borderRadius: 8, overflow: 'hidden', backgroundColor: '#f0f0f0' }}>
-                    {item.product_image ? (
-                      <Image
-                        source={{ uri: item.product_image }}
-                        style={{ width: 56, height: 56 }}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <View style={{ width: 56, height: 56, justifyContent: 'center', alignItems: 'center' }}>
-                        <Ionicons name="image-outline" size={24} color="#ccc" />
+              <TouchableOpacity
+                style={styles.continueShoppingButton}
+                onPress={() => {
+                  (navigation.navigate as (screen: string) => void)('TabNavigator');
+                }}
+              >
+                <Text style={styles.continueShoppingButtonText}>CONTINUE SHOPPING</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Tracking Progress Bar */}
+            <TrackingProgressBar
+              status={orderDetails.status}
+              dates={{
+                ordered: orderDetails.created_at,
+                shipped: orderDetails.shipped_at,
+                delivered: orderDetails.delivered_at,
+              }}
+            />
+
+            {/* Delivery Address Card */}
+            {orderDetails.shipping_address && (
+              <View style={styles.sectionCard}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <Ionicons name="location" size={20} color="#F53F7A" />
+                  <Text style={[styles.sectionTitle, { marginBottom: 0, marginLeft: 8 }]}>Delivery Address</Text>
+                </View>
+                {(() => {
+                  let address = orderDetails.shipping_address;
+                  if (typeof address === 'string') {
+                    try {
+                      address = JSON.parse(address);
+                    } catch {
+                      return <Text style={styles.addressText}>{address}</Text>;
+                    }
+                  }
+
+                  const name = address.name || address.full_name || '';
+                  const phone = address.phone || address.mobile || '';
+                  const line1 = address.address_line1 || address.street_address || address.street_line1 || address.line1 || '';
+                  const line2 = address.address_line2 || address.landmark || address.street_line2 || address.line2 || '';
+                  const city = address.city || '';
+                  const state = address.state || '';
+                  const pincode = address.pincode || address.postal_code || '';
+
+                  const addressParts = [line1, line2, city, state, pincode].filter(Boolean);
+                  const fullAddress = addressParts.join(', ');
+
+                  return (
+                    <View>
+                      {name && (
+                        <Text style={[styles.addressText, { fontWeight: '600', fontSize: 15, marginBottom: 4, color: '#1a1a1a' }]}>
+                          {name}
+                        </Text>
+                      )}
+                      {fullAddress && (
+                        <Text style={[styles.addressText, { color: '#444', lineHeight: 20, marginBottom: 4 }]}>
+                          {fullAddress}
+                        </Text>
+                      )}
+                      {phone && (
+                        <Text style={[styles.addressText, { color: '#444' }]}>
+                          {phone}
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })()}
+              </View>
+            )}
+
+            {/* Recently Viewed Section */}
+            {recentlyViewed.length > 0 && (
+              <View style={styles.recentlyViewedSection}>
+                <View style={styles.recentlyViewedHeader}>
+                  <Text style={styles.recentlyViewedTitle}>Recently Viewed</Text>
+                  <TouchableOpacity
+                    style={styles.scrollArrowButton}
+                    onPress={() => scrollRecentlyViewed('right')}
+                  >
+                    <Ionicons name="chevron-forward" size={24} color="#F53F7A" />
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  ref={recentlyViewedListRef}
+                  data={recentlyViewed}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.recentlyViewedList}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.recentProductCard}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                          productId: item.id,
+                          product: {
+                            id: item.id,
+                            name: item.name,
+                            price: item.price,
+                            image: item.image_url,
+                          }
+                        });
+                      }}
+                    >
+                      <View style={styles.recentProductImageContainer}>
+                        {item.image_url ? (
+                          <Image
+                            source={{ uri: item.image_url }}
+                            style={styles.recentProductImage}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View style={[styles.recentProductImage, styles.recentProductImagePlaceholder]}>
+                            <Ionicons name="image-outline" size={24} color="#ccc" />
+                          </View>
+                        )}
+                        {item.discount_percentage && item.discount_percentage > 0 && (
+                          <View style={styles.discountBadge}>
+                            <Text style={styles.discountText}>{item.discount_percentage}% OFF</Text>
+                          </View>
+                        )}
                       </View>
-                    )}
-                  </View>
+                      <Text style={styles.recentProductName} numberOfLines={2}>{item.name}</Text>
+                      <View style={styles.recentProductPriceRow}>
+                        <Text style={styles.recentProductPrice}>₹{item.price}</Text>
+                        {item.mrp_price && item.mrp_price > item.price && (
+                          <Text style={styles.recentProductOriginalPrice}>₹{item.mrp_price}</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                />
+              </View>
+            )}
 
-                  {/* Product Info */}
-                  <View style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 2 }} numberOfLines={1}>
-                      {item.product_name}
+
+
+            {/* Payment Information - Only for prepaid orders */}
+            {!isCOD && (
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>Payment Information</Text>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Payment Method</Text>
+                  <Text style={styles.infoValue}>{orderDetails.payment_method?.toUpperCase() || 'N/A'}</Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Payment Status</Text>
+                  <Text style={[styles.infoValue, { color: orderDetails.payment_status === 'paid' ? '#4CAF50' : '#FF9800' }]}>
+                    {orderDetails.payment_status}
+                  </Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Refund Status</Text>
+                  <Text style={[styles.infoValue, { color: '#FF9800' }]}>
+                    {(orderDetails as any).refund_status || 'Pending'}
+                  </Text>
+                </View>
+                <View style={styles.divider} />
+                <View style={styles.infoRow}>
+                  <Text style={styles.totalLabel}>Total Amount</Text>
+                  <Text style={styles.totalValue}>₹{(() => {
+                    const selectedItem = itemId
+                      ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                      : orderDetails.order_items[0];
+                    return selectedItem?.total_price || orderDetails.total_amount;
+                  })()}</Text>
+                </View>
+              </View>
+            )}
+          </>
+        ) : (
+          /* ===================== NORMAL ORDER LAYOUT ===================== */
+          <>
+            {/* Combined Order Header + Item Card - matching cancelled/rejected design */}
+            <View style={styles.orderHeaderCard}>
+              <View style={styles.orderHeaderTop}>
+                <View style={styles.orderNumberContainer}>
+                  <Ionicons name="bag-handle-outline" size={24} color="#F53F7A" />
+                  <Text style={styles.orderNumber} numberOfLines={1}>Order #{orderDetails.order_number}</Text>
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
+                  <Ionicons name={statusStyle.icon as any} size={16} color={statusStyle.color} />
+                  <Text style={[styles.statusText, { color: statusStyle.color }]}>{orderDetails.status}</Text>
+                </View>
+              </View>
+              <Text style={styles.orderDate}>Ordered on {formatDate(orderDetails.created_at)}</Text>
+              {orderDetails.delivered_at && (
+                <Text style={styles.orderDate}>Delivered on {formatDate(orderDetails.delivered_at)}</Text>
+              )}
+
+              {/* Order Item in same card */}
+              {orderDetails.order_items.length > 0 && (() => {
+                const item = itemId
+                  ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                  : orderDetails.order_items[0];
+                return (
+                  <TouchableOpacity
+                    style={styles.cancelledOrderItem}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      if (item.product_id) {
+                        (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                          productId: item.product_id,
+                          product: {
+                            id: item.product_id,
+                            name: item.product_name,
+                            price: item.unit_price,
+                            image: item.product_image,
+                          }
+                        });
+                      }
+                    }}
+                  >
+                    <View style={styles.itemImageContainer}>
+                      {item.product_image ? (
+                        <Image
+                          source={{ uri: item.product_image }}
+                          style={styles.itemImage}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+                          <Ionicons name="image-outline" size={32} color="#ccc" />
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.itemDetails}>
+                      <Text style={styles.itemName} numberOfLines={2}>{item.product_name}</Text>
+                      <Text style={styles.itemMeta}>
+                        {item.size && `${item.size}`}
+                        {item.size && item.color && ' • '}
+                        {item.color && item.color}
+                        {(item.size || item.color) && ' • '}
+                        {orderDetails.payment_method?.toUpperCase() || 'Cash'}
+                      </Text>
+                      <Text style={styles.itemPrice}>₹{item.total_price}</Text>
+                      <Text style={styles.itemMetaSmall}>All issue easy returns</Text>
+
+                      {/* Action Buttons - Only show for delivered orders */}
+                      {orderDetails.status.toLowerCase() === 'delivered' && (
+                        <View style={styles.itemActions}>
+                          <TouchableOpacity
+                            style={styles.actionButton}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              openActionModal(item, 'review');
+                            }}
+                          >
+                            <Ionicons name="star-outline" size={16} color="#fff" />
+                            <Text style={styles.actionButtonText}>Review</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.actionButtonOutline}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              openActionModal(item, 'replacement');
+                            }}
+                          >
+                            <Ionicons name="swap-horizontal-outline" size={16} color="#F53F7A" />
+                            <Text style={styles.actionButtonOutlineText}>Replace</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#999" />
+                  </TouchableOpacity>
+                );
+              })()}
+            </View>
+
+            {/* Payment Information */}
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Payment Information</Text>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Payment Method</Text>
+                <Text style={styles.infoValue}>{orderDetails.payment_method?.toUpperCase() || 'N/A'}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Payment Status</Text>
+                <Text style={[styles.infoValue, { color: orderDetails.payment_status === 'paid' ? '#4CAF50' : '#FF9800' }]}>
+                  {orderDetails.payment_status}
+                </Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.infoRow}>
+                <Text style={styles.totalLabel}>Total Amount</Text>
+                <Text style={styles.totalValue}>₹{(() => {
+                  const selectedItem = itemId
+                    ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                    : orderDetails.order_items[0];
+                  return selectedItem?.total_price || orderDetails.total_amount;
+                })()}</Text>
+              </View>
+            </View>
+
+            {/* Reselling Details Section */}
+            {orderDetails.is_reseller_order && (
+              <View style={styles.sectionCard}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Reselling Details</Text>
+                </View>
+
+                {/* Per-item breakdown like YourEarnings */}
+                {orderDetails.order_items.map((item, index) => {
+                  // Calculate base and selling prices per item
+                  // unit_price is the SOLD price (what customer pays per unit)
+                  // basePrice = soldPrice - marginPerUnit
+                  const totalMargin = orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0;
+                  const totalItems = orderDetails.order_items.reduce((sum, i) => sum + i.quantity, 0);
+                  const marginPerUnit = totalItems > 0 ? totalMargin / totalItems : 0;
+                  const sellingPrice = item.unit_price; // This is what customer pays
+                  const basePrice = item.unit_price - marginPerUnit; // Base = Sold - Margin
+                  const itemProfit = marginPerUnit * item.quantity;
+
+                  return (
+                    <View
+                      key={item.id || index}
+                      style={{
+                        flexDirection: 'row',
+                        backgroundColor: '#FAFAFA',
+                        borderRadius: 12,
+                        padding: 12,
+                        marginBottom: index < orderDetails.order_items.length - 1 ? 10 : 0,
+                      }}
+                    >
+                      {/* Product Image */}
+                      <View style={{ width: 56, height: 56, borderRadius: 8, overflow: 'hidden', backgroundColor: '#f0f0f0' }}>
+                        {item.product_image ? (
+                          <Image
+                            source={{ uri: item.product_image }}
+                            style={{ width: 56, height: 56 }}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View style={{ width: 56, height: 56, justifyContent: 'center', alignItems: 'center' }}>
+                            <Ionicons name="image-outline" size={24} color="#ccc" />
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Product Info */}
+                      <View style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 2 }} numberOfLines={1}>
+                          {item.product_name}
+                        </Text>
+                        {item.size && (
+                          <Text style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+                            Size: {item.size} {item.quantity > 1 ? `• Qty: ${item.quantity}` : ''}
+                          </Text>
+                        )}
+                        {/* Pricing Row: Base → Sold */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Text style={{ fontSize: 12, color: '#888' }}>Base: </Text>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#666' }}>₹{basePrice.toFixed(0)}</Text>
+                          <Text style={{ fontSize: 12, color: '#F53F7A', marginHorizontal: 6 }}>→</Text>
+                          <Text style={{ fontSize: 12, color: '#888' }}>Sold: </Text>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#333' }}>₹{sellingPrice.toFixed(0)}</Text>
+                        </View>
+                      </View>
+
+                      {/* Profit Badge */}
+                      <View style={{ justifyContent: 'center', alignItems: 'flex-end' }}>
+                        <View style={{
+                          backgroundColor: '#E8F5E8',
+                          paddingHorizontal: 10,
+                          paddingVertical: 5,
+                          borderRadius: 16,
+                        }}>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#4CAF50' }}>
+                            +₹{itemProfit.toFixed(0)}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+
+                {/* Total Summary */}
+                <View style={{ marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#eee' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={{ fontSize: 14, color: '#666' }}>Customer Paid</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#333' }}>₹{orderDetails.total_amount}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 14, color: '#666' }}>Your Total Profit</Text>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#4CAF50' }}>
+                      +₹{orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0}
                     </Text>
-                    {item.size && (
-                      <Text style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
-                        Size: {item.size} {item.quantity > 1 ? `• Qty: ${item.quantity}` : ''}
-                      </Text>
-                    )}
-                    {/* Pricing Row: Base → Sold */}
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 12, color: '#888' }}>Base: </Text>
-                      <Text style={{ fontSize: 12, fontWeight: '500', color: '#666' }}>₹{basePrice.toFixed(0)}</Text>
-                      <Text style={{ fontSize: 12, color: '#F53F7A', marginHorizontal: 6 }}>→</Text>
-                      <Text style={{ fontSize: 12, color: '#888' }}>Sold: </Text>
-                      <Text style={{ fontSize: 12, fontWeight: '600', color: '#333' }}>₹{sellingPrice.toFixed(0)}</Text>
-                    </View>
-                  </View>
-
-                  {/* Profit Badge */}
-                  <View style={{ justifyContent: 'center', alignItems: 'flex-end' }}>
-                    <View style={{
-                      backgroundColor: '#E8F5E8',
-                      paddingHorizontal: 10,
-                      paddingVertical: 5,
-                      borderRadius: 16,
-                    }}>
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#4CAF50' }}>
-                        +₹{itemProfit.toFixed(0)}
-                      </Text>
-                    </View>
                   </View>
                 </View>
-              );
-            })}
-
-            {/* Total Summary */}
-            <View style={{ marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#eee' }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Text style={{ fontSize: 14, color: '#666' }}>Customer Paid</Text>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: '#333' }}>₹{orderDetails.total_amount}</Text>
               </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 14, color: '#666' }}>Your Total Profit</Text>
-                <Text style={{ fontSize: 15, fontWeight: '700', color: '#4CAF50' }}>
-                  +₹{orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0}
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
+            )
+            }
 
-        {/* Shipping Information */}
-        {orderDetails.shipping_address && (
-          <View style={styles.sectionCard}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Shipping Address</Text>
-              {orderDetails.status.toLowerCase() === 'pending' && (
+            {/* Tracking Progress Bar */}
+            <TrackingProgressBar
+              status={orderDetails.status}
+              dates={{
+                ordered: orderDetails.created_at,
+                shipped: orderDetails.shipped_at,
+                delivered: orderDetails.delivered_at,
+              }}
+            />
+
+            {/* Shipping Information */}
+            {
+              orderDetails.shipping_address && (
+                <View style={styles.sectionCard}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Shipping Address</Text>
+                    {orderDetails.status.toLowerCase() === 'pending' && (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FFF0F5',
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 20,
+                          borderWidth: 1,
+                          borderColor: 'rgba(245, 63, 122, 0.2)',
+                        }}
+                        onPress={() => {
+                          fetchAddresses();
+                          setAddressSheetVisible(true);
+                          addressSheetRef.current?.expand();
+                        }}
+                      >
+                        <Text style={{ color: '#F53F7A', fontWeight: '600', fontSize: 13 }}>Change</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  {/* Handle both string and object address formats */}
+                  {(() => {
+                    // Parse address - handle both string (JSON) and object formats
+                    let address = orderDetails.shipping_address;
+                    if (typeof address === 'string') {
+                      try {
+                        address = JSON.parse(address);
+                      } catch {
+                        // If parsing fails, display as plain text
+                        return <Text style={styles.addressText}>{address}</Text>;
+                      }
+                    }
+
+                    // Extract address components with fallbacks
+                    const name = address.name || address.full_name || '';
+                    const phone = address.phone || address.mobile || '';
+                    const line1 = address.address_line1 || address.street_address || address.street_line1 || address.line1 || '';
+                    const line2 = address.address_line2 || address.landmark || address.street_line2 || address.line2 || '';
+                    const city = address.city || '';
+                    const state = address.state || '';
+                    const pincode = address.pincode || address.postal_code || '';
+
+                    // Build full address string
+                    const addressParts = [line1, line2, city, state, pincode].filter(Boolean);
+                    const fullAddress = addressParts.join(', ');
+
+                    return (
+                      <View>
+                        {/* Name */}
+                        {name && (
+                          <Text style={[styles.addressText, { fontWeight: '600', fontSize: 15, marginBottom: 6, color: '#1a1a1a' }]}>
+                            {name}
+                          </Text>
+                        )}
+
+                        {/* Phone */}
+                        {phone && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                            <Ionicons name="call-outline" size={14} color="#666" style={{ marginRight: 6 }} />
+                            <Text style={[styles.addressText, { color: '#444' }]}>
+                              {phone}
+                            </Text>
+                          </View>
+                        )}
+
+                        {/* Address */}
+                        {fullAddress && (
+                          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                            <Ionicons name="location-outline" size={14} color="#666" style={{ marginRight: 6, marginTop: 2 }} />
+                            <Text style={[styles.addressText, { flex: 1, color: '#444', lineHeight: 20 }]}>
+                              {fullAddress}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })()}
+                </View>
+              )
+            }
+
+
+            {/* Cancel Order Button - Only for pending orders */}
+            {
+              orderDetails.status.toLowerCase() === 'pending' && (
                 <TouchableOpacity
                   style={{
-                    backgroundColor: '#FFF0F5',
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: 20,
+                    backgroundColor: '#FFF5F7',
+                    marginHorizontal: 16,
+                    marginBottom: 16,
+                    paddingVertical: 14,
+                    paddingHorizontal: 16,
+                    borderRadius: 12,
                     borderWidth: 1,
                     borderColor: 'rgba(245, 63, 122, 0.2)',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
                   }}
-                  onPress={() => {
-                    fetchAddresses();
-                    setAddressSheetVisible(true);
-                    addressSheetRef.current?.expand();
-                  }}
+                  onPress={() => setCancelModalVisible(true)}
                 >
-                  <Text style={{ color: '#F53F7A', fontWeight: '600', fontSize: 13 }}>Change</Text>
+                  <Ionicons name="close-circle-outline" size={20} color="#F53F7A" />
+                  <Text style={{ color: '#F53F7A', fontWeight: '600', fontSize: 14 }}>Cancel Order</Text>
                 </TouchableOpacity>
-              )}
-            </View>
-            <Text style={[styles.addressText, { fontWeight: '600', marginBottom: 4 }]}>
-              {orderDetails.shipping_address.name || orderDetails.shipping_address.full_name}
-            </Text>
-            <Text style={[styles.addressText, { marginBottom: 4 }]}>
-              {orderDetails.shipping_address.address_line1 || orderDetails.shipping_address.street_address}
-            </Text>
-            {(orderDetails.shipping_address.address_line2 || orderDetails.shipping_address.landmark) && (
-              <Text style={[styles.addressText, { marginBottom: 4 }]}>
-                {orderDetails.shipping_address.address_line2 || orderDetails.shipping_address.landmark}
-              </Text>
-            )}
-            <Text style={[styles.addressText, { marginBottom: 4 }]}>
-              {orderDetails.shipping_address.city}, {orderDetails.shipping_address.state} - {orderDetails.shipping_address.pincode}
-            </Text>
-            <Text style={[styles.addressText, { color: '#333' }]}>
-              Phone: {orderDetails.shipping_address.phone || orderDetails.shipping_address.mobile}
-            </Text>
-          </View>
-        )
-        }
+              )
+            }
 
-        {/* Tracking Information */}
-        {
-          orderDetails.tracking_number && (
-            <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>Tracking Information</Text>
-              <View style={styles.trackingContainer}>
-                <Ionicons name="location-outline" size={20} color="#F53F7A" />
+            {/* Recently Viewed Section */}
+            {recentlyViewed.length > 0 && (
+              <View style={styles.recentlyViewedSection}>
+                <View style={styles.recentlyViewedHeader}>
+                  <Text style={styles.recentlyViewedTitle}>Recently Viewed</Text>
+                  <TouchableOpacity
+                    style={styles.scrollArrowButton}
+                    onPress={() => scrollRecentlyViewed('right')}
+                  >
+                    <Ionicons name="chevron-forward" size={24} color="#F53F7A" />
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  ref={recentlyViewedListRef}
+                  data={recentlyViewed}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.recentlyViewedList}
+                  renderItem={({ item }) => (
+                    <View style={styles.recentProductCard}>
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => {
+                          (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                            productId: item.id,
+                            product: {
+                              id: item.id,
+                              name: item.name,
+                              price: item.price,
+                              image: item.image_url,
+                            }
+                          });
+                        }}
+                      >
+                        <Image
+                          source={{ uri: item.image_url }}
+                          style={styles.recentProductImage}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.recentProductInfo}>
+                          <Text style={styles.recentProductName} numberOfLines={2}>{item.name}</Text>
+                          <View style={styles.recentProductPriceRow}>
+                            {item.mrp_price && item.mrp_price > item.price && (
+                              <Text style={styles.recentProductOriginalPrice}>₹{item.mrp_price}</Text>
+                            )}
+                            <Text style={styles.recentProductPrice}>₹{item.price}</Text>
+                            {item.discount_percentage && item.discount_percentage > 0 && (
+                              <Text style={styles.recentProductDiscountBadge}>{item.discount_percentage}% OFF</Text>
+                            )}
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                />
               </View>
-            </View>
-          )
-        }
+            )}
 
-        {/* Track Order Button - Show for shipped/processing orders */}
-        {
-          orderDetails.status.toLowerCase() !== 'delivered' &&
-          orderDetails.status.toLowerCase() !== 'cancelled' && (
-            <TouchableOpacity
-              style={styles.trackOrderButton}
-              onPress={() => {
-                (navigation.navigate as (screen: string, params?: object) => void)('OrderTracking', {
-                  orderId: orderDetails.id,
-                  orderNumber: orderDetails.order_number,
-                  status: orderDetails.status,
-                  trackingNumber: orderDetails.tracking_number,
-                  createdAt: orderDetails.created_at,
-                  shippedAt: orderDetails.shipped_at,
-                  deliveredAt: orderDetails.delivered_at,
-                  productName: orderDetails.order_items?.[0]?.product_name,
-                  productImage: orderDetails.order_items?.[0]?.product_image,
-                });
-              }}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={['#F53F7A', '#E91E63']}
-                style={styles.trackOrderButtonGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                <Ionicons name="location-outline" size={20} color="#fff" />
-                <Text style={styles.trackOrderButtonText}>Track My Order</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          )
-        }
-
-        {/* Cancel Order Button - Only for pending orders */}
-        {orderDetails.status.toLowerCase() === 'pending' && (
-          <TouchableOpacity
-            style={{
-              backgroundColor: '#FFF0F0',
-              marginHorizontal: 16,
-              marginBottom: 16,
-              paddingVertical: 14,
-              paddingHorizontal: 16,
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: '#FFCDD2',
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-            }}
-            onPress={() => setCancelModalVisible(true)}
-          >
-            <Ionicons name="close-circle-outline" size={20} color="#F44336" />
-            <Text style={{ color: '#F44336', fontWeight: '600', fontSize: 14 }}>Cancel Order</Text>
-          </TouchableOpacity>
+          </>
         )}
 
       </ScrollView >
@@ -1595,116 +1936,6 @@ const OrderDetails = () => {
         )
       }
 
-      {/* Resell Edit Modal */}
-      <Modal
-        visible={resellEditModalVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setResellEditModalVisible(false)}
-      >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20 }}>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' }}>Edit Sold Price</Text>
-            <Text style={{ fontSize: 13, color: '#888', marginBottom: 20, textAlign: 'center' }}>
-              Your profit is automatically calculated
-            </Text>
-
-            {/* Base Price Display (Read-only) */}
-            {(() => {
-              const oldTotal = orderDetails?.total_amount || 0;
-              const oldMargin = orderDetails?.reseller_margin_amount || orderDetails?.reseller_profit || 0;
-              const basePrice = oldTotal - oldMargin;
-              const newTotal = parseFloat(editResellPrice) || 0;
-              const profit = newTotal - basePrice;
-              const isValid = newTotal >= basePrice;
-
-              return (
-                <>
-                  <View style={{
-                    backgroundColor: '#F8F8F8',
-                    padding: 12,
-                    borderRadius: 10,
-                    marginBottom: 16,
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}>
-                    <Text style={{ fontSize: 14, color: '#666' }}>Base Price</Text>
-                    <Text style={{ fontSize: 16, fontWeight: '600', color: '#333' }}>₹{basePrice.toFixed(0)}</Text>
-                  </View>
-
-                  <Text style={{ fontSize: 14, color: '#666', marginBottom: 8 }}>Sold Price (₹)</Text>
-                  <TextInput
-                    style={{
-                      borderWidth: 1,
-                      borderColor: isValid ? '#ddd' : '#F44336',
-                      borderRadius: 8,
-                      padding: 12,
-                      fontSize: 18,
-                      fontWeight: '600',
-                      marginBottom: 8,
-                    }}
-                    value={editResellPrice}
-                    keyboardType="numeric"
-                    onChangeText={(text) => {
-                      setEditResellPrice(text);
-                      const newVal = parseFloat(text);
-                      if (!isNaN(newVal)) {
-                        setEditResellMargin((newVal - basePrice).toFixed(0));
-                      }
-                    }}
-                  />
-                  {!isValid && (
-                    <Text style={{ fontSize: 12, color: '#F44336', marginBottom: 8 }}>
-                      Sold price cannot be less than base price (₹{basePrice.toFixed(0)})
-                    </Text>
-                  )}
-
-                  {/* Calculated Profit Display (Read-only) */}
-                  <View style={{
-                    backgroundColor: isValid ? '#F5FFF5' : '#FFF5F5',
-                    padding: 14,
-                    borderRadius: 10,
-                    marginTop: 8,
-                    marginBottom: 24,
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    borderWidth: 1,
-                    borderColor: isValid ? '#E8F5E8' : '#FFEBEE'
-                  }}>
-                    <Text style={{ fontSize: 14, color: '#666' }}>Your Profit</Text>
-                    <Text style={{ fontSize: 18, fontWeight: '700', color: isValid ? '#4CAF50' : '#F44336' }}>
-                      {isValid ? '+' : ''}₹{profit.toFixed(0)}
-                    </Text>
-                  </View>
-
-                  <View style={{ flexDirection: 'row', gap: 12 }}>
-                    <TouchableOpacity
-                      style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#f5f5f5', alignItems: 'center' }}
-                      onPress={() => setResellEditModalVisible(false)}
-                    >
-                      <Text style={{ fontWeight: '600', color: '#666' }}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: isValid ? '#F53F7A' : '#ccc', alignItems: 'center' }}
-                      onPress={handleUpdateResellDetails}
-                      disabled={submitting || !isValid}
-                    >
-                      {submitting ? (
-                        <ActivityIndicator color="#fff" size="small" />
-                      ) : (
-                        <Text style={{ fontWeight: '600', color: '#fff' }}>Update</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </>
-              );
-            })()}
-          </View>
-        </View>
-      </Modal>
-
       {/* Cancel Order Modal */}
       <Modal
         visible={cancelModalVisible}
@@ -1796,7 +2027,7 @@ const OrderDetails = () => {
         </View>
       </Modal>
 
-    </View>
+    </View >
   );
 };
 
@@ -1880,12 +2111,15 @@ const styles = StyleSheet.create({
   orderNumberContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
   },
   orderNumber: {
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: '700',
     color: '#333',
     marginLeft: 8,
+    flex: 1,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -1894,6 +2128,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 16,
     gap: 4,
+    flexShrink: 0,
   },
   statusText: {
     fontSize: 13,
@@ -2238,6 +2473,175 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // Cancelled/Rejected Order Styles
+  cancelledOrderItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  itemMetaSmall: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  cancellationCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 16,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  cancellationIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFEBEE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  cancellationTextContainer: {
+    flex: 1,
+  },
+  cancellationTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  cancellationMessage: {
+    fontSize: 14,
+    color: '#666',
+  },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    gap: 10,
+  },
+  buyAgainButton: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#F53F7A',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buyAgainButtonText: {
+    color: '#F53F7A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  continueShoppingButton: {
+    flex: 1,
+    backgroundColor: '#F53F7A',
+    borderWidth: 1,
+    borderColor: '#fff',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  continueShoppingButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Recently Viewed Section Styles
+  recentlyViewedSection: {
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  recentlyViewedHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  recentlyViewedTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  scrollArrowButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFF5F7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recentlyViewedList: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  recentProductCard: {
+    width: 160,
+    backgroundColor: '#fff',
+    borderRadius: 12, // More rounded
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    marginRight: 12,
+  },
+  recentProductImage: {
+    width: 160,
+    height: 180, // Taller image
+    backgroundColor: '#F9FAFB',
+    resizeMode: 'cover',
+  },
+  recentProductInfo: {
+    padding: 10,
+  },
+  recentProductImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recentProductDiscountBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#F53F7A',
+    backgroundColor: '#FFF0F5',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  recentProductName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  recentProductPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  recentProductPrice: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#F53F7A',
+  },
+  recentProductOriginalPrice: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
   },
 });
 
