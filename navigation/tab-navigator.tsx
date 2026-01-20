@@ -734,6 +734,14 @@ export default function TabLayout() {
               </View>
             ),
           }}
+          listeners={({ navigation }) => ({
+            tabPress: (e) => {
+              // Prevent default behavior
+              e.preventDefault();
+              // Navigate to Home tab and reset the stack to show Dashboard
+              navigation.navigate('Home', { screen: 'Home' });
+            },
+          })}
         />
         {isAdmin && (
           <Tab.Screen

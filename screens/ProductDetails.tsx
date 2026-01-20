@@ -78,11 +78,8 @@ const ProductDetails = () => {
   const isFocused = useIsFocused();
 
   const handleBackPress = useCallback(() => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-    } else {
-      (navigation as any).replace('TabNavigator');
-    }
+    // Always navigate to home screen instead of goBack to prevent exiting app
+    (navigation as any).replace('TabNavigator');
   }, [navigation]);
 
   // State for fetched product (when only productId is provided)

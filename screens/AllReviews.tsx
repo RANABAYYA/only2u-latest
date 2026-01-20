@@ -880,6 +880,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 20,
+    backgroundColor: '#fff',
   },
   shareButtonText: {
     fontSize: 14,
@@ -887,6 +893,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   reportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 20,
+    backgroundColor: '#fff',
     marginLeft: 'auto',
   },
   reportButtonText: {

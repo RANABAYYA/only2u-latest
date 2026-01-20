@@ -224,8 +224,9 @@ const Feedback = () => {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior="padding"
         style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 50}
       >
         {/* Header */}
         <View style={styles.header}>
