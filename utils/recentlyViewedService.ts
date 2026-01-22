@@ -27,14 +27,17 @@ export interface RecentProduct {
  */
 export const addToRecentlyViewed = async (productId: string): Promise<void> => {
     try {
+        // Ensure we only store the UUID (first 36 chars) to avoid composite ID errors
+        const cleanId = productId && productId.length > 36 ? productId.substring(0, 36) : productId;
+
         const stored = await AsyncStorage.getItem(STORAGE_KEY);
         let productIds: string[] = stored ? JSON.parse(stored) : [];
 
         // Remove if already exists (to move to front)
-        productIds = productIds.filter(id => id !== productId);
+        productIds = productIds.filter(id => id !== cleanId);
 
         // Add to front
-        productIds.unshift(productId);
+        productIds.unshift(cleanId);
 
         // Keep only MAX_ITEMS
         if (productIds.length > MAX_ITEMS) {
@@ -66,7 +69,13 @@ export const getRecentlyViewedIds = async (): Promise<string[]> => {
  */
 export const fetchRecentlyViewedProducts = async (): Promise<RecentProduct[]> => {
     try {
-        const productIds = await getRecentlyViewedIds();
+        const storedIds = await getRecentlyViewedIds();
+
+        // Sanitize IDs: extract UUIDs and remove duplicates
+        // This fixes the "invalid input syntax for type uuid" error if composite IDs were stored
+        const productIds = [...new Set(storedIds.map(id =>
+            id && id.length > 36 ? id.substring(0, 36) : id
+        ))].filter(Boolean);
 
         if (productIds.length === 0) {
             return [];

@@ -2495,6 +2495,13 @@ const Cart = () => {
               </TouchableOpacity>
             </View>
 
+            {/* Stock Availability Display */}
+            {typeof item.stock === 'number' && !isNaN(item.stock) && item.stock > 0 && (
+              <Text style={styles.stockAvailabilityText}>
+                <Ionicons name="checkmark-circle" size={12} color="#10B981" /> {item.stock} in stock
+              </Text>
+            )}
+
             {/* Price Row */}
             <View style={styles.priceRow}>
               <Text style={styles.itemPrice}>₹{displayLineTotal.toFixed(0)}</Text>
@@ -2717,8 +2724,8 @@ const Cart = () => {
         // Cart with Items
         <KeyboardAvoidingView
           style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 2 : 2}
         >
           <ScrollView
             ref={scrollViewRef}
@@ -3535,18 +3542,21 @@ const Cart = () => {
                 <Ionicons name="remove" size={24} color={tempQuantity <= 1 ? '#D1D5DB' : '#F53F7A'} />
               </TouchableOpacity>
 
-              <Text style={styles.qtyModalValue}>{tempQuantity}</Text>
+              <Text style={styles.qtyModalValue}>{isNaN(tempQuantity) ? 1 : tempQuantity}</Text>
 
               <TouchableOpacity
-                style={[styles.qtyModalButton, tempQuantity >= (selectedItemForQty?.stock || 10) && styles.qtyModalButtonDisabled]}
-                onPress={() => setTempQuantity(Math.min(selectedItemForQty?.stock || 10, tempQuantity + 1))}
-                disabled={tempQuantity >= (selectedItemForQty?.stock || 10)}
+                style={[styles.qtyModalButton, tempQuantity >= (typeof selectedItemForQty?.stock === 'number' && !isNaN(selectedItemForQty?.stock) ? selectedItemForQty?.stock : 10) && styles.qtyModalButtonDisabled]}
+                onPress={() => {
+                  const maxStock = typeof selectedItemForQty?.stock === 'number' && !isNaN(selectedItemForQty?.stock) ? selectedItemForQty?.stock : 10;
+                  setTempQuantity(Math.min(maxStock, tempQuantity + 1));
+                }}
+                disabled={tempQuantity >= (typeof selectedItemForQty?.stock === 'number' && !isNaN(selectedItemForQty?.stock) ? selectedItemForQty?.stock : 10)}
               >
-                <Ionicons name="add" size={24} color={tempQuantity >= (selectedItemForQty?.stock || 10) ? '#D1D5DB' : '#F53F7A'} />
+                <Ionicons name="add" size={24} color={tempQuantity >= (typeof selectedItemForQty?.stock === 'number' && !isNaN(selectedItemForQty?.stock) ? selectedItemForQty?.stock : 10) ? '#D1D5DB' : '#F53F7A'} />
               </TouchableOpacity>
             </View>
 
-            {selectedItemForQty?.stock && (
+            {typeof selectedItemForQty?.stock === 'number' && !isNaN(selectedItemForQty?.stock) && selectedItemForQty?.stock > 0 && (
               <Text style={styles.qtyModalStock}>{selectedItemForQty.stock} in stock</Text>
             )}
 
@@ -3562,7 +3572,13 @@ const Cart = () => {
                 style={styles.qtyModalConfirm}
                 onPress={() => {
                   if (selectedItemForQty) {
-                    handleUpdateQuantity(selectedItemForQty.id, tempQuantity, selectedItemForQty);
+                    // Directly update quantity without opening size modal
+                    updateQuantity(selectedItemForQty.id, tempQuantity);
+                    Toast.show({
+                      type: 'success',
+                      text1: 'Quantity Updated',
+                      text2: `Qty changed to ${tempQuantity}`,
+                    });
                   }
                   setShowQuantityModal(false);
                 }}
@@ -5964,6 +5980,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#9CA3AF',
     textDecorationLine: 'line-through',
+  },
+  stockAvailabilityText: {
+    fontSize: 12,
+    color: '#10B981',
+    fontWeight: '500',
+    marginTop: 4,
   },
 });
 

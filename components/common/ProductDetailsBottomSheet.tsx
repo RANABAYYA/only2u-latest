@@ -137,7 +137,7 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
   const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
   const { userData, setUserData, refreshUserData } = useUser();
   const { showLoginSheet } = useLoginSheet();
-  const { addToCart } = useCart();
+  const { addToCart, cartItems } = useCart();
   const { isInWishlist, toggleWishlist, removeFromWishlist, addToWishlist } = useWishlist();
   const { addToPreview } = usePreview();
   const { t } = useTranslation();
@@ -671,10 +671,25 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
 
   const isLowStock = useMemo(() => totalStock < 5, [totalStock]);
 
+  // Check if current product+size combination is already in cart
+  const isProductInCart = useMemo(() => {
+    if (!product || !selectedSize) return false;
+
+    // Find the size name for the selected size ID
+    const sizeName = availableSizes.find(s => s.id === selectedSize)?.name;
+    if (!sizeName) return false;
+
+    // Check if this exact product+size combination exists in cart
+    return cartItems.some(item =>
+      item.productId === product.id &&
+      item.size === sizeName
+    );
+  }, [cartItems, product, selectedSize, availableSizes]);
+
   // Debug logging for add to cart button state
   useEffect(() => {
-    console.log('🛒 Add to cart button - availableQuantity:', availableQuantity, 'disabled:', availableQuantity === 0 || addToCartLoading);
-  }, [availableQuantity, addToCartLoading]);
+    console.log('🛒 Add to cart button - availableQuantity:', availableQuantity, 'disabled:', availableQuantity === 0 || addToCartLoading, 'isInCart:', isProductInCart);
+  }, [availableQuantity, addToCartLoading, isProductInCart]);
 
   useEffect(() => {
     console.log('🔄 ProductDetailsBottomSheet useEffect - visible:', visible, 'product:', product?.id);
@@ -1025,10 +1040,11 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
 
       setAvailableSizes(sortedSizes);
 
-      if (sizes.length > 0 && !selectedSize) {
-        const userSizeVariant = sizes.find(s => s.name === userData?.size);
-        const initialSize = userSizeVariant?.id || sizes[0].id;
-        console.log('🎯 Setting initial size:', initialSize);
+      if (sortedSizes.length > 0 && !selectedSize) {
+        // Try to find user's preferred size first, otherwise use the FIRST sorted size (smallest)
+        const userSizeVariant = sortedSizes.find(s => s.name === userData?.size);
+        const initialSize = userSizeVariant?.id || sortedSizes[0].id;
+        console.log('🎯 Setting initial size (from sorted):', initialSize, '(', sortedSizes[0].name, ')');
         setSelectedSize(initialSize);
       }
     } catch (error) {
@@ -1351,22 +1367,35 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
       let color = 'Default';
       let price = getUserPrice(product);
 
-      // If we have variants and user has selected size/color, use that
-      if (variants.length > 0 && selectedSize && selectedColor) {
-        selectedVariantData = variants.find(v =>
-          v.size_id === selectedSize && v.color_id === selectedColor
-        );
+      // If we have variants and user has selected a size, use that
+      if (variants.length > 0 && selectedSize) {
+        // Find variant matching the selected size (and color if provided)
+        selectedVariantData = variants.find(v => {
+          const sizeMatches = v.size_id === selectedSize;
+          const colorMatches = selectedColor ? v.color_id === selectedColor : true;
+          return sizeMatches && colorMatches;
+        });
+
         if (selectedVariantData) {
+          size = selectedVariantData.size.name;
+          color = selectedVariantData.color?.name || 'Default';
+          price = selectedVariantData.price || price;
+          console.log('✅ Using selected size variant:', { size, color, price, variantId: selectedVariantData.id });
+        } else {
+          console.warn('⚠️ No variant found for selected size:', selectedSize);
+          // Fallback to first variant
+          selectedVariantData = variants[0];
           size = selectedVariantData.size.name;
           color = selectedVariantData.color?.name || 'Default';
           price = selectedVariantData.price || price;
         }
       } else if (variants.length > 0) {
-        // Use first available variant
+        // No size selected, use first available variant
         selectedVariantData = variants[0];
         size = selectedVariantData.size.name;
         color = selectedVariantData.color?.name || 'Default';
         price = selectedVariantData.price || price;
+        console.log('ℹ️ No size selected, using first variant:', { size, color });
       } else if (product.variants && product.variants.length > 0) {
         // Use first variant from product data
         const firstVariant = product.variants[0];
@@ -1384,10 +1413,19 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
         size: size,
         color: color,
         quantity: 1,
-        stock: product.stock_quantity,
+        // Use availableQuantity (calculated for selected size), fallback to variant quantity, then product stock
+        stock: availableQuantity > 0 ? availableQuantity : (selectedVariantData?.quantity || product.stock_quantity || 10),
         sku: (product as any).sku || product.id,
         isReseller: false,
       };
+
+      console.log('🛒 Adding to cart:', {
+        size,
+        availableQuantity,
+        variantStock: selectedVariantData?.quantity,
+        productStock: product.stock_quantity,
+        finalStock: cartItem.stock
+      });
 
       await addToCart(cartItem);
 
@@ -1409,6 +1447,11 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
     } finally {
       setAddToCartLoading(false);
     }
+  };
+
+  const handleGoToCart = () => {
+    onClose();
+    (navigation as any).navigate('Cart');
   };
 
   const shareUrl = mediaItems[currentImageIndex]?.url || product?.image_urls?.[0];
@@ -1930,12 +1973,17 @@ const ProductDetailsBottomSheet: React.FC<ProductDetailsBottomSheetProps> = ({
 
                   <TouchableOpacity
                     style={[styles.addToCartButton, { opacity: availableQuantity === 0 ? 0.5 : 1 }]}
-                    onPress={handleAddToCart}
+                    onPress={isProductInCart ? handleGoToCart : handleAddToCart}
                     disabled={availableQuantity === 0 || addToCartLoading}
                   >
-                    <Ionicons name="cart-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
+                    <Ionicons
+                      name={isProductInCart ? "cart" : "cart-outline"}
+                      size={20}
+                      color="#fff"
+                      style={{ marginRight: 8 }}
+                    />
                     <Text style={styles.addToCartButtonText}>
-                      {addToCartLoading ? t('adding') : t('add_to_cart')}
+                      {addToCartLoading ? t('adding') : (isProductInCart ? 'Go to Cart' : t('add_to_cart'))}
                     </Text>
                   </TouchableOpacity>
                 </View>

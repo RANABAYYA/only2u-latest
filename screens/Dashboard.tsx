@@ -17,6 +17,7 @@ import {
   Share,
   StyleProp,
   ViewStyle,
+  BackHandler,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -247,6 +248,20 @@ const Dashboard = () => {
       if (userData?.id) fetchAddresses();
     }, [userData?.id])
   );
+
+  // Handle hardware back button when category filter is active
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (selectedFilterCategories.length > 0) {
+        // Clear category filter and return to normal view
+        setSelectedFilterCategories([]);
+        return true; // Prevent default back behavior
+      }
+      return false; // Allow default back behavior
+    });
+
+    return () => backHandler.remove();
+  }, [selectedFilterCategories]);
 
   // Also refresh when address bottom sheet is opened
   useEffect(() => {
@@ -1511,6 +1526,39 @@ const Dashboard = () => {
   const isSearching = searchText.trim().length > 0;
   const searchResults = getAllSearchResults();
 
+  // Check if category filter is actively applied (for grid view mode)
+  const isFilteringCategory = selectedFilterCategories.length > 0;
+
+  // Get filtered products for grid view when category filter is applied
+  const getFilteredProductsForGrid = () => {
+    if (!isFilteringCategory) return [];
+
+    const allProducts = [
+      ...trendingProducts,
+      ...bestSellerProducts,
+      ...Object.values(categoryProducts).flat(),
+    ];
+
+    // Remove duplicates by id
+    const uniqueProducts = Array.from(
+      new Map(allProducts.map(item => [item.id, item])).values()
+    );
+
+    return uniqueProducts.filter(productMatchesSearch);
+  };
+
+  const filteredGridProducts = getFilteredProductsForGrid();
+
+  // Get selected category name for header
+  const getSelectedCategoryName = () => {
+    if (selectedFilterCategories.length === 0) return '';
+    const category = categories.find(c => selectedFilterCategories.includes(c.id));
+    if (selectedFilterCategories.length === 1) {
+      return category?.name || 'Filtered Products';
+    }
+    return `${selectedFilterCategories.length} Categories Selected`;
+  };
+
   // Filtered products (for individual sections when not searching)
   const filteredTrendingProducts = trendingProducts.filter(productMatchesSearch);
   const filteredBestSellerProducts = bestSellerProducts.filter(productMatchesSearch);
@@ -1799,6 +1847,59 @@ const Dashboard = () => {
         <View style={styles.searchResultsGrid}>
           {searchResults.map((product) => (
             <View key={product.id} style={styles.searchResultCard}>
+              <SearchProductCard
+                product={product}
+                onPress={handleProductPress}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+
+  // Render category filter grid view
+  const renderCategoryFilterGrid = () => (
+    <View style={styles.categoryFilterContainer}>
+      {/* Category Filter Header */}
+      <View style={styles.categoryFilterHeader}>
+        <TouchableOpacity
+          style={styles.categoryFilterBackButton}
+          onPress={() => {
+            // Clear category filter and return to normal view
+            setSelectedFilterCategories([]);
+            handleResetFilters();
+          }}
+        >
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.categoryFilterTitle}>{getSelectedCategoryName()}</Text>
+        <TouchableOpacity
+          style={styles.categoryFilterButton}
+          onPress={() => filterSheetRef.current?.present()}
+        >
+          <Ionicons name="options-outline" size={24} color="#F53F7A" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Products Count */}
+      <View style={styles.categoryFilterCountRow}>
+        <Text style={styles.categoryFilterCountText}>{filteredGridProducts.length} products found</Text>
+      </View>
+
+      {/* Products Grid - Edge to edge, no gaps */}
+      {filteredGridProducts.length === 0 ? (
+        <View style={styles.noResultsContainer}>
+          <Ionicons name="shirt-outline" size={64} color="#ccc" />
+          <Text style={styles.noResultsTitle}>No products found</Text>
+          <Text style={styles.noResultsText}>
+            Try selecting a different category
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.categoryFilterGrid}>
+          {filteredGridProducts.map((product) => (
+            <View key={product.id} style={styles.categoryFilterCard}>
               <SearchProductCard
                 product={product}
                 onPress={handleProductPress}
@@ -2277,6 +2378,9 @@ const Dashboard = () => {
               {/* Show search results if user is actively searching */}
               {isSearching ? (
                 renderSearchResults()
+              ) : isFilteringCategory ? (
+                // Show category filter grid when category filter is applied
+                renderCategoryFilterGrid()
               ) : (
                 <>
                   {/* Dynamic Sections based on admin panel ordering */}
@@ -4316,12 +4420,12 @@ const styles = StyleSheet.create({
   searchResultsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    // Removed space-between to allow flush tiles
-    marginHorizontal: -16, // Counteract container padding for full width if desired, or just fit within
+    marginHorizontal: -8, // Adjust for card padding
   },
   searchResultCard: {
-    width: '50%', // 50% width for 2 columns with no gap
-    marginBottom: 0, // No bottom margin, handled by border
+    width: '50%',
+    padding: 8, // Create spacing
+    marginBottom: 0,
   },
   noResultsContainer: {
     flex: 1,
@@ -4495,6 +4599,12 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     borderColor: '#e0e0e0',
     width: '100%',
+    elevation: 2, // Slight shadow for card effect
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    marginBottom: 16,
   },
   verticalImageContainer: {
     position: 'relative',
@@ -4837,6 +4947,56 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666',
     marginLeft: 4,
+  },
+  // Category Filter Grid Styles
+  categoryFilterContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  categoryFilterHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  categoryFilterBackButton: {
+    padding: 8,
+  },
+  categoryFilterTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    flex: 1,
+    textAlign: 'center',
+  },
+  categoryFilterButton: {
+    padding: 8,
+  },
+  categoryFilterCountRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#f8f9fa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  categoryFilterCountText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '600',
+  },
+  // Category Filter Grid - exactly like search results
+  categoryFilterGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 8, // Outer spacing
+  },
+  categoryFilterCard: {
+    width: '50%',
+    padding: 8, // Inner spacing (creates gap)
   },
 });
 
