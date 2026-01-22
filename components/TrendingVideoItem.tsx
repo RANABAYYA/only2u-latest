@@ -53,6 +53,7 @@ interface Props {
     setVideoFallbackOverrides: (overrides: Record<string, string>) => void;
     videoReady: boolean;
     setVideoReady: (id: string, isReady: boolean) => void;
+    selectedSizes?: string[];
 }
 
 const TrendingVideoItem = ({
@@ -85,6 +86,7 @@ const TrendingVideoItem = ({
     setVideoFallbackOverrides,
     videoReady,
     setVideoReady,
+    selectedSizes,
 }: Props) => {
     const navigation = useNavigation<any>();
     const videoOpacity = useRef(new Animated.Value(0)).current;
@@ -129,6 +131,13 @@ const TrendingVideoItem = ({
     // Video Media Logic
     const allVideoUrls: string[] = [];
     product.variants?.forEach((variant: any) => {
+        // If specific sizes selected, only include videos from those sizes
+        if (selectedSizes && selectedSizes.length > 0) {
+            if (!selectedSizes.includes(variant.size?.name)) {
+                return;
+            }
+        }
+
         if (variant.video_urls && Array.isArray(variant.video_urls)) {
             variant.video_urls.forEach((url: string) => {
                 if (isVideoUrl(url)) {
@@ -138,7 +147,10 @@ const TrendingVideoItem = ({
             });
         }
     });
-    if (product.video_urls && Array.isArray(product.video_urls)) {
+
+    // Only include generic product videos if NO size is selected
+    // OR if we want to allow fallback (decision: strict filtering for now per user request "only show ... selected sizes")
+    if ((!selectedSizes || selectedSizes.length === 0) && product.video_urls && Array.isArray(product.video_urls)) {
         product.video_urls.forEach((url: string) => {
             if (isVideoUrl(url)) {
                 const playableUrl = getPlayableVideoUrl(url);
@@ -378,7 +390,7 @@ const TrendingVideoItem = ({
             </View>
 
             {/* Bottom Content */}
-            <View style={[styles.modernBottomContent, { paddingBottom: Math.max(insets.bottom, 24) + 12 }]}>
+            <View style={[styles.modernBottomContent, { paddingBottom: Math.max(insets.bottom, 34) + 20 }]}>
                 {/* Vendor/Influencer Row - Clean Design */}
                 <TouchableOpacity
                     style={styles.vendorInfoRow}

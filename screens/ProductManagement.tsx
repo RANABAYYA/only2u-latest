@@ -71,13 +71,13 @@ const ProductManagement = () => {
   // Update variants whenever selectedColors or selectedSizes change
   useEffect(() => {
     console.log('🔄 Variants useEffect triggered:', { selectedColors, selectedSizes, editingProduct });
-    
+
     // Don't update variants if we're editing and already have variants loaded
     if (editingProduct && variants.length > 0) {
       console.log('⏭️ Skipping variant update - editing mode with existing variants');
       return;
     }
-    
+
     if (selectedColors.length > 0 && selectedSizes.length > 0) {
       updateVariants(selectedColors, selectedSizes);
     } else {
@@ -228,7 +228,7 @@ const ProductManagement = () => {
           )
         `)
         .order('created_at', { ascending: false });
-      
+
       // Fetch colors and sizes separately
       const { data: colorsData } = await supabase.from('colors').select('id, name, hex_code');
       const { data: sizesData } = await supabase.from('sizes').select('id, name');
@@ -250,7 +250,7 @@ const ProductManagement = () => {
             size: size ? { name: size.name } : null,
           };
         });
-        
+
         return {
           ...product,
           image_urls: product.image_urls || [],
@@ -357,18 +357,18 @@ const ProductManagement = () => {
       is_active: product.is_active,
       featured_type: (product.featured_type as 'trending' | 'best_seller' | null) || null,
     });
-    
+
     // Load existing variants if any
     if (product.variants && product.variants.length > 0) {
       const existingColors = [...new Set(product.variants.map(v => v.color_id).filter(Boolean))] as string[];
       const existingSizes = [...new Set(product.variants.map(v => v.size_id).filter(Boolean))] as string[];
-      
+
       // Ensure all variants have prices set
       const variantsWithPrices = product.variants.map(variant => ({
         ...variant,
         price: variant.price || getSmallestPrice(product)
       }));
-      
+
       setSelectedColors(existingColors);
       setSelectedSizes(existingSizes);
       setVariants(variantsWithPrices);
@@ -377,7 +377,7 @@ const ProductManagement = () => {
       setSelectedSizes([]);
       setVariants([]);
     }
-    
+
     setModalVisible(true);
   };
 
@@ -385,7 +385,7 @@ const ProductManagement = () => {
     const newSelectedColors = selectedColors.includes(colorId)
       ? selectedColors.filter(id => id !== colorId)
       : [...selectedColors, colorId];
-    
+
     console.log('🎨 Color selection:', { colorId, currentColors: selectedColors, newColors: newSelectedColors });
     setSelectedColors(newSelectedColors);
   };
@@ -394,7 +394,7 @@ const ProductManagement = () => {
     const newSelectedSizes = selectedSizes.includes(sizeId)
       ? selectedSizes.filter(id => id !== sizeId)
       : [...selectedSizes, sizeId];
-    
+
     console.log('📏 Size selection:', { sizeId, currentSizes: selectedSizes, newSizes: newSelectedSizes });
     setSelectedSizes(newSelectedSizes);
   };
@@ -404,9 +404,9 @@ const ProductManagement = () => {
     setVariants(prevVariants => {
       const newVariants: ProductVariant[] = [];
       const basePrice = parseFloat(formData.price) || 0;
-      
+
       console.log('🔍 Previous variants:', prevVariants);
-      
+
       // Create all possible combinations of selected colors and sizes
       colors.forEach(colorId => {
         sizes.forEach(sizeId => {
@@ -431,14 +431,14 @@ const ProductManagement = () => {
           }
         });
       });
-      
+
       console.log('📋 Final variants:', newVariants);
       return newVariants;
     });
   };
 
   const updateVariantQuantity = (colorId: string, sizeId: string, quantity: number) => {
-    setVariants(prev => prev.map(variant => 
+    setVariants(prev => prev.map(variant =>
       variant.color_id === colorId && variant.size_id === sizeId
         ? { ...variant, quantity }
         : variant
@@ -446,7 +446,7 @@ const ProductManagement = () => {
   };
 
   const updateVariantPrice = (colorId: string, sizeId: string, price: number) => {
-    setVariants(prev => prev.map(variant => 
+    setVariants(prev => prev.map(variant =>
       variant.color_id === colorId && variant.size_id === sizeId
         ? { ...variant, price }
         : variant
@@ -492,7 +492,7 @@ const ProductManagement = () => {
   const handleImagePicker = async () => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
+
       if (permissionResult.granted === false) {
         Alert.alert('Permission Required', 'Permission to access camera roll is required!');
         return;
@@ -507,13 +507,13 @@ const ProductManagement = () => {
 
       if (!result.canceled && result.assets.length > 0) {
         setUploadingImages(true);
-        
+
         const uploadedUrls: string[] = [];
-        
+
         for (const asset of result.assets) {
           const imageUri = asset.uri;
           console.log('Image selected:', imageUri);
-          
+
           // Upload the image to Supabase storage
           const uploadedUrl = await uploadImage(imageUri);
           if (uploadedUrl) {
@@ -521,11 +521,11 @@ const ProductManagement = () => {
             console.log('Image uploaded successfully, URL:', uploadedUrl);
           }
         }
-        
+
         if (uploadedUrls.length > 0) {
-          setFormData({ 
-            ...formData, 
-            image_urls: [...formData.image_urls, ...uploadedUrls] 
+          setFormData({
+            ...formData,
+            image_urls: [...formData.image_urls, ...uploadedUrls]
           });
           Toast.show({
             type: 'success',
@@ -533,7 +533,7 @@ const ProductManagement = () => {
             text2: `${uploadedUrls.length} image(s) uploaded successfully!`,
           });
         }
-        
+
         setUploadingImages(false);
       }
     } catch (error) {
@@ -550,19 +550,19 @@ const ProductManagement = () => {
         Alert.alert('Permission Required', 'Permission to access media library is required!');
         return;
       }
-      
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Videos,
         allowsEditing: false,
         allowsMultipleSelection: true,
         quality: 1,
       });
-      
+
       if (!result.canceled && result.assets.length > 0) {
         setUploadingVideos(true);
-        
+
         const uploadedUrls: string[] = [];
-        
+
         for (const asset of result.assets) {
           const videoUri = asset.uri;
           const uploadedUrl = await uploadVideo(videoUri);
@@ -570,11 +570,11 @@ const ProductManagement = () => {
             uploadedUrls.push(uploadedUrl);
           }
         }
-        
+
         if (uploadedUrls.length > 0) {
-          setFormData({ 
-            ...formData, 
-            video_urls: [...formData.video_urls, ...uploadedUrls] 
+          setFormData({
+            ...formData,
+            video_urls: [...formData.video_urls, ...uploadedUrls]
           });
           Toast.show({
             type: 'success',
@@ -582,7 +582,7 @@ const ProductManagement = () => {
             text2: `${uploadedUrls.length} video(s) uploaded successfully!`,
           });
         }
-        
+
         setUploadingVideos(false);
       }
     } catch (error) {
@@ -736,7 +736,7 @@ const ProductManagement = () => {
 
     // If user has a size preference, try to find that size
     if (userData?.size) {
-      const userSizeVariant = product.variants.find(v => 
+      const userSizeVariant = product.variants.find(v =>
         v.size?.name === userData.size
       );
       if (userSizeVariant) {
@@ -780,10 +780,6 @@ const ProductManagement = () => {
             </View>
           );
         })()}
-          <View style={styles.placeholderImage}>
-            <Ionicons name="image-outline" size={24} color="#999" />
-          </View>
-        )}
         <View style={styles.productDetails}>
           <Text style={styles.productName}>{product.name}</Text>
           <Text style={styles.productCategory}>
@@ -800,7 +796,7 @@ const ProductManagement = () => {
           {product.discount_percentage && product.discount_percentage > 0 && (
             <Text style={styles.discountText}>{product.discount_percentage}% OFF</Text>
           )}
-          
+
           {/* Variants Information */}
           {product.variants && product.variants.length > 0 && (
             <View style={styles.variantsInfo}>
@@ -835,7 +831,7 @@ const ProductManagement = () => {
               </Text>
             </View>
           )}
-          
+
           <View style={styles.productMeta}>
             {/* <Text style={styles.productStock}>Stock: {product.stock_quantity}</Text> */}
             <View style={styles.badgeContainer}>
@@ -957,8 +953,8 @@ const ProductManagement = () => {
             {/* Product Images */}
             <View style={styles.formGroup}>
               <Text style={styles.label}>{t('product_images')} *</Text>
-              <TouchableOpacity 
-                style={styles.imagePickerButton} 
+              <TouchableOpacity
+                style={styles.imagePickerButton}
                 onPress={handleImagePicker}
                 disabled={uploadingImages}
               >
@@ -973,7 +969,7 @@ const ProductManagement = () => {
                   )}
                 </View>
               </TouchableOpacity>
-              
+
               {/* Display selected images */}
               {formData.image_urls.length > 0 && (
                 <View style={styles.mediaGrid}>
@@ -1011,7 +1007,7 @@ const ProductManagement = () => {
                   )}
                 </View>
               </TouchableOpacity>
-              
+
               {/* Display selected videos */}
               {formData.video_urls.length > 0 && (
                 <View style={styles.mediaGrid}>
@@ -1179,10 +1175,10 @@ const ProductManagement = () => {
                 <Text style={styles.formDescription}>
                   Set quantity and price for each color-size combination. Different colors or sizes can have different prices.
                 </Text>
-                
+
                 {/* Visual separator */}
                 <View style={styles.sectionSeparator} />
-                
+
                 {/* Header row for labels */}
                 <View style={styles.variantsHeader}>
                   <View style={styles.variantHeaderInfo}>
@@ -1197,12 +1193,12 @@ const ProductManagement = () => {
                     </View>
                   </View>
                 </View>
-                
+
                 <View style={styles.variantsContainer}>
                   {variants.map((variant) => {
                     const color = colors.find(c => c.id === variant.color_id);
                     const size = sizes.find(s => s.id === variant.size_id);
-                    
+
                     return (
                       <View key={`${variant.color_id}-${variant.size_id}`} style={styles.variantItem}>
                         <View style={styles.variantHeader}>
@@ -1291,16 +1287,16 @@ const ProductManagement = () => {
             </View> */}
 
             <View style={styles.formGroup}>
-                <Text style={styles.label}>Discount (%)</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={formData.discount_percentage}
-                  onChangeText={(text) => setFormData({ ...formData, discount_percentage: text })}
-                  placeholder={t('discount_placeholder')}
-                  placeholderTextColor="#999"
-                  keyboardType="numeric"
-                />
-              </View>
+              <Text style={styles.label}>Discount (%)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={formData.discount_percentage}
+                onChangeText={(text) => setFormData({ ...formData, discount_percentage: text })}
+                placeholder={t('discount_placeholder')}
+                placeholderTextColor="#999"
+                keyboardType="numeric"
+              />
+            </View>
 
             {/* SKU */}
             <View style={styles.formGroup}>

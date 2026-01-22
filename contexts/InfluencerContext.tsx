@@ -58,7 +58,7 @@ interface InfluencerContextType {
   // Influencer actions
   fetchInfluencers: () => Promise<void>;
   fetchInfluencerById: (influencerId: string) => Promise<Influencer | null>;
-  fetchInfluencerPosts: (influencerId?: string) => Promise<void>;
+  fetchInfluencerPosts: (influencerId?: string) => Promise<InfluencerPost[]>;
   fetchFollowedInfluencers: () => Promise<void>;
 
   // Follow actions
@@ -139,7 +139,7 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
   };
 
   // Fetch influencer posts (all or specific influencer)
-  const fetchInfluencerPosts = async (influencerId?: string) => {
+  const fetchInfluencerPosts = async (influencerId?: string): Promise<InfluencerPost[]> => {
     try {
       setLoading(true);
       setError(null);
@@ -175,9 +175,11 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
       );
 
       setInfluencerPosts(postsWithLikes);
+      return postsWithLikes;
     } catch (err) {
       console.error('Error fetching influencer posts:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch posts');
+      return [];
     } finally {
       setLoading(false);
     }
@@ -202,13 +204,18 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
 
   // Follow influencer
   const followInfluencer = async (influencerId: string): Promise<boolean> => {
-    if (!user) return false;
+    let userId = user?.id;
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (!sessionUser) return false;
+      userId = sessionUser.id;
+    }
 
     try {
       const { error } = await supabase
         .from('influencer_follows')
         .insert({
-          follower_id: user.id,
+          follower_id: userId,
           influencer_id: influencerId
         });
 
@@ -224,13 +231,18 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
 
   // Unfollow influencer
   const unfollowInfluencer = async (influencerId: string): Promise<boolean> => {
-    if (!user) return false;
+    let userId = user?.id;
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (!sessionUser) return false;
+      userId = sessionUser.id;
+    }
 
     try {
       const { error } = await supabase
         .from('influencer_follows')
         .delete()
-        .eq('follower_id', user.id)
+        .eq('follower_id', userId)
         .eq('influencer_id', influencerId);
 
       if (error) throw error;
@@ -250,13 +262,18 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
 
   // Like post
   const likePost = async (postId: string): Promise<boolean> => {
-    if (!user) return false;
+    let userId = user?.id;
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (!sessionUser) return false;
+      userId = sessionUser.id;
+    }
 
     try {
       const { error } = await supabase
         .from('influencer_post_likes')
         .insert({
-          user_id: user.id,
+          user_id: userId,
           post_id: postId
         });
 
@@ -278,13 +295,18 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
 
   // Unlike post
   const unlikePost = async (postId: string): Promise<boolean> => {
-    if (!user) return false;
+    let userId = user?.id;
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (!sessionUser) return false;
+      userId = sessionUser.id;
+    }
 
     try {
       const { error } = await supabase
         .from('influencer_post_likes')
         .delete()
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .eq('post_id', postId);
 
       if (error) throw error;
@@ -352,9 +374,11 @@ export const InfluencerProvider: React.FC<InfluencerProviderProps> = ({ children
         .from('products')
         .select(`
           *,
+          category:categories(name),
           product_variants (
             price,
-            image_urls
+            image_urls,
+            discount_percentage
           )
         `)
         .eq('influencer_id', influencerId)

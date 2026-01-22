@@ -43,6 +43,7 @@ import Products from '~/screens/Products';
 import VendorDashboard from '~/screens/VendorDashboard';
 import ProductDetails from '~/screens/ProductDetails';
 import OrderDetails from '~/screens/OrderDetails';
+import OrderTracking from '~/screens/OrderTracking';
 import { useUser } from '~/contexts/UserContext';
 import MessagesScreen from '~/screens/Messages';
 import ChatThread from '~/screens/ChatThread';
@@ -93,6 +94,7 @@ const Navigation = () => {
       <Stack.Screen name="ProductDetails" component={ProductDetails} />
       <Stack.Screen name="Products" component={Products} />
       <Stack.Screen name="OrderDetails" component={OrderDetails} />
+      <Stack.Screen name="OrderTracking" component={OrderTracking} />
       <Stack.Screen name="Messages" component={MessagesScreen} />
       <Stack.Screen name="ChatThread" component={ChatThread} />
       <Stack.Screen name="FriendSearch" component={FriendSearch} />

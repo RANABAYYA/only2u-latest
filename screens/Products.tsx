@@ -342,7 +342,7 @@ const TinderCard = ({
   index,
   onSwipe,
   productPrices,
-  productRatings,
+  ratingData,
   getUserPrice,
   isInWishlist,
   removeFromWishlist,
@@ -537,8 +537,8 @@ const TinderCard = ({
       price: userPrice,
       originalPrice: hasDiscount ? originalPrice : undefined,
       discount: Math.max(...(product.variants?.map((v: any) => v.discount_percentage || 0) || [0])),
-      rating: productRatings[product.id]?.rating || 0,
-      reviews: productRatings[product.id]?.reviews || 0,
+      rating: ratingData?.rating || 0,
+      reviews: ratingData?.reviews || 0,
       image: getFirstSafeProductImage(product),
       image_urls: getProductImages(product),
       video_urls: product.video_urls || [],
@@ -875,7 +875,7 @@ const ProductCardSwipe = React.memo(({
   setShowCollectionSheet,
   addToAllCollection,
   getUserPrice,
-  productRatings,
+  ratingData,
   openReviewsSheet,
   isScreenFocused,
 }: {
@@ -891,7 +891,7 @@ const ProductCardSwipe = React.memo(({
   setShowCollectionSheet: (show: boolean) => void;
   addToAllCollection: (product: Product) => void;
   getUserPrice: (product: Product) => number;
-  productRatings: { [productId: string]: { rating: number; reviews: number } };
+  ratingData: { rating: number; reviews: number };
   openReviewsSheet: (product: Product) => void;
   isScreenFocused: boolean;
 }) => {
@@ -902,7 +902,6 @@ const ProductCardSwipe = React.memo(({
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const videoRef = useRef<any>(null);
   const wasPlayingBeforeBlurRef = useRef(true);
-  const ratingData = productRatings[product.id] ?? { rating: 0, reviews: 0 };
 
   // Reset media index to 0 when product changes (when swiping to a new card)
   useEffect(() => {
@@ -939,6 +938,8 @@ const ProductCardSwipe = React.memo(({
   const [uploadingProfilePhoto, setUploadingProfilePhoto] = useState(false);
   const [permissionModal, setPermissionModal] = useState<{ visible: boolean; context: 'camera' | 'gallery' }>({ visible: false, context: 'camera' });
   const [completedFaceSwapProduct, setCompletedFaceSwapProduct] = useState<any>(null);
+  const [isTutorialVideoPlaying, setIsTutorialVideoPlaying] = useState(true);
+  const tutorialVideoRef = useRef<any>(null);
 
   // Refs for cleanup
   const faceSwapPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -1783,6 +1784,11 @@ const ProductCardSwipe = React.memo(({
               <View style={styles.swipeInfoRatingBadge}>
                 <Ionicons name="star" size={14} color="#FFD600" />
                 <Text style={styles.swipeInfoRatingText}>{ratingData.rating.toFixed(1)}</Text>
+                {ratingData.reviews > 0 && (
+                  <Text style={[styles.swipeInfoRatingText, { marginLeft: 4, fontWeight: '500', color: '#666', fontSize: 11 }]}>
+                    ({ratingData.reviews})
+                  </Text>
+                )}
               </View>
             </TouchableOpacity>
           </View>
@@ -1938,14 +1944,55 @@ const ProductCardSwipe = React.memo(({
               </TouchableOpacity>
             </View>
             <View style={styles.resellTutorialVideoWrapper}>
-              <Video
-                source={{ uri: TRYON_TUTORIAL_VIDEO_URL }}
-                style={styles.resellTutorialVideo}
-                resizeMode={ResizeMode.COVER}
-                shouldPlay
-                isLooping
-                isMuted
-              />
+              <TouchableOpacity
+                style={{ flex: 1 }}
+                activeOpacity={0.9}
+                onPress={() => {
+                  if (tutorialVideoRef.current) {
+                    if (isTutorialVideoPlaying) {
+                      tutorialVideoRef.current.pauseAsync();
+                    } else {
+                      tutorialVideoRef.current.playAsync();
+                    }
+                    setIsTutorialVideoPlaying(!isTutorialVideoPlaying);
+                  }
+                }}
+              >
+                <Video
+                  ref={tutorialVideoRef}
+                  source={{ uri: TRYON_TUTORIAL_VIDEO_URL }}
+                  style={styles.resellTutorialVideo}
+                  resizeMode={ResizeMode.COVER}
+                  shouldPlay={isTutorialVideoPlaying}
+                  isLooping
+                  isMuted
+                />
+                {/* Play/Pause Overlay Button */}
+                <View style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}>
+                  <View style={{
+                    width: 50,
+                    height: 50,
+                    borderRadius: 25,
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}>
+                    <Ionicons
+                      name={isTutorialVideoPlaying ? 'pause' : 'play'}
+                      size={24}
+                      color="#fff"
+                    />
+                  </View>
+                </View>
+              </TouchableOpacity>
             </View>
             <Text style={styles.resellTutorialDescription}>
               Upload a clear photo, pick your size, and instantly preview outfits. Share your looks
@@ -1987,15 +2034,23 @@ const ProductCardSwipe = React.memo(({
         </View>
       </Modal>
 
-      {/* Try On Modal */}
-      {showTryOnModal && (
+      {/* Try On Modal - Using proper Modal component to prevent swipe-through */}
+      <Modal
+        visible={showTryOnModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowTryOnModal(false);
+          setSelectedSize(null);
+          setSizeSelectionDraft(null);
+        }}
+      >
         <View
           style={{
-            ...StyleSheet.absoluteFillObject,
+            flex: 1,
             justifyContent: 'center',
             alignItems: 'center',
-            backgroundColor: 'rgba(0,0,0,0.3)',
-            zIndex: 9999,
+            backgroundColor: 'rgba(0,0,0,0.5)',
           }}>
           <View style={styles.akoolModal}>
             <TouchableOpacity
@@ -2059,7 +2114,7 @@ const ProductCardSwipe = React.memo(({
             </TouchableOpacity>
           </View>
         </View>
-      )}
+      </Modal>
 
       {/* Size Selection Modal */}
       <Modal
@@ -2334,6 +2389,22 @@ const ProductCardSwipe = React.memo(({
       </Modal>
     </View>
   );
+}, (prevProps, nextProps) => {
+  // Custom comparison for React.memo
+  // Return true if props are equal (skip re-render), false if different (trigger re-render)
+
+  // Check rating data directly
+  if (prevProps.ratingData?.rating !== nextProps.ratingData?.rating ||
+    prevProps.ratingData?.reviews !== nextProps.ratingData?.reviews) {
+    return false; // Props are different, re-render
+  }
+
+  // Check other important props
+  if (prevProps.product.id !== nextProps.product.id) return false;
+  if (prevProps.cardHeight !== nextProps.cardHeight) return false;
+  if (prevProps.isScreenFocused !== nextProps.isScreenFocused) return false;
+
+  return true; // Props are equal, skip re-render
 });
 
 // Custom Swipe View Component
@@ -2596,7 +2667,7 @@ const CustomSwipeView = ({
               setShowCollectionSheet={setShowCollectionSheet}
               addToAllCollection={addToAllCollection}
               getUserPrice={getUserPrice}
-              productRatings={productRatings}
+              ratingData={productRatings[String(product.id)] ?? { rating: 0, reviews: 0 }}
               openReviewsSheet={openReviewsSheet}
               isScreenFocused={isScreenFocused}
             />
@@ -2624,6 +2695,13 @@ const CustomSwipeView = ({
             },
           ]}
         >
+          {/* Debug: Log what rating is being passed */}
+          {(() => {
+            const productId = String(products[currentIndex]?.id);
+            const rating = productRatings[productId];
+            console.log(`🎴 Front card product: ${productId}, rating found:`, rating, 'keys in productRatings:', Object.keys(productRatings).length);
+            return null;
+          })()}
           <ProductCardSwipe
             product={products[currentIndex]}
             cardHeight={cardHeight}
@@ -2637,7 +2715,7 @@ const CustomSwipeView = ({
             setShowCollectionSheet={setShowCollectionSheet}
             addToAllCollection={addToAllCollection}
             getUserPrice={getUserPrice}
-            productRatings={productRatings}
+            ratingData={productRatings[String(products[currentIndex]?.id)] ?? { rating: 0, reviews: 0 }}
             openReviewsSheet={openReviewsSheet}
             isScreenFocused={isScreenFocused}
           />
@@ -2825,24 +2903,10 @@ const Products = () => {
     setRightSwipeCount(newCount);
     console.log('Right swipe count:', newCount);
 
+    // If already in wishlist, do nothing - keep it in wishlist
     if (isInWishlist(product.id)) {
-      removeFromWishlist(product.id);
-      if (userData?.id) {
-        // Remove from all collections by finding collections owned by this user
-        const { data: userCollections } = await supabase
-          .from('collections')
-          .select('id')
-          .eq('user_id', userData.id);
-
-        if (userCollections && userCollections.length > 0) {
-          const collectionIds = userCollections.map(c => c.id);
-          await supabase
-            .from('collection_products')
-            .delete()
-            .in('collection_id', collectionIds)
-            .eq('product_id', product.id);
-        }
-      }
+      // Item is already in wishlist, no action needed
+      return;
     } else {
       addToWishlist({
         ...product,
@@ -2998,6 +3062,11 @@ const Products = () => {
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [selectedDeliveryTimes, setSelectedDeliveryTimes] = useState<string[]>([]);
+  const [selectedInfluencerIds, setSelectedInfluencerIds] = useState<string[]>([]);
+  const [influencerSearchQuery, setInfluencerSearchQuery] = useState('');
+  const [showInfluencerSuggestions, setShowInfluencerSuggestions] = useState(false);
+  const [activeBrandInfluencerTab, setActiveBrandInfluencerTab] = useState<'brands' | 'influencers'>('brands');
+  const [filteredInfluencers, setFilteredInfluencers] = useState<any[]>([]);
 
   useEffect(() => {
     if (vendorId) {
@@ -3016,12 +3085,20 @@ const Products = () => {
   const [vendorSearchQuery, setVendorSearchQuery] = useState('');
   const [filteredVendors, setFilteredVendors] = useState<any[]>([]);
 
-  // Filter categories and data
-  const filterCategories = [
-    'Brand',
-    'Size',
-    'Price Range'
-  ];
+  // Filter categories - Category only shows for best_seller section
+  const filterCategories = useMemo(() => {
+    const base = ['Size', 'Brand/Influencer', 'Price Range'];
+    return featuredType === 'best_seller' ? ['Category', ...base] : base;
+  }, [featuredType]);
+
+  // Set default active filter category based on available filters
+  useEffect(() => {
+    if (featuredType === 'best_seller') {
+      setActiveFilterCategory('Category');
+    } else {
+      setActiveFilterCategory('Size');
+    }
+  }, [featuredType]);
 
   // Helper functions for other filter types
   const toggleVendorSelection = (vendorId: string) => {
@@ -3072,12 +3149,34 @@ const Products = () => {
     );
   };
 
+  const toggleInfluencerSelection = (influencerId: string) => {
+    setSelectedInfluencerIds(prev =>
+      prev.includes(influencerId)
+        ? prev.filter(i => i !== influencerId)
+        : [...prev, influencerId]
+    );
+  };
+
+  // Calculate influencer suggestions based on search query
+  const influencerSuggestions = useMemo(() => {
+    if (!influencerSearchQuery.trim()) return [];
+    const query = influencerSearchQuery.toLowerCase();
+    const suggestions = filteredInfluencers
+      .filter(influencer =>
+        influencer.name?.toLowerCase().includes(query) ||
+        influencer.username?.toLowerCase().includes(query)
+      )
+      .slice(0, 5);
+    return suggestions;
+  }, [influencerSearchQuery, filteredInfluencers]);
+
   const handleClearAllFilters = () => {
     setSelectedVendorIds(vendorId ? [vendorId] : []);
     setSelectedCategories([]);
     setSelectedCountries([]);
     setSelectedSizes([]);
     setSelectedDeliveryTimes([]);
+    setSelectedInfluencerIds([]);
     setFilterMinPrice('');
     setFilterMaxPrice('');
     setFilterInStock(false);
@@ -3087,14 +3186,16 @@ const Products = () => {
   const hasActiveFilters = (category: string): boolean => {
     switch (category) {
       case 'Brand':
-        // If vendorId is provided from route, check if additional vendors are selected
-        // or if the selected vendors differ from the default vendorId
+      case 'Brand/Influencer':
+        // Check vendors and influencers
         if (vendorId) {
-          // Has filters if more than one vendor selected, or if the single selected vendor is not the default
-          return selectedVendorIds.length > 1 || (selectedVendorIds.length === 1 && selectedVendorIds[0] !== vendorId);
+          return selectedVendorIds.length > 1 ||
+            (selectedVendorIds.length === 1 && selectedVendorIds[0] !== vendorId) ||
+            selectedInfluencerIds.length > 0;
         }
-        // No vendorId from route, so any selected vendors count as filters
-        return selectedVendorIds.length > 0;
+        return selectedVendorIds.length > 0 || selectedInfluencerIds.length > 0;
+      case 'Category':
+        return selectedCategories.length > 0;
       case 'Size':
         return selectedSizes.length > 0;
       case 'Price Range':
@@ -3192,10 +3293,22 @@ const Products = () => {
   // Fetch filter data (vendors, categories, sizes, etc.)
   const fetchFilterData = async () => {
     try {
-      // Fetch vendors
+      // Fetch vendors that have active products
+      const { data: activeProducts, error: productError } = await supabase
+        .from('products')
+        .select('vendor_id')
+        .eq('is_active', true);
+
+      if (productError) {
+        console.error('Error fetching active product vendors:', productError);
+      }
+
+      const activeVendorIds = [...new Set(activeProducts?.map(p => p.vendor_id).filter(Boolean))];
+
       const { data: vendorsData, error: vendorsError } = await supabase
         .from('vendors')
-        .select('business_name, id')
+        .select('business_name, id, profile_image_url')
+        .in('id', activeVendorIds)
         .order('business_name');
 
       if (vendorsError) {
@@ -3289,6 +3402,30 @@ const Products = () => {
         { id: '3', name: '1 Week' },
         { id: '4', name: '2 Weeks' },
       ]);
+
+      // Fetch influencers that have products
+      const { data: productsWithInfluencers } = await supabase
+        .from('products')
+        .select('influencer_id')
+        .not('influencer_id', 'is', null)
+        .eq('is_active', true);
+
+      if (productsWithInfluencers) {
+        const influencerIds = [...new Set(productsWithInfluencers.map((p: any) => p.influencer_id).filter(Boolean))];
+
+        if (influencerIds.length > 0) {
+          const { data: influencersData, error: influencersError } = await supabase
+            .from('influencer_profiles')
+            .select('*')
+            .in('id', influencerIds)
+            .order('name');
+
+          if (!influencersError && influencersData) {
+            console.log('Fetched influencers with products:', influencersData.length);
+            setFilteredInfluencers(influencersData);
+          }
+        }
+      }
 
     } catch (error) {
       console.error('Error fetching filter data:', error);
@@ -3480,35 +3617,85 @@ const Products = () => {
   // Function to fetch ratings for products
   const fetchProductRatings = async (productIds: string[]) => {
     try {
-      if (productIds.length === 0) return;
+      if (productIds.length === 0) return {};
 
-      const { data, error } = await supabase
-        .from('product_reviews')
-        .select('product_id, rating')
-        .in('product_id', productIds);
+      // Convert all product IDs to strings for consistent handling
+      const stringProductIds = productIds.map(id => String(id));
 
-      if (error) {
-        console.error('Error fetching product ratings:', error);
-        return;
+      // Fetch in batches to avoid Supabase query limits
+      const batchSize = 50;
+      let allReviews: { product_id: string; rating: number }[] = [];
+
+      for (let i = 0; i < stringProductIds.length; i += batchSize) {
+        const batch = stringProductIds.slice(i, i + batchSize);
+        const { data, error } = await supabase
+          .from('product_reviews')
+          .select('product_id, rating')
+          .in('product_id', batch);
+
+        if (error) {
+          console.error('Error fetching product ratings batch:', error);
+          continue;
+        }
+
+        if (data) {
+          allReviews = [...allReviews, ...data];
+        }
       }
+
+      console.log('📊 Fetched reviews data:', allReviews.length, 'reviews for', stringProductIds.length, 'products');
+      console.log('📊 Product IDs queried:', stringProductIds.slice(0, 5), '...');
+      console.log('📊 Reviews returned for products:', allReviews.slice(0, 5).map(r => r.product_id), '...');
 
       // Calculate average rating and count for each product
       const ratings: { [productId: string]: { rating: number; reviews: number } } = {};
 
-      productIds.forEach((productId) => {
-        const productReviews = data?.filter((review) => review.product_id === productId) || [];
-        const totalRating = productReviews.reduce((sum, review) => sum + review.rating, 0);
-        const averageRating = productReviews.length > 0 ? totalRating / productReviews.length : 0;
+      // Group reviews by product_id (using string conversion for consistent matching)
+      const reviewsByProduct: { [key: string]: number[] } = {};
+
+      // Initialize all products with empty arrays
+      stringProductIds.forEach(id => {
+        reviewsByProduct[id] = [];
+      });
+
+      // Group the fetched reviews
+      if (allReviews && allReviews.length > 0) {
+        allReviews.forEach((review) => {
+          const reviewProductId = String(review.product_id);
+          if (reviewsByProduct[reviewProductId]) {
+            reviewsByProduct[reviewProductId].push(review.rating);
+          } else {
+            // Try to find a matching product ID (handles edge cases like leading zeros, etc.)
+            const matchingKey = stringProductIds.find(id => String(id) === reviewProductId);
+            if (matchingKey) {
+              reviewsByProduct[matchingKey].push(review.rating);
+            }
+          }
+        });
+      }
+
+      // Calculate ratings for each product
+      stringProductIds.forEach((productId) => {
+        const productReviewRatings = reviewsByProduct[productId] || [];
+        const totalRating = productReviewRatings.reduce((sum, rating) => sum + rating, 0);
+        const averageRating = productReviewRatings.length > 0 ? totalRating / productReviewRatings.length : 0;
 
         ratings[productId] = {
           rating: averageRating,
-          reviews: productReviews.length,
+          reviews: productReviewRatings.length,
         };
+
+        // Debug log for products with reviews
+        if (productReviewRatings.length > 0) {
+          console.log(`📊 Product ${productId}: ${productReviewRatings.length} reviews, avg rating: ${averageRating.toFixed(1)}`);
+        }
       });
 
       setProductRatings((prev) => ({ ...prev, ...ratings }));
+      return ratings; // Return ratings so caller can use them immediately
     } catch (error) {
       console.error('Error fetching product ratings:', error);
+      return {}; // Return empty object on error
     }
   };
 
@@ -3724,6 +3911,11 @@ const Products = () => {
         query = query.in('vendor_id', selectedVendorIds);
       }
 
+      // Apply influencer filter
+      if (selectedInfluencerIds.length > 0) {
+        query = query.in('influencer_id', selectedInfluencerIds);
+      }
+
       // Apply category filters
       if (selectedCategories.length > 0) {
         query = query.in('category_id', selectedCategories);
@@ -3847,8 +4039,8 @@ const Products = () => {
         });
       } else if (sortBy === 'rating') {
         sortedData = [...filteredData].sort((a, b) => {
-          const ratingA = productRatings[a.id]?.rating || (a.rating as number) || 0;
-          const ratingB = productRatings[b.id]?.rating || (b.rating as number) || 0;
+          const ratingA = productRatings[String(a.id)]?.rating || (a.rating as number) || 0;
+          const ratingB = productRatings[String(b.id)]?.rating || (b.rating as number) || 0;
           return sortOrder === 'asc' ? ratingA - ratingB : ratingB - ratingA;
         });
       } else if (sortBy === 'like_count') {
@@ -3865,12 +4057,19 @@ const Products = () => {
         });
       }
 
+      // Fetch ratings BEFORE setting products so they're available when cards render
+      const productIds = fixedData.map((product) => product.id);
+      const fetchedRatings = await fetchProductRatings(productIds);
+
+      // Force a synchronous state update with the ratings FIRST, then products
+      // This ensures ratings are committed before products trigger card rendering
+      setProductRatings(prev => ({ ...prev, ...fetchedRatings }));
+
+      // Use a microtask to ensure ratings state is committed before products
+      await new Promise(resolve => setTimeout(resolve, 50));
+
       setProducts(sortedData);
       setCurrentCardIndex(0); // Reset card index when products change
-
-      // Fetch ratings for products
-      const productIds = fixedData.map((product) => product.id);
-      await fetchProductRatings(productIds);
     } catch (error) {
       console.error('Error fetching products:', error);
     } finally {
@@ -3969,7 +4168,7 @@ const Products = () => {
       product.variants?.reduce((sum, variant) => sum + (variant.quantity || 0), 0) || 0;
 
     // Get rating data for badge
-    const ratingData = productRatings[product.id] ?? { rating: 0, reviews: 0 };
+    const ratingData = productRatings[String(product.id)] ?? { rating: 0, reviews: 0 };
 
     return (
       <TouchableOpacity
@@ -3984,8 +4183,8 @@ const Products = () => {
             discount: Math.max(
               ...(product.variants?.map((v: any) => v.discount_percentage || 0) || [0])
             ),
-            rating: productRatings[product.id]?.rating || 0, // Real rating from product_reviews
-            reviews: productRatings[product.id]?.reviews || 0, // Real review count from product_reviews
+            rating: productRatings[String(product.id)]?.rating || 0, // Real rating from product_reviews
+            reviews: productRatings[String(product.id)]?.reviews || 0, // Real review count from product_reviews
             image: getFirstSafeProductImage(product),
             image_urls: getProductImages(product),
             video_urls: product.video_urls || [],
@@ -4124,8 +4323,13 @@ const Products = () => {
               <View style={styles.reviewsContainer}>
                 <Ionicons name="star" size={12} color="#FFD600" style={{ marginRight: 2 }} />
                 <Text style={styles.reviews}>
-                  {productRatings[product.id]?.rating?.toFixed(1) || '0.0'}
+                  {productRatings[String(product.id)]?.rating?.toFixed(1) || '0.0'}
                 </Text>
+                {ratingData.reviews > 0 && (
+                  <Text style={[styles.reviews, { marginLeft: 4, fontWeight: '500', color: '#666' }]}>
+                    ({ratingData.reviews})
+                  </Text>
+                )}
               </View>
             </View>
           </View>
@@ -4158,8 +4362,8 @@ const Products = () => {
       price: userPrice,
       originalPrice: hasDiscount ? originalPrice : undefined,
       discount: Math.max(...(product.variants?.map((v: any) => v.discount_percentage || 0) || [0])),
-      rating: productRatings[product.id]?.rating || 0,
-      reviews: productRatings[product.id]?.reviews || 0,
+      rating: productRatings[String(product.id)]?.rating || 0,
+      reviews: productRatings[String(product.id)]?.reviews || 0,
       image: getFirstSafeProductImage(product),
       image_urls: getProductImages(product),
       video_urls: product.video_urls || [],
@@ -4193,7 +4397,7 @@ const Products = () => {
   };
 
   const renderItem = ({ item }: { item: Product }) => {
-    const ratingData = productRatings[item.id] ?? { rating: 0, reviews: 0 };
+    const ratingData = productRatings[String(item.id)] ?? { rating: 0, reviews: 0 };
     const vendorName = item.vendor_name || item.alias_vendor || 'Only2U';
 
     const RatingBadge = ({ style }: { style?: any }) => (
@@ -4264,7 +4468,7 @@ const Products = () => {
                 index={index}
                 onSwipe={handleTinderSwipe}
                 productPrices={productPrices}
-                productRatings={productRatings}
+                ratingData={productRatings[String(product.id)] ?? { rating: 0, reviews: 0 }}
                 getUserPrice={getUserPrice}
                 isInWishlist={isInWishlist}
                 removeFromWishlist={removeFromWishlist}
@@ -4425,6 +4629,7 @@ const Products = () => {
               });
             }}>
             <CustomSwipeView
+              key={`swipe-${Object.keys(productRatings).length}-${Object.values(productRatings).reduce((sum, r) => sum + r.reviews, 0)}`}
               products={products}
               cardHeight={cardHeight}
               onSwipeRight={handleSwipeRight}
@@ -4460,6 +4665,7 @@ const Products = () => {
               windowSize={10}
               initialNumToRender={10}
               updateCellsBatchingPeriod={50}
+              extraData={productRatings}
               key={`'normal'}`} // Force re-render on layout change
             />
           </KeyboardAvoidingView>
@@ -4534,58 +4740,272 @@ const Products = () => {
 
               {/* Right Column - Filter Options */}
               <View style={styles.filterRightColumn}>
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  {activeFilterCategory === 'Brand' && (
+                <View style={{ flex: 1 }}>
+                  {/* Category Filter - Only for Best Seller */}
+                  {activeFilterCategory === 'Category' && (
                     <View style={styles.filterOptionsContainer}>
-                      <View style={styles.filterSectionHeader}>
-                        <Text style={styles.filterSectionTitle}>
-                          {filteredVendors.length} {filteredVendors.length === 1 ? 'Vendor' : 'Vendors'} Available
-                        </Text>
-                        {filteredVendors.length > 0 && (
-                          <TouchableOpacity onPress={toggleSelectAllVendors}>
-                            <Text style={styles.selectAllText}>
-                              {selectedVendorIds.length === filteredVendors.length ? 'Clear All' : 'Select All'}
-                            </Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                      <TextInput
-                        style={styles.vendorSearchInput}
-                        placeholder="Search vendors..."
-                        value={vendorSearchQuery}
-                        onChangeText={handleVendorSearch}
-                        placeholderTextColor="#999"
-                      />
-                      <ScrollView style={styles.vendorList} showsVerticalScrollIndicator={true}>
-                        {filteredVendors.length === 0 ? (
-                          <View style={styles.emptyFilterState}>
-                            <Text style={styles.emptyFilterText}>No vendors found</Text>
-                          </View>
-                        ) : (
-                          filteredVendors.map((vendor: any) => (
+                      <Text style={styles.filterSectionTitle}>
+                        {categories.length} {categories.length === 1 ? 'Category' : 'Categories'} Available
+                      </Text>
+                      <BottomSheetScrollView showsVerticalScrollIndicator={false}>
+                        {categories.length > 0 ? (
+                          categories.map((cat) => (
                             <TouchableOpacity
-                              key={vendor.id}
+                              key={cat.id}
                               style={styles.filterOptionRow}
-                              onPress={() => toggleVendorSelection(vendor.id)}>
+                              onPress={() => toggleCategorySelection(cat.id)}>
                               <View style={styles.checkboxContainer}>
                                 <Ionicons
-                                  name={selectedVendorIds.includes(vendor.id) ? 'checkmark-circle' : 'ellipse-outline'}
+                                  name={selectedCategories.includes(cat.id) ? 'checkmark-circle' : 'ellipse-outline'}
                                   size={20}
-                                  color={selectedVendorIds.includes(vendor.id) ? '#F53F7A' : '#999'}
+                                  color={selectedCategories.includes(cat.id) ? '#F53F7A' : '#999'}
                                 />
                               </View>
-                              <Text style={styles.filterOptionText}>{vendor.business_name}</Text>
+                              <Text style={styles.filterOptionText}>{cat.name}</Text>
                             </TouchableOpacity>
                           ))
+                        ) : (
+                          <View style={styles.emptyFilterState}>
+                            <Text style={styles.emptyFilterText}>No categories available</Text>
+                          </View>
                         )}
-                      </ScrollView>
+                      </BottomSheetScrollView>
+                    </View>
+                  )}
+
+                  {/* Brand/Influencer Filter with Tabs */}
+                  {activeFilterCategory === 'Brand/Influencer' && (
+                    <View style={styles.filterOptionsContainer}>
+                      {/* Tabs for Brands and Influencers */}
+                      <View style={styles.brandInfluencerTabs}>
+                        <TouchableOpacity
+                          style={[
+                            styles.brandInfluencerTab,
+                            activeBrandInfluencerTab === 'brands' && styles.brandInfluencerTabActive
+                          ]}
+                          onPress={() => setActiveBrandInfluencerTab('brands')}
+                        >
+                          <Text style={[
+                            styles.brandInfluencerTabText,
+                            activeBrandInfluencerTab === 'brands' && styles.brandInfluencerTabTextActive
+                          ]}>
+                            Brands ({filteredVendors.length})
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.brandInfluencerTab,
+                            activeBrandInfluencerTab === 'influencers' && styles.brandInfluencerTabActive
+                          ]}
+                          onPress={() => setActiveBrandInfluencerTab('influencers')}
+                        >
+                          <Text style={[
+                            styles.brandInfluencerTabText,
+                            activeBrandInfluencerTab === 'influencers' && styles.brandInfluencerTabTextActive
+                          ]}>
+                            Influencers ({filteredInfluencers.length})
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Brands Tab */}
+                      {activeBrandInfluencerTab === 'brands' && (
+                        <>
+                          <TextInput
+                            style={styles.vendorSearchInput}
+                            placeholder="Search brands..."
+                            value={vendorSearchQuery}
+                            onChangeText={handleVendorSearch}
+                            placeholderTextColor="#999"
+                          />
+                          <BottomSheetScrollView style={styles.vendorList} showsVerticalScrollIndicator={true}>
+                            {filteredVendors.length === 0 ? (
+                              <View style={styles.emptyFilterState}>
+                                <Ionicons name="business-outline" size={40} color="#ccc" />
+                                <Text style={styles.emptyFilterText}>No brands available</Text>
+                              </View>
+                            ) : (
+                              filteredVendors.map((vendor: any) => {
+                                const isSelected = selectedVendorIds.includes(vendor.id);
+                                return (
+                                  <TouchableOpacity
+                                    key={vendor.id}
+                                    style={[
+                                      styles.filterOptionRow,
+                                      { paddingVertical: 10 }
+                                    ]}
+                                    onPress={() => toggleVendorSelection(vendor.id)}>
+                                    <View style={{
+                                      width: 44,
+                                      height: 44,
+                                      borderRadius: 22,
+                                      borderWidth: isSelected ? 3 : 2,
+                                      borderColor: isSelected ? '#F53F7A' : '#E5E5E5',
+                                      backgroundColor: isSelected ? '#FFF0F5' : '#F5F5F5',
+                                      justifyContent: 'center',
+                                      alignItems: 'center',
+                                      marginRight: 12,
+                                      overflow: 'hidden',
+                                    }}>
+                                      {vendor.profile_image_url ? (
+                                        <Image
+                                          source={{ uri: vendor.profile_image_url }}
+                                          style={{ width: 40, height: 40, borderRadius: 20 }}
+                                        />
+                                      ) : (
+                                        <View style={{
+                                          width: 40,
+                                          height: 40,
+                                          borderRadius: 20,
+                                          backgroundColor: isSelected ? '#FFF0F5' : '#E8E8E8',
+                                          justifyContent: 'center',
+                                          alignItems: 'center',
+                                        }}>
+                                          <Ionicons
+                                            name="business"
+                                            size={20}
+                                            color={isSelected ? '#F53F7A' : '#999'}
+                                          />
+                                        </View>
+                                      )}
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                      <Text style={[
+                                        styles.filterOptionText,
+                                        isSelected && { color: '#F53F7A', fontWeight: '600' }
+                                      ]}>{vendor.business_name}</Text>
+                                    </View>
+                                    {isSelected && (
+                                      <View style={{
+                                        width: 24,
+                                        height: 24,
+                                        borderRadius: 12,
+                                        backgroundColor: '#F53F7A',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                      }}>
+                                        <Ionicons name="checkmark" size={16} color="#fff" />
+                                      </View>
+                                    )}
+                                  </TouchableOpacity>
+                                );
+                              })
+                            )}
+                          </BottomSheetScrollView>
+                        </>
+                      )}
+
+                      {/* Influencers Tab */}
+                      {activeBrandInfluencerTab === 'influencers' && (
+                        <>
+                          <TextInput
+                            style={styles.vendorSearchInput}
+                            placeholder="Search influencers..."
+                            value={influencerSearchQuery}
+                            onChangeText={setInfluencerSearchQuery}
+                            placeholderTextColor="#999"
+                          />
+                          <BottomSheetScrollView style={styles.vendorList} showsVerticalScrollIndicator={true}>
+                            {filteredInfluencers.length === 0 ? (
+                              <View style={styles.emptyFilterState}>
+                                <Ionicons name="person-outline" size={40} color="#ccc" />
+                                <Text style={styles.emptyFilterText}>No influencers available</Text>
+                              </View>
+                            ) : (
+                              filteredInfluencers
+                                .filter(influencer =>
+                                  !influencerSearchQuery.trim() ||
+                                  influencer.name?.toLowerCase().includes(influencerSearchQuery.toLowerCase()) ||
+                                  influencer.username?.toLowerCase().includes(influencerSearchQuery.toLowerCase())
+                                )
+                                .map((influencer: any) => {
+                                  const isSelected = selectedInfluencerIds.includes(influencer.id);
+                                  return (
+                                    <TouchableOpacity
+                                      key={influencer.id}
+                                      style={[
+                                        styles.filterOptionRow,
+                                        { paddingVertical: 10 }
+                                      ]}
+                                      onPress={() => toggleInfluencerSelection(influencer.id)}>
+                                      <View style={{
+                                        width: 44,
+                                        height: 44,
+                                        borderRadius: 22,
+                                        borderWidth: isSelected ? 3 : 2,
+                                        borderColor: isSelected ? '#F53F7A' : '#E5E5E5',
+                                        backgroundColor: isSelected ? '#FFF0F5' : '#F5F5F5',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        marginRight: 12,
+                                        overflow: 'hidden',
+                                      }}>
+                                        {influencer.profile_photo ? (
+                                          <Image
+                                            source={{ uri: influencer.profile_photo }}
+                                            style={{ width: 40, height: 40, borderRadius: 20 }}
+                                          />
+                                        ) : (
+                                          <View style={{
+                                            width: 40,
+                                            height: 40,
+                                            borderRadius: 20,
+                                            backgroundColor: isSelected ? '#FFF0F5' : '#E8E8E8',
+                                            justifyContent: 'center',
+                                            alignItems: 'center',
+                                          }}>
+                                            <Ionicons
+                                              name="person"
+                                              size={20}
+                                              color={isSelected ? '#F53F7A' : '#999'}
+                                            />
+                                          </View>
+                                        )}
+                                      </View>
+                                      <View style={{ flex: 1 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                          <Text style={[
+                                            styles.filterOptionText,
+                                            isSelected && { color: '#F53F7A', fontWeight: '600' }
+                                          ]}>
+                                            {influencer.name || influencer.username}
+                                          </Text>
+                                          {influencer.is_verified && (
+                                            <Ionicons name="checkmark-circle" size={14} color="#1DA1F2" style={{ marginLeft: 4 }} />
+                                          )}
+                                        </View>
+                                        {influencer.username && influencer.name && (
+                                          <Text style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
+                                            @{influencer.username}
+                                          </Text>
+                                        )}
+                                      </View>
+                                      {isSelected && (
+                                        <View style={{
+                                          width: 24,
+                                          height: 24,
+                                          borderRadius: 12,
+                                          backgroundColor: '#F53F7A',
+                                          justifyContent: 'center',
+                                          alignItems: 'center',
+                                        }}>
+                                          <Ionicons name="checkmark" size={16} color="#fff" />
+                                        </View>
+                                      )}
+                                    </TouchableOpacity>
+                                  );
+                                })
+                            )}
+                          </BottomSheetScrollView>
+                        </>
+                      )}
                     </View>
                   )}
 
                   {/* Size Filter */}
                   {activeFilterCategory === 'Size' && (
                     <View style={styles.filterOptionsContainer}>
-                      <ScrollView showsVerticalScrollIndicator={false}>
+                      <BottomSheetScrollView showsVerticalScrollIndicator={false}>
                         {sizes.length > 0 ? (
                           sizes.map((size) => {
                             const productCount = sizeProductCounts[size.id] || 0;
@@ -4615,7 +5035,7 @@ const Products = () => {
                             </Text>
                           </View>
                         )}
-                      </ScrollView>
+                      </BottomSheetScrollView>
                     </View>
                   )}
 
@@ -4646,7 +5066,7 @@ const Products = () => {
                   )}
 
 
-                </ScrollView>
+                </View>
               </View>
             </View>
 
@@ -4705,7 +5125,11 @@ const Products = () => {
           actionText={notificationTitle.includes('🎉') ? 'View' : undefined}
           onActionPress={notificationTitle.includes('🎉') ? () => {
             setNotificationVisible(false);
-            (navigation as any).navigate('TabNavigator', { screen: 'Wishlist' });
+            // Navigate to Home tab first, then to Wishlist screen within the HomeStack
+            (navigation as any).navigate('TabNavigator', {
+              screen: 'Home',
+              params: { screen: 'Wishlist' }
+            });
           } : undefined}
         />
 
@@ -5159,10 +5583,12 @@ const Products = () => {
                   <View style={styles.reviewsRatingRow}>
                     <Ionicons name="star" size={16} color="#FFD600" />
                     <Text style={styles.reviewsAverageRating}>
-                      {(productRatings[selectedProductForReviews.id]?.rating || 0).toFixed(1)}
+                      {productReviews.length > 0
+                        ? (productReviews.reduce((sum, r) => sum + r.rating, 0) / productReviews.length).toFixed(1)
+                        : '0.0'}
                     </Text>
                     <Text style={styles.reviewsTotalCount}>
-                      ({productRatings[selectedProductForReviews.id]?.reviews || 0} reviews)
+                      ({productReviews.length} reviews)
                     </Text>
                   </View>
                 </View>
@@ -5255,7 +5681,7 @@ const Products = () => {
                           (navigation as any).navigate('AllReviews', {
                             productId: selectedProductForReviews?.id,
                             productName: selectedProductForReviews?.name,
-                            averageRating: productRatings[selectedProductForReviews?.id || '']?.rating || 0,
+                            averageRating: productRatings[String(selectedProductForReviews?.id || '')]?.rating || 0,
                             totalReviews: productReviews.length,
                             reviews: productReviews,
                           });
@@ -7847,11 +8273,44 @@ const styles = StyleSheet.create({
     backgroundColor: '#F53F7A',
   },
   filterRightColumn: {
+    flex: 1,
     width: '67%',
     backgroundColor: '#fff',
   },
   filterOptionsContainer: {
+    flex: 1,
     padding: 16,
+  },
+  brandInfluencerTabs: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    borderRadius: 8,
+    backgroundColor: '#f5f5f5',
+    padding: 4,
+  },
+  brandInfluencerTab: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  brandInfluencerTabActive: {
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  brandInfluencerTabText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#666',
+  },
+  brandInfluencerTabTextActive: {
+    color: '#F53F7A',
+    fontWeight: '600',
   },
   checkboxContainer: {
     width: 24,

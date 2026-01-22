@@ -102,7 +102,7 @@ const MessageDetail = () => {
           keyExtractor={item => item.id}
           renderItem={({ item, index }) => (
             <View style={{ alignItems: item.fromMe ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
-              <View style={[styles.bubble, item.fromMe ? styles.bubbleMe : styles.bubbleOther]}> 
+              <View style={[styles.bubble, item.fromMe ? styles.bubbleMe : styles.bubbleOther]}>
                 <Text style={[styles.bubbleText, item.fromMe && { color: '#fff' }]}>{item.text}</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
@@ -118,24 +118,24 @@ const MessageDetail = () => {
       </View>
       {/* Input Bar */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={10}
+        behavior="padding"
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 80}
       >
         <SafeAreaView>
 
-        <View style={styles.inputBar}>
-          <Ionicons name="happy-outline" size={26} color="#B0B6BE" style={{ marginHorizontal: 8 }} />
-          <TextInput
-            style={styles.input}
-            placeholder="Write a message..."
-            placeholderTextColor="#B0B6BE"
+          <View style={styles.inputBar}>
+            <Ionicons name="happy-outline" size={26} color="#B0B6BE" style={{ marginHorizontal: 8 }} />
+            <TextInput
+              style={styles.input}
+              placeholder="Write a message..."
+              placeholderTextColor="#B0B6BE"
             />
-          <Ionicons name="add-circle-outline" size={26} color="#B0B6BE" style={{ marginHorizontal: 4 }} />
-          <Ionicons name="image-outline" size={26} color="#B0B6BE" style={{ marginHorizontal: 4 }} />
-          {/* <Ionicons name="mic-outline" size={26} color="#B0B6BE" style={{ marginHorizontal: 4 }} /> */}
-          <Ionicons name="send" size={26} color="#3DF45B" style={{ marginHorizontal: 4 }} />
-        </View>
-            </SafeAreaView>
+            <Ionicons name="add-circle-outline" size={26} color="#B0B6BE" style={{ marginHorizontal: 4 }} />
+            <Ionicons name="image-outline" size={26} color="#B0B6BE" style={{ marginHorizontal: 4 }} />
+            {/* <Ionicons name="mic-outline" size={26} color="#B0B6BE" style={{ marginHorizontal: 4 }} /> */}
+            <Ionicons name="send" size={26} color="#3DF45B" style={{ marginHorizontal: 4 }} />
+          </View>
+        </SafeAreaView>
       </KeyboardAvoidingView>
     </View>
   );

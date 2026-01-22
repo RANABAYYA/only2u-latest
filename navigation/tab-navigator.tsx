@@ -44,6 +44,7 @@ import Coupons from '~/screens/Coupons';
 import Toast from 'react-native-toast-message';
 import { validateReferralCode, redeemReferralCode } from '~/services/referralCodeService';
 import { sendWhatsAppOTP } from '~/services/whatsappService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
@@ -179,7 +180,6 @@ export default function TabLayout() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [name, setName] = useState('');
   const [creatingProfile, setCreatingProfile] = useState(false);
-  const [isSignup, setIsSignup] = useState(false); // Toggle for Login/Signup
   // Referral code state
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [referralCodeState, setReferralCodeState] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle');
@@ -255,7 +255,6 @@ export default function TabLayout() {
     setReferralCodeState('idle');
     setReferralCodeMessage('');
     setAppliedReferralCoupon(null);
-    setIsSignup(false);
   };
 
   const handleSendOtp = async () => {
@@ -267,16 +266,6 @@ export default function TabLayout() {
         return;
       }
       if (verifying) return; // Prevent sending OTP while verification is in progress
-
-      if (!isSignup) {
-        // Login flow - standard OTP send
-      } else {
-        // Signup flow - validate name
-        if (!name.trim()) {
-          setError('Please enter your name');
-          return;
-        }
-      }
 
       setSending(true);
       const fullPhone = `${countryCode}${trimmed}`.replace('+', ''); // Remove + for WhatsApp API if needed, but usually kept. Check API. Curl uses "91...".
@@ -480,12 +469,6 @@ export default function TabLayout() {
         .maybeSingle();
 
       if (existingUser) {
-        if (isSignup) {
-          setError('Account already exists. Please login.');
-          setVerifying(false);
-          return;
-        }
-
         // User exists - fetch their full profile first
         const { data: profileData, error: profileError } = await supabase
           .from('users')
@@ -522,6 +505,11 @@ export default function TabLayout() {
           }
         }
 
+        // CRITICAL: Cache user data for session persistence across app restarts
+        await AsyncStorage.setItem('cached_user_data', JSON.stringify(profileData));
+        await AsyncStorage.setItem('last_logged_in_phone', fullPhone);
+        console.log('[TabNavigator] Cached user data for persistence');
+
         // Directly set the user data in both contexts (using the profile we fetched by phone)
         // This bypasses the ID mismatch issue entirely
         setUserData(profileData);
@@ -536,13 +524,7 @@ export default function TabLayout() {
         resetSheetState();
         Keyboard.dismiss();
       } else {
-        if (!isSignup) {
-          setError('Account not found. Please sign up.');
-          setVerifying(false);
-          return;
-        }
-
-        // New user - sign in anonymously and update profile directly
+        // New user - sign in anonymously first, then show onboarding to get name
         const { data: signInData, error: signInError } = await supabase.auth.signInAnonymously();
 
         if (signInError) {
@@ -551,40 +533,10 @@ export default function TabLayout() {
           return;
         }
 
-        // Create profile immediately with the name provided
-        const success = await handleCreateProfile();
-
-        if (success) {
-          // Fetch the newly created profile and set it directly
-          const trimmed = phone.replace(/\D/g, '');
-          const fullPhone = `${countryCode}${trimmed}`;
-
-          const { data: newProfile } = await supabase
-            .from('users')
-            .select('*')
-            .eq('phone', fullPhone)
-            .single();
-
-          if (newProfile) {
-            setUserData(newProfile);
-          }
-
-          Toast.show({
-            type: 'success',
-            text1: 'Welcome!',
-            text2: 'Account created successfully',
-          });
-
-          hideLoginSheet();
-          setName('');
-          resetSheetState();
-          Keyboard.dismiss();
-        } else {
-          // If profile creation failed, user is still auth'd as anonymous
-          // We could show onboarding as fallback, or just show error (set by handleCreateProfile)
-          setVerifying(false);
-          return;
-        }
+        // Show onboarding modal to get user's name
+        setVerifying(false);
+        hideLoginSheet();
+        setShowOnboarding(true);
       }
 
       if (intervalRef.current) {
@@ -682,9 +634,39 @@ export default function TabLayout() {
         // Logic similar to above could be added here if needed
       }
 
+      // Fetch the newly created profile and set it directly
+      const { data: createdProfile } = await supabase
+        .from('users')
+        .select('*')
+        .eq('phone', userPhone)
+        .single();
+
+      if (createdProfile) {
+        // CRITICAL: Cache user data for session persistence across app restarts
+        await AsyncStorage.setItem('cached_user_data', JSON.stringify(createdProfile));
+        if (userPhone) {
+          await AsyncStorage.setItem('last_logged_in_phone', userPhone);
+        }
+        console.log('[TabNavigator] Cached new user data for persistence');
+
+        setUserData(createdProfile);
+      }
+
       // Force refresh user data
       await refreshUserData();
       setCreatingProfile(false);
+
+      // Close onboarding modal and show success
+      setShowOnboarding(false);
+      setName('');
+      resetSheetState();
+
+      Toast.show({
+        type: 'success',
+        text1: 'Welcome!',
+        text2: 'Account created successfully',
+      });
+
       return true;
     } catch (error: any) {
       console.error('Create profile error:', error);
@@ -752,6 +734,14 @@ export default function TabLayout() {
               </View>
             ),
           }}
+          listeners={({ navigation }) => ({
+            tabPress: (e) => {
+              // Prevent default behavior
+              e.preventDefault();
+              // Navigate to Home tab and reset the stack to show Dashboard
+              navigation.navigate('Home', { screen: 'Home' });
+            },
+          })}
         />
         {isAdmin && (
           <Tab.Screen
@@ -866,12 +856,10 @@ export default function TabLayout() {
               {/* Title + subtitle */}
               <View style={{ marginBottom: 8 }}>
                 <Text style={{ fontSize: 20, fontWeight: '900', color: '#1f1f1f' }}>
-                  {isSignup ? tt('join_community', 'Join the Community') : tt('welcome_back', 'Welcome back')}
+                  {tt('welcome', 'Welcome')}
                 </Text>
                 <Text style={{ marginTop: 4, color: '#666', fontWeight: '500' }}>
-                  {isSignup
-                    ? tt('signup_benefits', 'Create an account to start shopping')
-                    : tt('login_benefits', 'Login to track orders, wishlist, and get offers')}
+                  {tt('login_benefits', 'Login to track orders, wishlist, and get offers')}
                 </Text>
               </View>
 
@@ -894,23 +882,6 @@ export default function TabLayout() {
 
 
 
-                {/* Name Input (Signup only) */}
-                {isSignup && (
-                  <View style={{ marginBottom: 12 }}>
-                    <Text style={{ fontSize: 12, color: '#666', marginBottom: 6, fontWeight: '700', letterSpacing: 0.2 }}>{tt('your_name', 'Your Name')}</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F4F5F7', borderRadius: 14, paddingHorizontal: 12, paddingVertical: Platform.OS === 'android' ? 8 : 12, borderWidth: 1, borderColor: '#EAECF0' }}>
-                      <Ionicons name="person-outline" size={18} color="#999" style={{ marginRight: 10 }} />
-                      <TextInput
-                        value={name}
-                        onChangeText={setName}
-                        placeholder={tt('name_placeholder', 'Enter your name')}
-                        placeholderTextColor='#999'
-                        style={{ flex: 1, fontSize: 16, color: '#111' }}
-                        autoCapitalize="words"
-                      />
-                    </View>
-                  </View>
-                )}
 
                 {/* Phone input */}
                 <Text style={{ fontSize: 12, color: '#666', marginBottom: 6, fontWeight: '700', letterSpacing: 0.2 }}>{tt('enter_mobile', 'Enter your mobile number')}</Text>
@@ -932,75 +903,6 @@ export default function TabLayout() {
                     returnKeyType='done'
                     maxLength={15}
                   />
-                </View>
-
-                {/* Referral code input */}
-                <View style={{ marginTop: 16 }}>
-                  <Text style={{ fontSize: 12, color: '#666', marginBottom: 6, fontWeight: '700', letterSpacing: 0.2 }}>
-                    Have a referral code? (optional)
-                  </Text>
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#F4F5F7',
-                      borderRadius: 14,
-                      paddingHorizontal: 12,
-                      borderWidth: 1,
-                      borderColor:
-                        referralCodeState === 'valid'
-                          ? '#A7F3D0'
-                          : referralCodeState === 'invalid'
-                            ? '#FECACA'
-                            : '#EAECF0',
-                    }}
-                  >
-                    <TextInput
-                      value={referralCodeInput}
-                      onChangeText={(text) => {
-                        setReferralCodeInput(text.toUpperCase());
-                        if (referralCodeState !== 'idle') {
-                          setReferralCodeState('idle');
-                          setReferralCodeMessage('');
-                          setAppliedReferralCoupon(null);
-                        }
-                      }}
-                      placeholder="ENTER CODE"
-                      placeholderTextColor="#9CA3AF"
-                      style={{ flex: 1, fontSize: 14, color: '#111', paddingVertical: Platform.OS === 'android' ? 10 : 14 }}
-                      autoCapitalize="characters"
-                    />
-                    <TouchableOpacity
-                      style={{
-                        paddingHorizontal: 14,
-                        paddingVertical: 8,
-                        backgroundColor: referralCodeState === 'valid' ? '#10B981' : '#F53F7A',
-                        borderRadius: 12,
-                        marginLeft: 8,
-                      }}
-                      onPress={handleApplyReferralCodeInput}
-                      disabled={referralCodeState === 'checking'}
-                    >
-                      {referralCodeState === 'checking' ? (
-                        <ActivityIndicator color="#fff" size="small" />
-                      ) : (
-                        <Text style={{ color: '#fff', fontWeight: '700' }}>
-                          {referralCodeState === 'valid' ? 'Applied' : 'Apply'}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                  {!!referralCodeMessage && (
-                    <Text
-                      style={{
-                        marginTop: 6,
-                        fontSize: 12,
-                        color: referralCodeState === 'valid' ? '#047857' : '#B91C1C',
-                      }}
-                    >
-                      {referralCodeMessage}
-                    </Text>
-                  )}
                 </View>
 
                 {/* Primary CTA send/resend */}
@@ -1043,6 +945,76 @@ export default function TabLayout() {
                         maxLength={6}
                       />
                     </View>
+
+                    {/* Referral code input - moved below OTP */}
+                    <View style={{ marginTop: 16 }}>
+                      <Text style={{ fontSize: 12, color: '#666', marginBottom: 6, fontWeight: '700', letterSpacing: 0.2 }}>
+                        Have a referral code? (optional)
+                      </Text>
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          backgroundColor: '#F4F5F7',
+                          borderRadius: 14,
+                          paddingHorizontal: 12,
+                          borderWidth: 1,
+                          borderColor:
+                            referralCodeState === 'valid'
+                              ? '#A7F3D0'
+                              : referralCodeState === 'invalid'
+                                ? '#FECACA'
+                                : '#EAECF0',
+                        }}
+                      >
+                        <TextInput
+                          value={referralCodeInput}
+                          onChangeText={(text) => {
+                            setReferralCodeInput(text.toUpperCase());
+                            if (referralCodeState !== 'idle') {
+                              setReferralCodeState('idle');
+                              setReferralCodeMessage('');
+                              setAppliedReferralCoupon(null);
+                            }
+                          }}
+                          placeholder="ENTER CODE"
+                          placeholderTextColor="#9CA3AF"
+                          style={{ flex: 1, fontSize: 14, color: '#111', paddingVertical: Platform.OS === 'android' ? 10 : 14 }}
+                          autoCapitalize="characters"
+                        />
+                        <TouchableOpacity
+                          style={{
+                            paddingHorizontal: 14,
+                            paddingVertical: 8,
+                            backgroundColor: referralCodeState === 'valid' ? '#10B981' : '#F53F7A',
+                            borderRadius: 12,
+                            marginLeft: 8,
+                          }}
+                          onPress={handleApplyReferralCodeInput}
+                          disabled={referralCodeState === 'checking'}
+                        >
+                          {referralCodeState === 'checking' ? (
+                            <ActivityIndicator color="#fff" size="small" />
+                          ) : (
+                            <Text style={{ color: '#fff', fontWeight: '700' }}>
+                              {referralCodeState === 'valid' ? 'Applied' : 'Apply'}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                      {!!referralCodeMessage && (
+                        <Text
+                          style={{
+                            marginTop: 6,
+                            fontSize: 12,
+                            color: referralCodeState === 'valid' ? '#047857' : '#B91C1C',
+                          }}
+                        >
+                          {referralCodeMessage}
+                        </Text>
+                      )}
+                    </View>
+
                     <TouchableOpacity disabled={verifying} onPress={handleVerifyOtp} style={{ marginTop: 14, backgroundColor: verifying ? '#F7A3BD' : '#F53F7A', borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
                       <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>{verifying ? tt('verifying', 'Verifying...') : tt('verify_continue', 'Verify & Continue')}</Text>
                     </TouchableOpacity>
@@ -1060,25 +1032,6 @@ export default function TabLayout() {
 
                 {/* Secondary CTAs */}
                 <View style={{ marginTop: 12 }}>
-                  {/* Login/Signup Toggle */}
-                  <TouchableOpacity
-                    onPress={() => {
-                      setIsSignup(!isSignup);
-                      setError(null);
-                    }}
-                    style={{
-                      alignItems: 'center',
-                      paddingVertical: 10,
-                      marginBottom: 4,
-                    }}
-                  >
-                    <Text style={{ color: '#F53F7A', fontWeight: '700', fontSize: 14 }}>
-                      {isSignup
-                        ? "Already signed up? Please login"
-                        : "New user? Please sign up"}
-                    </Text>
-                  </TouchableOpacity>
-
                   <TouchableOpacity onPress={() => { hideLoginSheet(); resetSheetState(); }} style={{ alignItems: 'center', paddingVertical: 10 }}>
                     <Text style={{ color: '#6B7280', fontWeight: '800' }}>{tt('continue_as_guest', 'Continue as Guest')}</Text>
                   </TouchableOpacity>
@@ -1099,8 +1052,11 @@ export default function TabLayout() {
       </Modal >
 
       {/* Bottom sheet: Onboarding after OTP for new users */}
-      < Modal visible={showOnboarding && hasSession
-      } transparent animationType="slide" onRequestClose={() => setShowOnboarding(false)}>
+      <Modal visible={showOnboarding && hasSession} transparent animationType="slide" onRequestClose={() => {
+        setShowOnboarding(false);
+        setName('');
+        setError(null);
+      }}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
             <View style={{

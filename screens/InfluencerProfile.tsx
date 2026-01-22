@@ -11,19 +11,19 @@ import {
   ActivityIndicator,
   FlatList,
   Linking,
-  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { Video, ResizeMode } from 'expo-av';
 import { useInfluencer, Influencer, InfluencerPost } from '~/contexts/InfluencerContext';
 import { useAuth } from '~/contexts/useAuth';
 import { useLoginSheet } from '~/contexts/LoginSheetContext';
+import type { Category } from '~/types/product';
+import { supabase } from '~/utils/supabase';
 import Toast from 'react-native-toast-message';
 
 const { width } = Dimensions.get('window');
-const POST_SIZE = (width - 6) / 3;
+
 
 type InfluencerProfileRouteParams = {
   InfluencerProfile: {
@@ -43,90 +43,282 @@ const InfluencerProfile: React.FC = () => {
 
   const {
     fetchInfluencerById,
-    fetchInfluencerPosts,
-    influencerPosts,
     fetchProductsByInfluencerId,
     followInfluencer,
     unfollowInfluencer,
     isFollowingInfluencer,
-    likePost,
-    unlikePost,
+    fetchInfluencerPosts,
+    influencerPosts,
   } = useInfluencer();
 
   const [influencer, setInfluencer] = useState<Influencer | null>(initialInfluencer || null);
-  const [posts, setPosts] = useState<InfluencerPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [contentLoading, setContentLoading] = useState(true);
-  const [selectedPost, setSelectedPost] = useState<InfluencerPost | null>(null);
-  const [showVideoModal, setShowVideoModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'products'>('posts');
   const [influencerProducts, setInfluencerProducts] = useState<any[]>([]);
+  const [posts, setPosts] = useState<InfluencerPost[]>([]);
+  const [postsDisplayCount, setPostsDisplayCount] = useState(12);
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
+  const [productRatings, setProductRatings] = useState<{ [id: string]: { rating: number; reviews: number } }>({});
 
   useEffect(() => {
     loadInfluencerData();
   }, [influencerId]);
 
   const loadInfluencerData = async () => {
-    if (!influencerId) return;
+    if (!influencerId) {
+      console.log('InfluencerProfile: No influencerId provided');
+      return;
+    }
 
+    console.log(`InfluencerProfile: Loading data for ${influencerId}`);
     setLoading(true);
     setContentLoading(true);
     try {
       // Check if this is a sample influencer
       if (influencerId.startsWith('sample_influencer_')) {
+        console.log('InfluencerProfile: Loading sample influencer');
         // Use the passed influencer data for sample profiles
         if (initialInfluencer) {
           setInfluencer(initialInfluencer);
         }
-
-        // Generate sample posts
-        const samplePosts: InfluencerPost[] = Array.from({ length: 9 }, (_, i) => ({
-          id: `sample_post_${influencerId}_${i}`,
-          influencer_id: influencerId,
-          title: `Style Inspiration ${i + 1}`,
-          description: 'Check out this amazing look! 💫✨',
-          video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-          thumbnail_url: `https://via.placeholder.com/400x600/FF6EA6/FFFFFF?text=Video+${i + 1}`,
-          product_id: undefined,
-          views: Math.floor(Math.random() * 50000) + 10000,
-          likes: Math.floor(Math.random() * 5000) + 500,
-          shares: Math.floor(Math.random() * 500) + 50,
-          is_published: true,
-          is_featured: i < 3,
-          published_at: new Date(Date.now() - i * 86400000).toISOString(),
-          created_at: new Date(Date.now() - i * 86400000).toISOString(),
-          updated_at: new Date(Date.now() - i * 86400000).toISOString(),
-          is_liked: false,
-        }));
-
-        setPosts(samplePosts);
+        // Generate sample post
       } else {
         // Real influencer data
+        console.log('InfluencerProfile: Fetching influencer details...');
         const influencerData = await fetchInfluencerById(influencerId);
+        console.log('InfluencerProfile: Fetched influencer details:', influencerData ? 'Success' : 'Failed');
         if (influencerData) {
           setInfluencer(influencerData);
         }
 
-        await fetchInfluencerPosts(influencerId);
-        setPosts(influencerPosts.filter(post => post.influencer_id === influencerId));
+        console.log('InfluencerProfile: Fetching posts...');
+        const fetchedPosts = await fetchInfluencerPosts(influencerId);
+        console.log(`InfluencerProfile: Fetched ${fetchedPosts?.length || 0} posts`);
+        setPosts(fetchedPosts.filter(post => post.influencer_id === influencerId));
+
+        // Fetch global categories sorted by display_order
+        console.log('InfluencerProfile: Fetching categories...');
+        const { data: catData } = await supabase
+          .from('categories')
+          .select('*')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true, nullsFirst: false });
+        console.log(`InfluencerProfile: Fetched ${catData?.length || 0} categories`);
+
+        if (catData) {
+          setAllCategories(catData);
+        }
 
         // Fetch products associated with this influencer
+        console.log('InfluencerProfile: Fetching products...');
         const products = await fetchProductsByInfluencerId(influencerId);
+        console.log(`InfluencerProfile: Fetched ${products?.length || 0} products`);
         setInfluencerProducts(products);
+
+        // Fetch ratings for products
+        if (products && products.length > 0) {
+          const ids = products.map((p: any) => p.id);
+          const { data: reviews, error: revErr } = await supabase
+            .from('product_reviews')
+            .select('product_id, rating')
+            .in('product_id', ids);
+
+          if (!revErr && reviews) {
+            const ratings: { [id: string]: { rating: number; reviews: number } } = {};
+            ids.forEach((id: string) => {
+              const pr = reviews.filter((r: any) => r.product_id === id);
+              const total = pr.reduce((s: number, r: any) => s + (r.rating || 0), 0);
+              const avg = pr.length > 0 ? total / pr.length : 0;
+              ratings[id] = { rating: avg, reviews: pr.length };
+            });
+            setProductRatings(ratings);
+          }
+        }
       }
     } catch (error) {
       console.error('Error loading influencer data:', error);
       Alert.alert('Error', 'Failed to load influencer profile');
     } finally {
+      console.log('InfluencerProfile: Loading complete');
       setLoading(false);
       setContentLoading(false);
     }
   };
 
-  useEffect(() => {
-    // Update posts when context data changes
-    setPosts(influencerPosts.filter(post => post.influencer_id === influencerId));
-  }, [influencerPosts, influencerId]);
+  // Helper function to share to WhatsApp
+  const shareToWhatsApp = async (message: string) => {
+    const url = `whatsapp://send?text=${encodeURIComponent(message)}`;
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'WhatsApp not available',
+          text2: 'Install WhatsApp to share',
+        });
+      }
+    } catch (error) {
+      console.error('Error sharing to WhatsApp:', error);
+    }
+  };
+
+  // Helper function to get smallest price from variants
+  const getSmallestPrice = (product: any) => {
+    if (!product?.product_variants?.length) return product?.price || 0;
+    const sorted = [...product.product_variants].sort((a: any, b: any) => (a.price || 0) - (b.price || 0));
+    return sorted[0]?.price || 0;
+  };
+
+  // Helper function to get first image from product
+  const getFirstImage = (product: any): string => {
+    if (product?.image_urls && Array.isArray(product.image_urls) && product.image_urls.length > 0) {
+      return product.image_urls[0];
+    }
+    if (product?.image_url) {
+      return product.image_url;
+    }
+    // Check variants if main product has no images
+    if (product?.product_variants && Array.isArray(product.product_variants) && product.product_variants.length > 0) {
+      const firstVariant = product.product_variants[0];
+      if (firstVariant?.image_urls && Array.isArray(firstVariant.image_urls) && firstVariant.image_urls.length > 0) {
+        return firstVariant.image_urls[0];
+      }
+    }
+    return 'https://via.placeholder.com/400x400/f0f0f0/999999?text=No+Image';
+  };
+
+  // Render product card for horizontal list
+  const renderProductCard = (product: any) => {
+    const firstImage = getFirstImage(product);
+    // Use getSmallestPrice to handle variants correctly like VendorProfile
+    const price = getSmallestPrice(product);
+
+    // Calculate max discount from variants if available
+    const discountPct = (product?.product_variants && product.product_variants.length > 0)
+      ? Math.max(...(product.product_variants.map((v: any) => v.discount_percentage || 0)))
+      : (product?.discount_percentage || 0);
+
+    const hasDiscount = discountPct > 0;
+    const originalPrice = hasDiscount ? price / (1 - discountPct / 100) : undefined;
+
+    const rating = productRatings[product.id]?.rating || 0;
+    const reviews = productRatings[product.id]?.reviews || 0;
+    const brandLabel = product.vendor_name || 'Only2U'; // Or get vendor name if available
+
+    return (
+      <TouchableOpacity
+        style={styles.productCard}
+        onPress={() => navigation.navigate('ProductDetails' as never, { product } as never)}
+        activeOpacity={0.85}
+      >
+        {hasDiscount && (
+          <View style={styles.discountBadge}>
+            <Text style={styles.discountBadgeText}>{Math.round(discountPct)}% OFF</Text>
+          </View>
+        )}
+        <Image
+          source={{ uri: firstImage }}
+          style={styles.productImage}
+          resizeMode="cover"
+        />
+        <View style={styles.productCardInfo}>
+          <Text style={styles.brandName} numberOfLines={1}>{brandLabel}</Text>
+          <Text style={styles.productName} numberOfLines={2}>{product?.name || 'Product'}</Text>
+
+          <View style={styles.priceContainer}>
+            <View style={styles.priceInfo}>
+              {hasDiscount && (
+                <Text style={styles.originalPrice}>₹{(originalPrice || 0).toFixed(0)}</Text>
+              )}
+              <Text style={styles.price}>₹{price.toFixed(0)}</Text>
+            </View>
+            <View style={styles.discountAndRatingRow}>
+              {hasDiscount && (
+                <Text style={styles.discountPercentage}>{Math.round(discountPct)}% OFF</Text>
+              )}
+              <View style={styles.reviewsContainer}>
+                <Ionicons name="star" size={12} color="#FFD600" style={{ marginRight: 2 }} />
+                <Text style={styles.reviews}>{rating.toFixed(1)}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // Horizontal Product List with Scroll Buttons Component
+  const HorizontalProductList = ({ products, categoryName }: { products: any[], categoryName: string }) => {
+    const flatListRef = useRef<FlatList>(null);
+    const [scrollPosition, setScrollPosition] = useState(0);
+    const [contentWidth, setContentWidth] = useState(0);
+    const [containerWidth, setContainerWidth] = useState(0);
+    const SCROLL_AMOUNT = 200;
+
+    const canScrollLeft = scrollPosition > 10;
+    const canScrollRight = contentWidth > containerWidth && scrollPosition < contentWidth - containerWidth - 10;
+
+    const scrollLeft = () => {
+      const newPosition = Math.max(0, scrollPosition - SCROLL_AMOUNT);
+      flatListRef.current?.scrollToOffset({ offset: newPosition, animated: true });
+    };
+
+    const scrollRight = () => {
+      const maxScroll = contentWidth - containerWidth;
+      const newPosition = Math.min(maxScroll, scrollPosition + SCROLL_AMOUNT);
+      flatListRef.current?.scrollToOffset({ offset: newPosition, animated: true });
+    };
+
+    return (
+      <View style={styles.horizontalListWrapper}>
+        {/* Left Arrow Button */}
+        {canScrollLeft && (
+          <TouchableOpacity
+            style={[styles.scrollArrowButton, styles.scrollArrowLeft]}
+            onPress={scrollLeft}
+            activeOpacity={0.8}
+          >
+            <View style={styles.scrollArrowBackground}>
+              <Ionicons name="chevron-back" size={20} color="#333" />
+            </View>
+          </TouchableOpacity>
+        )}
+
+        <FlatList
+          ref={flatListRef}
+          horizontal
+          data={products}
+          renderItem={({ item }) => renderProductCard(item)}
+          keyExtractor={(item) => `${categoryName}-${item.id}`}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.productsHorizontalList}
+          ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
+          nestedScrollEnabled={true}
+          scrollEnabled={true}
+          onScroll={(e) => setScrollPosition(e.nativeEvent.contentOffset.x)}
+          onContentSizeChange={(w) => setContentWidth(w)}
+          onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width)}
+          scrollEventThrottle={16}
+        />
+
+        {/* Right Arrow Button */}
+        {canScrollRight && (
+          <TouchableOpacity
+            style={[styles.scrollArrowButton, styles.scrollArrowRight]}
+            onPress={scrollRight}
+            activeOpacity={0.8}
+          >
+            <View style={styles.scrollArrowBackground}>
+              <Ionicons name="chevron-forward" size={20} color="#333" />
+            </View>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
 
   const handleFollow = async () => {
     if (!influencer) return;
@@ -141,7 +333,17 @@ const InfluencerProfile: React.FC = () => {
       return;
     }
 
-    if (!user) {
+    let currentUser = user;
+
+    // Fallback: Check Supabase session directly if context user is missing
+    if (!currentUser) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (sessionUser) {
+        currentUser = sessionUser;
+      }
+    }
+
+    if (!currentUser) {
       Toast.show({
         type: 'info',
         text1: 'Login Required',
@@ -172,188 +374,7 @@ const InfluencerProfile: React.FC = () => {
     }
   };
 
-  const handleLikePost = async (postId: string, isLiked: boolean) => {
-    // Handle sample posts
-    if (postId.startsWith('sample_post_')) {
-      // Just update local state for demo
-      setPosts(prev => prev.map(post =>
-        post.id === postId
-          ? {
-            ...post,
-            likes: isLiked ? post.likes - 1 : post.likes + 1,
-            is_liked: !isLiked
-          }
-          : post
-      ));
-      Toast.show({
-        type: 'success',
-        text1: isLiked ? 'Unliked' : 'Liked',
-        text2: 'Sample profile demo',
-      });
-      return;
-    }
 
-    if (!user) {
-      Toast.show({
-        type: 'info',
-        text1: 'Login Required',
-        text2: 'Please login to like posts',
-      });
-      showLoginSheet();
-      return;
-    }
-
-    try {
-      const success = isLiked ? await unlikePost(postId) : await likePost(postId);
-      if (success) {
-        // Update local state
-        setPosts(prev => prev.map(post =>
-          post.id === postId
-            ? {
-              ...post,
-              likes: isLiked ? post.likes - 1 : post.likes + 1,
-              is_liked: !isLiked
-            }
-            : post
-        ));
-      }
-    } catch (error) {
-      console.error('Error updating like status:', error);
-    }
-  };
-
-  const shareToWhatsApp = async (message: string) => {
-    try {
-      const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
-      const canOpen = await Linking.canOpenURL(whatsappUrl);
-      if (canOpen) {
-        await Linking.openURL(whatsappUrl);
-      } else {
-        Alert.alert('WhatsApp not installed', 'Please install WhatsApp to share.');
-      }
-    } catch (error) {
-      console.error('Error opening WhatsApp:', error);
-      Alert.alert('Error', 'Unable to open WhatsApp for sharing.');
-    }
-  };
-
-  const handlePostPress = (post: InfluencerPost) => {
-    setSelectedPost(post);
-    setShowVideoModal(true);
-  };
-
-  const renderPost = ({ item }: { item: InfluencerPost }) => (
-    <TouchableOpacity
-      style={styles.postItem}
-      onPress={() => handlePostPress(item)}
-    >
-      {item.thumbnail_url ? (
-        <Image
-          source={{ uri: item.thumbnail_url }}
-          style={styles.postImage}
-          resizeMode="cover"
-        />
-      ) : (
-        <View style={styles.postImagePlaceholder}>
-          <Ionicons name="play-circle" size={40} color="rgba(255,255,255,0.8)" />
-        </View>
-      )}
-      <View style={styles.postOverlay}>
-        <View style={styles.postStats}>
-          <Ionicons name="play" size={16} color="white" />
-          <Text style={styles.postStatText}>{item.views}</Text>
-          <Ionicons name="heart" size={16} color="white" style={{ marginLeft: 12 }} />
-          <Text style={styles.postStatText}>{item.likes}</Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-
-  const renderVideoModal = () => {
-    if (!showVideoModal || !selectedPost) return null;
-
-    return (
-      <Modal
-        visible={showVideoModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowVideoModal(false)}
-      >
-        <View style={styles.videoModalContainer}>
-          <TouchableOpacity
-            style={styles.videoModalOverlay}
-            activeOpacity={1}
-            onPress={() => setShowVideoModal(false)}
-          >
-            <SafeAreaView style={styles.videoModalContent}>
-              <View style={styles.videoModalHeader}>
-                <TouchableOpacity onPress={() => setShowVideoModal(false)}>
-                  <Ionicons name="close" size={28} color="white" />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.videoContainer}>
-                <Video
-                  source={{ uri: selectedPost.video_url }}
-                  style={styles.video}
-                  useNativeControls
-                  resizeMode={ResizeMode.CONTAIN}
-                  shouldPlay
-                  isLooping
-                />
-              </View>
-
-              <View style={styles.videoInfoSection}>
-                <View style={styles.videoHeader}>
-                  <Image
-                    source={{
-                      uri: influencer?.profile_photo || 'https://via.placeholder.com/40'
-                    }}
-                    style={styles.videoInfluencerAvatar}
-                  />
-                  <View style={styles.videoInfluencerInfo}>
-                    <View style={styles.videoInfluencerNameRow}>
-                      <Text style={styles.videoInfluencerName}>{influencer?.name}</Text>
-                      {influencer?.is_verified && (
-                        <Ionicons name="checkmark-circle" size={16} color="#4FC3F7" />
-                      )}
-                    </View>
-                    <Text style={styles.videoInfluencerUsername}>@{influencer?.username}</Text>
-                  </View>
-                </View>
-
-                {selectedPost.title && (
-                  <Text style={styles.videoTitle}>{selectedPost.title}</Text>
-                )}
-                {selectedPost.description && (
-                  <Text style={styles.videoDescription}>{selectedPost.description}</Text>
-                )}
-
-                <View style={styles.videoActions}>
-                  <TouchableOpacity
-                    style={styles.videoActionButton}
-                    onPress={() => handleLikePost(selectedPost.id, selectedPost.is_liked || false)}
-                  >
-                    <Ionicons
-                      name={selectedPost.is_liked ? "heart" : "heart-outline"}
-                      size={24}
-                      color={selectedPost.is_liked ? "#FF6EA6" : "white"}
-                    />
-                    <Text style={styles.videoActionText}>{selectedPost.likes}</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.videoActionButton}>
-                    <Ionicons name="share-social-outline" size={24} color="white" />
-                    <Text style={styles.videoActionText}>{selectedPost.shares}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </SafeAreaView>
-          </TouchableOpacity>
-        </View>
-      </Modal>
-    );
-  };
 
   if (loading) {
     return (
@@ -411,8 +432,8 @@ const InfluencerProfile: React.FC = () => {
             {/* Stats */}
             <View style={styles.statsRow}>
               <TouchableOpacity style={styles.statItem}>
-                <Text style={styles.statNumber}>{posts.length}</Text>
-                <Text style={styles.statLabel}>posts</Text>
+                <Text style={styles.statNumber}>{influencerProducts.length}</Text>
+                <Text style={styles.statLabel}>products</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.statItem}>
                 <Text style={styles.statNumber}>
@@ -422,10 +443,7 @@ const InfluencerProfile: React.FC = () => {
                 </Text>
                 <Text style={styles.statLabel}>followers</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.statItem}>
-                <Text style={styles.statNumber}>{influencer.total_products_promoted || 0}</Text>
-                <Text style={styles.statLabel}>products</Text>
-              </TouchableOpacity>
+
             </View>
           </View>
 
@@ -510,30 +528,77 @@ const InfluencerProfile: React.FC = () => {
 
         {/* Tab Content */}
         <View style={styles.tabContent}>
-          {/* Posts Tab - Show all videos in grid */}
+          {/* Posts Tab -          {/* Posts Tab - Show all product images in grid */}
           {activeTab === 'posts' && (
-            <View style={styles.contentSection}>
+            <View style={styles.postsGrid}>
               {contentLoading ? (
                 <View style={styles.contentLoadingContainer}>
                   <ActivityIndicator size="large" color="#F53F7A" />
                   <Text style={styles.contentLoadingText}>Loading posts...</Text>
                 </View>
               ) : posts.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Ionicons name="videocam-outline" size={64} color="#DDD" />
-                  <Text style={styles.emptyStateTitle}>No Posts Yet</Text>
-                  <Text style={styles.emptyStateSubtitle}>Videos from {influencer?.name || 'this influencer'} will appear here</Text>
+                <View style={styles.emptyTabState}>
+                  <Ionicons name="images-outline" size={64} color="#ddd" />
+                  <Text style={styles.emptyTabTitle}>No Posts Yet</Text>
+                  <Text style={styles.emptyTabSubtitle}>Posts from {influencer?.name} will appear here</Text>
                 </View>
               ) : (
-                <FlatList
-                  data={posts}
-                  renderItem={renderPost}
-                  keyExtractor={(item) => item.id}
-                  numColumns={3}
-                  scrollEnabled={false}
-                  contentContainerStyle={styles.postsGrid}
-                  columnWrapperStyle={styles.postsRow}
-                />
+                <>
+                  <View style={styles.gridContainer}>
+                    {posts.slice(0, postsDisplayCount).map((post) => {
+                      const thumbnailUrl = post.thumbnail_url || post.video_url; // Fallback to video_url if no thumbnail (might fail if not image, but better than nothing)
+                      return (
+                        <TouchableOpacity
+                          key={post.id}
+                          style={styles.gridItem}
+                          onPress={() => {
+                            // Handle post press - for now just show alert or nothing as we don't have post detail screen
+                            // If it has a product_id, we could try to find it in influencerProducts
+                            if (post.product_id) {
+                              const linkedProduct = influencerProducts.find(p => p.id === post.product_id);
+                              if (linkedProduct) {
+                                navigation.navigate('ProductDetails' as never, { product: linkedProduct } as never);
+                              } else {
+                                // Fetch and navigate? or just ignore
+                              }
+                            }
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Image
+                            source={{ uri: thumbnailUrl }}
+                            style={styles.gridImage}
+                            resizeMode="cover"
+                            fadeDuration={300}
+                          />
+                          {/* Add video icon overlay if it's a video */}
+                          <View style={{ ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', zIndex: 1 }}>
+                            <Ionicons name="play-circle-outline" size={32} color="rgba(255,255,255,0.8)" />
+                          </View>
+
+                          <View style={styles.gridImageLoadingOverlay}>
+                            <ActivityIndicator size="small" color="#F53F7A" />
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {posts.length > postsDisplayCount && (
+                    <TouchableOpacity
+                      style={styles.loadMoreButton}
+                      onPress={() => {
+                        const newCount = postsDisplayCount + 12;
+                        setPostsDisplayCount(newCount > posts.length ? posts.length : newCount);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.loadMoreText}>
+                        Load More ({posts.length - postsDisplayCount} remaining)
+                      </Text>
+                      <Ionicons name="chevron-down" size={18} color="#F53F7A" />
+                    </TouchableOpacity>
+                  )}
+                </>
               )}
             </View>
           )}
@@ -553,42 +618,78 @@ const InfluencerProfile: React.FC = () => {
                   <Text style={styles.emptyStateSubtitle}>Products promoted by {influencer?.name || 'this influencer'} will appear here</Text>
                 </View>
               ) : (
-                <FlatList
-                  data={influencerProducts}
-                  renderItem={({ item }) => {
-                    const price = item.product_variants?.[0]?.price || 0;
-                    const imageUrl = item.image_urls?.[0] || item.product_variants?.[0]?.image_urls?.[0];
-                    return (
-                      <TouchableOpacity
-                        style={styles.productItem}
-                        onPress={() => navigation.navigate('ProductDetails' as never, { product: item } as never)}
-                      >
-                        <Image
-                          source={{ uri: imageUrl || 'https://via.placeholder.com/150' }}
-                          style={styles.productImage}
-                          resizeMode="cover"
-                        />
-                        <View style={styles.productInfo}>
-                          <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
-                          <Text style={styles.productPrice}>₹{price.toFixed(2)}</Text>
+                <>
+                  {/* Group products by category */}
+                  {(() => {
+                    // Group products
+                    const grouped = influencerProducts.reduce((acc, product) => {
+                      const categoryName = product.category?.name || 'Other';
+                      const categoryId = product.category_id || 'other';
+                      if (!acc[categoryName]) {
+                        acc[categoryName] = {
+                          products: [],
+                          id: categoryId
+                        };
+                      }
+                      acc[categoryName].products.push(product);
+                      return acc;
+                    }, {} as { [key: string]: { products: any[], id: string } });
+
+                    // Sort groups based on allCategories order
+                    const sortedGroups = allCategories.length > 0 ?
+                      // 1. Map allCategories to present groups
+                      allCategories.map(cat => ({
+                        name: cat.name,
+                        data: grouped[cat.name]
+                      }))
+                        .filter(item => item.data && item.data.products.length > 0)
+                        // 2. Append any categories not in allCategories (e.g. 'Other')
+                        .concat(
+                          Object.keys(grouped)
+                            .filter(name => !allCategories.some(c => c.name === name))
+                            .map(name => ({ name, data: grouped[name] }))
+                        )
+                      : // Fallback: just use object keys if categories not loaded yet
+                      Object.entries(grouped).map(([name, data]) => ({ name, data }));
+
+                    return sortedGroups.map(({ name: categoryName, data }) => {
+                      const categoryProducts = data.products;
+                      const category = {
+                        id: data.id,
+                        name: categoryName
+                      };
+
+                      return (
+                        <View key={categoryName} style={styles.categorySection}>
+                          {/* Category Header */}
+                          <View style={styles.categoryHeader}>
+                            <Text style={styles.categoryTitle}>{categoryName}</Text>
+                            <TouchableOpacity
+                              style={styles.seeMoreButton}
+                              onPress={() => {
+                                // Optional: Add logic to see all products in this category for this influencer
+                                // For now just navigate to generic products screen or do nothing
+                              }}
+                            >
+                              <Text style={styles.seeMoreText}>See More</Text>
+                              <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
+                            </TouchableOpacity>
+                          </View>
+
+                          {/* Horizontal Product List */}
+                          <HorizontalProductList products={categoryProducts} categoryName={categoryName} />
                         </View>
-                      </TouchableOpacity>
-                    );
-                  }}
-                  keyExtractor={(item) => item.id}
-                  numColumns={2}
-                  scrollEnabled={false}
-                  contentContainerStyle={styles.productsGrid}
-                  columnWrapperStyle={styles.productsRow}
-                />
+                      );
+                    });
+                  })()}
+                </>
               )}
             </View>
           )}
         </View>
       </ScrollView>
 
-      {/* Video Modal */}
-      {renderVideoModal()}
+
     </SafeAreaView>
   );
 };
@@ -596,7 +697,316 @@ const InfluencerProfile: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
+  },
+  // New Styles for Product Cards and Categories
+  categorySection: {
+    marginBottom: 24,
+  },
+  categoryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  categoryTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111',
+  },
+  seeMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 63, 122, 0.1)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 63, 122, 0.2)',
+  },
+  seeMoreText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#F53F7A',
+    marginRight: 4,
+  },
+  productsHorizontalList: {
+    paddingHorizontal: 16,
+  },
+  horizontalListWrapper: {
+    position: 'relative',
+  },
+  scrollArrowButton: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -20,
+    zIndex: 10,
+  },
+  scrollArrowLeft: {
+    left: 4,
+  },
+  scrollArrowRight: {
+    right: 4,
+  },
+  scrollArrowBackground: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  productCard: {
+    width: 138,
+    marginHorizontal: 2,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#eee',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+    position: 'relative',
+  },
+  productImage: {
+    width: '100%',
+    height: 160,
+    resizeMode: 'cover',
+  },
+  productCardInfo: {
+    // No padding top needed
+  },
+  brandName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1a1a1a',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    textTransform: 'uppercase',
+  },
+  productName: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#666',
+    paddingHorizontal: 12,
+    paddingTop: 2,
+    lineHeight: 16,
+  },
+  priceContainer: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    paddingTop: 6,
+  },
+  priceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  price: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1a1a',
+  },
+  originalPrice: {
+    fontSize: 12,
+    color: '#94a3b8',
+    textDecorationLine: 'line-through',
+  },
+  discountAndRatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 6,
+  },
+  discountPercentage: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#F53F7A',
+    backgroundColor: 'rgba(245, 63, 122, 0.12)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  reviewsContainer: {
+    backgroundColor: '#fff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 12,
+    gap: 4,
+  },
+  reviews: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#333',
+  },
+  discountBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    backgroundColor: '#F53F7A',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    zIndex: 1,
+  },
+  discountBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  productImage: {
+    width: '100%',
+    height: 160,
+    resizeMode: 'cover',
+  },
+  brandName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1a1a1a',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    textTransform: 'uppercase',
+  },
+  productName: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#666',
+    paddingHorizontal: 12,
+    paddingTop: 2,
+    lineHeight: 16,
+  },
+  priceContainer: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    paddingTop: 6,
+  },
+  priceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  price: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1a1a',
+  },
+  originalPrice: {
+    fontSize: 12,
+    color: '#94a3b8',
+    textDecorationLine: 'line-through',
+  },
+  discountPercentage: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#F53F7A',
+    backgroundColor: 'rgba(245, 63, 122, 0.12)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  discountAndRatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 6,
+  },
+  reviewsContainer: {
+    backgroundColor: '#fff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 12,
+    gap: 4,
+  },
+  reviews: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#333',
+  },
+  // Grid Styles from VendorProfile
+  postsGrid: {
+    flex: 1,
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 1,
+  },
+  gridItem: {
+    width: (width - 6) / 3,
+    height: (width - 6) / 3,
+    backgroundColor: '#f0f0f0',
+  },
+  gridImage: {
+    width: '100%',
+    height: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  gridImageLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    zIndex: -1,
+  },
+  loadMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    marginTop: 8,
+    marginBottom: 16,
+    backgroundColor: 'rgba(245, 63, 122, 0.1)',
+    borderRadius: 12,
+    marginHorizontal: 16,
+    gap: 8,
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F53F7A',
+  },
+  emptyTabState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 40,
+  },
+  emptyTabTitle: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#333',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyTabSubtitle: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   loadingContainer: {
     flex: 1,
@@ -787,86 +1197,7 @@ const styles = StyleSheet.create({
   contentSection: {
     flex: 1,
   },
-  postsGrid: {
-    paddingHorizontal: 2,
-  },
-  postsRow: {
-    gap: 2,
-    marginBottom: 2,
-  },
-  postItem: {
-    width: POST_SIZE,
-    height: POST_SIZE,
-    backgroundColor: '#F0F0F0',
-    position: 'relative',
-  },
-  postImage: {
-    width: '100%',
-    height: '100%',
-  },
-  postImagePlaceholder: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#333',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  postOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 8,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  postStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  postStatText: {
-    fontSize: 12,
-    color: 'white',
-    marginLeft: 4,
-    fontWeight: '600',
-  },
-  productsGrid: {
-    padding: 8,
-  },
-  productsRow: {
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  productItem: {
-    width: (width - 28) / 2,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    marginBottom: 4,
-  },
-  productImage: {
-    width: '100%',
-    height: 200,
-    backgroundColor: '#f0f0f0',
-  },
-  productInfo: {
-    padding: 8,
-  },
-  productName: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 4,
-  },
-  productPrice: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#000',
-  },
+
   tabContent: {
     flex: 1,
   },
@@ -887,91 +1218,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: 'center',
     paddingHorizontal: 40,
-  },
-  videoModalContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.95)',
-  },
-  videoModalOverlay: {
-    flex: 1,
-  },
-  videoModalContent: {
-    flex: 1,
-  },
-  videoModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  videoContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  video: {
-    width: width,
-    height: width * 1.777, // 16:9 aspect ratio
-  },
-  videoInfoSection: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 30,
-  },
-  videoHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  videoInfluencerAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
-  },
-  videoInfluencerInfo: {
-    flex: 1,
-  },
-  videoInfluencerNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  videoInfluencerName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: 'white',
-  },
-  videoInfluencerUsername: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.7)',
-    marginTop: 2,
-  },
-  videoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: 'white',
-    marginBottom: 8,
-  },
-  videoDescription: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.8)',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  videoActions: {
-    flexDirection: 'row',
-    gap: 24,
-  },
-  videoActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  videoActionText: {
-    fontSize: 14,
-    color: 'white',
-    fontWeight: '600',
   },
 });
 

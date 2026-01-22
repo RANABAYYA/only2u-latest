@@ -22,6 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useVendor, Vendor, VendorPost } from '~/contexts/VendorContext';
 import { useAuth } from '~/contexts/useAuth';
+import type { Category } from '~/types/product';
 import { piAPIVirtualTryOnService } from '~/services/piapiVirtualTryOn';
 import { supabase } from '~/utils/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -31,8 +32,9 @@ import { useUser } from '~/contexts/UserContext';
 import BottomSheet from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const { width } = Dimensions.get('window');
-const POST_SIZE = (width - 6) / 3;
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+// Use Math.floor to ensure 3 items fit perfectly with 2px total gap
+const POST_SIZE = Math.floor((SCREEN_WIDTH - 4) / 3);
 
 type VendorProfileRouteParams = {
   VendorProfile: {
@@ -59,6 +61,60 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const { userData } = useUser();
+
+  // Check for existing application on mount
+  useEffect(() => {
+    const checkExistingApplication = async () => {
+      // Check local storage first (fallback mechanism)
+      try {
+        const localApp = await AsyncStorage.getItem('seller_application');
+        if (localApp) {
+          setHasSubmitted(true);
+          return;
+        }
+      } catch (e) {
+        console.log('Error checking local storage for application', e);
+      }
+
+      // Check database if user is logged in
+      if (userData?.id) {
+        try {
+          // Check by user_id
+          const { data, error } = await supabase
+            .from('seller_applications')
+            .select('id, status')
+            .eq('user_id', userData.id) // Assuming user_id column exists or we check by phone
+            .maybeSingle();
+
+          if (data) {
+            setHasSubmitted(true);
+            return;
+          }
+
+          // Also check by phone if available
+          if (userData.phone) {
+            const { data: phoneData } = await supabase
+              .from('seller_applications')
+              .select('id, status')
+              .eq('phone', userData.phone)
+              .maybeSingle();
+
+            if (phoneData) {
+              setHasSubmitted(true);
+              return;
+            }
+          }
+
+        } catch (error) {
+          console.error('Error checking existing application:', error);
+        }
+      }
+    };
+
+    checkExistingApplication();
+  }, [userData]);
 
   const validateStep = (step: number) => {
     const newErrors: { [key: string]: string } = {};
@@ -183,7 +239,7 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
       setShowSuccessModal(true);
     } catch (error: any) {
       console.error('Error submitting application:', error);
-       const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
+      const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
       Alert.alert(
         'Error',
         `Failed to submit application: ${errorMessage}. Please try again o r contact support if the issue persists.`
@@ -317,115 +373,84 @@ const SellerApplicationForm: React.FC<{ navigation: any }> = ({ navigation }) =>
         style={styles.keyboardView}
       >
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.formContainer}>
-            <View style={styles.progressContainer}>
-              <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: `${(currentStep / 2) * 100}%` }]} />
-              </View>
-              <Text style={styles.progressText}>Step {currentStep} of 2</Text>
-            </View>
-
-            {currentStep === 1 && renderStep1()}
-            {currentStep === 2 && renderStep2()}
-
-            <View style={styles.buttonContainer}>
-              {currentStep > 1 && (
-                <TouchableOpacity style={styles.previousButton} onPress={handlePrevious}>
-                  <Text style={styles.previousButtonText}>Previous</Text>
-                </TouchableOpacity>
-              )}
-
-              {currentStep < 2 ? (
-                <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
-                  <Text style={styles.nextButtonText}>Next</Text>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={[styles.submitButton, isSubmitting && styles.disabledButton]}
-                  onPress={handleSubmit}
-                  disabled={isSubmitting}
+          {hasSubmitted ? (
+            <View style={styles.formContainer}>
+              <View style={styles.successIconContainer}>
+                <LinearGradient
+                  colors={['#10B981', '#059669']}
+                  style={styles.successIconGradient}
                 >
-                  {isSubmitting ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.submitButtonText}>Submit Application</Text>
-                  )}
-                </TouchableOpacity>
-              )}
+                  <Ionicons name="checkmark-circle" size={60} color="#fff" />
+                </LinearGradient>
+              </View>
+
+              {/* Title */}
+              <Text style={styles.successModalTitle}>Application Already Submitted!</Text>
+
+              {/* Message */}
+              <Text style={styles.successModalMessage}>
+                You have already submitted a seller application. We show this because we haven't reviewed it yet.
+              </Text>
+
+              {/* Timeline Info */}
+              <View style={styles.successTimelineCard}>
+                <Ionicons name="time-outline" size={20} color="#F59E0B" />
+                <Text style={styles.successTimelineText}>
+                  Our team will review your application and contact you within <Text style={styles.successTimelineBold}>2-3 business days</Text>
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.successModalButton}
+                onPress={() => navigation.goBack()}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.successModalButtonText}>Go Back</Text>
+              </TouchableOpacity>
             </View>
-          </View>
+          ) : (
+            <View style={styles.formContainer}>
+              <View style={styles.progressContainer}>
+                <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${(currentStep / 2) * 100}%` }]} />
+                </View>
+                <Text style={styles.progressText}>Step {currentStep} of 2</Text>
+              </View>
+
+              {currentStep === 1 && renderStep1()}
+              {currentStep === 2 && renderStep2()}
+
+              <View style={styles.buttonContainer}>
+                {currentStep > 1 && (
+                  <TouchableOpacity style={styles.previousButton} onPress={handlePrevious}>
+                    <Text style={styles.previousButtonText}>Previous</Text>
+                  </TouchableOpacity>
+                )}
+
+                {currentStep < 2 ? (
+                  <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
+                    <Text style={styles.nextButtonText}>Next</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.submitButton, isSubmitting && styles.disabledButton]}
+                    onPress={handleSubmit}
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.submitButtonText}>Submit Application</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Success Modal */}
-      <Modal
-        visible={showSuccessModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          setShowSuccessModal(false);
-          navigation.goBack();
-        }}
-      >
-        <View style={styles.successOverlay}>
-          <View style={styles.successModalCard}>
-            {/* Success Icon */}
-            <View style={styles.successIconContainer}>
-              <LinearGradient
-                colors={['#10B981', '#059669']}
-                style={styles.successIconGradient}
-              >
-                <Ionicons name="checkmark-circle" size={60} color="#fff" />
-              </LinearGradient>
-            </View>
 
-            {/* Title */}
-            <Text style={styles.successModalTitle}>Application Submitted! 🎉</Text>
-
-            {/* Message */}
-            <Text style={styles.successModalMessage}>
-              Thank you for your interest in becoming a seller! Your application has been received successfully.
-            </Text>
-
-            {/* Application Details Card */}
-            <View style={styles.successDetailsCard}>
-              <Text style={styles.successDetailsTitle}>Application Details</Text>
-              <View style={styles.successDetailRow}>
-                <Ionicons name="business-outline" size={16} color="#6B7280" />
-                <Text style={styles.successDetailText}>{formData.businessName}</Text>
-              </View>
-              <View style={styles.successDetailRow}>
-                <Ionicons name="person-outline" size={16} color="#6B7280" />
-                <Text style={styles.successDetailText}>{formData.contactName}</Text>
-              </View>
-              <View style={styles.successDetailRow}>
-                <Ionicons name="call-outline" size={16} color="#6B7280" />
-                <Text style={styles.successDetailText}>{formData.phone}</Text>
-              </View>
-            </View>
-
-            {/* Timeline Info */}
-            <View style={styles.successTimelineCard}>
-              <Ionicons name="time-outline" size={20} color="#F59E0B" />
-              <Text style={styles.successTimelineText}>
-                Our team will review your application and contact you within <Text style={styles.successTimelineBold}>2-3 business days</Text>
-              </Text>
-            </View>
-
-            {/* Close Button */}
-            <TouchableOpacity
-              style={styles.successModalButton}
-              onPress={() => {
-                setShowSuccessModal(false);
-                navigation.goBack();
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.successModalButtonText}>Got it!</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 };
@@ -458,6 +483,7 @@ const VendorProfile: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'posts' | 'products'>('products');
   const [vendorProducts, setVendorProducts] = useState<any[]>([]);
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [postsDisplayCount, setPostsDisplayCount] = useState(12); // Initially show 12 items (4 rows)
   const scrollRef = useRef<ScrollView | null>(null);
@@ -466,6 +492,7 @@ const VendorProfile: React.FC = () => {
 
   // UGC Actions Sheet
   const ugcActionsSheetRef = useRef<BottomSheet>(null);
+  const shareSheetRef = useRef<BottomSheet>(null);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [blockedVendorNames, setBlockedVendorNames] = useState<string[]>([]);
   const [supportsVendorNameBlocking, setSupportsVendorNameBlocking] = useState(true);
@@ -548,8 +575,19 @@ const VendorProfile: React.FC = () => {
         setVendor(vendorData);
       }
 
-      await fetchVendorPosts(vendorId);
-      setVendorPosts(vendorPosts.filter(post => post.vendor_id === vendorId));
+      // Fetch global categories sorted by display_order
+      const { data: catData } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('is_active', true)
+        .order('display_order', { ascending: true, nullsFirst: false });
+
+      if (catData) {
+        setAllCategories(catData);
+      }
+
+      const fetchedPosts = await fetchVendorPosts(vendorId);
+      setVendorPosts(fetchedPosts.filter(post => post.vendor_id === vendorId));
 
       // Load vendor products
       const { data: prodData, error: prodErr } = await supabase
@@ -624,8 +662,25 @@ const VendorProfile: React.FC = () => {
   };
 
   const handleFollow = async () => {
-    if (!user) {
-      Alert.alert('Login Required', 'Please login to follow vendors');
+    let currentUser = user;
+
+    // Fallback: Check Supabase session directly if context user is missing
+    if (!currentUser) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (sessionUser) {
+        currentUser = sessionUser;
+      }
+    }
+
+    if (!currentUser) {
+      Alert.alert(
+        'Login Required',
+        'Please login to follow vendors',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Login', onPress: () => showLoginSheet() }
+        ]
+      );
       return;
     }
 
@@ -633,6 +688,15 @@ const VendorProfile: React.FC = () => {
 
     try {
       const isFollowing = isFollowingVendor(vendor.id);
+
+      // Note: We use the context actions here. 
+      // If context 'user' is null, followVendor might fail inside Context.
+      // We might need to ensure Context also updates or we call API directly here if needed.
+      // For now, let's assume if we found a user, we should try to proceed. 
+      // However, VendorContext depends on 'user' from useAuth. 
+      // If useAuth is out of sync, VendorContext is too.
+      // We should probably rely on the context working, but if it fails, maybe reload auth?
+
       const success = isFollowing
         ? await unfollowVendor(vendor.id)
         : await followVendor(vendor.id);
@@ -644,7 +708,7 @@ const VendorProfile: React.FC = () => {
           follower_count: isFollowing ? prev.follower_count - 1 : prev.follower_count + 1
         } : null);
       } else {
-        Alert.alert('Error', 'Failed to update follow status');
+        // logic moved to alert in case of failure
       }
     } catch (error) {
       console.error('Error updating follow status:', error);
@@ -960,6 +1024,76 @@ const VendorProfile: React.FC = () => {
     );
   };
 
+  // Horizontal Product List with Scroll Buttons Component
+  const HorizontalProductList = ({ products, categoryName }: { products: any[], categoryName: string }) => {
+    const flatListRef = useRef<FlatList>(null);
+    const [scrollPosition, setScrollPosition] = useState(0);
+    const [contentWidth, setContentWidth] = useState(0);
+    const [containerWidth, setContainerWidth] = useState(0);
+    const SCROLL_AMOUNT = 200;
+
+    const canScrollLeft = scrollPosition > 10;
+    const canScrollRight = contentWidth > containerWidth && scrollPosition < contentWidth - containerWidth - 10;
+
+    const scrollLeft = () => {
+      const newPosition = Math.max(0, scrollPosition - SCROLL_AMOUNT);
+      flatListRef.current?.scrollToOffset({ offset: newPosition, animated: true });
+    };
+
+    const scrollRight = () => {
+      const maxScroll = contentWidth - containerWidth;
+      const newPosition = Math.min(maxScroll, scrollPosition + SCROLL_AMOUNT);
+      flatListRef.current?.scrollToOffset({ offset: newPosition, animated: true });
+    };
+
+    return (
+      <View style={styles.horizontalListWrapper}>
+        {/* Left Arrow Button */}
+        {canScrollLeft && (
+          <TouchableOpacity
+            style={[styles.scrollArrowButton, styles.scrollArrowLeft]}
+            onPress={scrollLeft}
+            activeOpacity={0.8}
+          >
+            <View style={styles.scrollArrowBackground}>
+              <Ionicons name="chevron-back" size={20} color="#333" />
+            </View>
+          </TouchableOpacity>
+        )}
+
+        <FlatList
+          ref={flatListRef}
+          horizontal
+          data={products}
+          renderItem={({ item }) => renderProductCard(item)}
+          keyExtractor={(item) => `${categoryName}-${item.id}`}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.productsHorizontalList}
+          ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
+          nestedScrollEnabled={true}
+          scrollEnabled={true}
+          onScroll={(e) => setScrollPosition(e.nativeEvent.contentOffset.x)}
+          onContentSizeChange={(w) => setContentWidth(w)}
+          onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width)}
+          scrollEventThrottle={16}
+        />
+
+        {/* Right Arrow Button */}
+        {canScrollRight && (
+          <TouchableOpacity
+            style={[styles.scrollArrowButton, styles.scrollArrowRight]}
+            onPress={scrollRight}
+            activeOpacity={0.8}
+          >
+            <View style={styles.scrollArrowBackground}>
+              <Ionicons name="chevron-forward" size={20} color="#333" />
+            </View>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
   const renderPostDetail = (post: VendorPost) => (
     <View style={styles.postDetail}>
       <View style={styles.postHeader}>
@@ -1088,7 +1222,7 @@ const VendorProfile: React.FC = () => {
             {/* Stats */}
             <View style={styles.statsRow}>
               <TouchableOpacity style={styles.statItem}>
-                <Text style={styles.statNumber}>{vendorPosts.length}</Text>
+                <Text style={styles.statNumber}>{vendorProducts.length}</Text>
                 <Text style={styles.statLabel}>posts</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.statItem}>
@@ -1175,12 +1309,7 @@ const VendorProfile: React.FC = () => {
 
             <TouchableOpacity
               style={styles.iconActionButton}
-              onPress={async () => {
-                const vendorName = vendor?.business_name || 'this vendor';
-                const vendorUrl = vendor?.id ? `https://only2u.app/vendor/${vendor.id}` : 'https://only2u.app';
-                const message = `Check out ${vendorName} on Only2U 👇\n${vendorUrl}`;
-                await shareToWhatsApp(message);
-              }}
+              onPress={() => shareSheetRef.current?.expand()}
             >
               <Ionicons name="share-social-outline" size={20} color="#000" />
             </TouchableOpacity>
@@ -1285,7 +1414,7 @@ const VendorProfile: React.FC = () => {
 
           {/* Products Tab - Category-wise display */}
           {activeTab === 'products' && (
-            <ScrollView style={styles.productsContainer} showsVerticalScrollIndicator={false}>
+            <ScrollView style={styles.productsContainer} showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
               {productsLoading ? (
                 <View style={styles.contentLoadingContainer}>
                   <ActivityIndicator size="large" color="#F53F7A" />
@@ -1300,61 +1429,80 @@ const VendorProfile: React.FC = () => {
               ) : (
                 <>
                   {/* Group products by category */}
-                  {Object.entries(
-                    vendorProducts.reduce((acc, product) => {
+                  {(() => {
+                    // Group products
+                    const grouped = vendorProducts.reduce((acc, product) => {
                       const categoryName = product.category?.name || 'Other';
+                      const categoryId = product.category_id || 'other';
                       if (!acc[categoryName]) {
-                        acc[categoryName] = [];
+                        acc[categoryName] = {
+                          products: [],
+                          id: categoryId
+                        };
                       }
-                      acc[categoryName].push(product);
+                      acc[categoryName].products.push(product);
                       return acc;
-                    }, {} as { [key: string]: any[] })
-                  ).map(([categoryName, categoryProducts]) => {
-                    // Get category object from first product
-                    const category = categoryProducts[0]?.category || {
-                      id: categoryProducts[0]?.category_id || '',
-                      name: categoryName
-                    };
+                    }, {} as { [key: string]: { products: any[], id: string } });
 
-                    return (
-                      <View key={categoryName} style={styles.categorySection}>
-                        {/* Category Header */}
-                        <View style={styles.categoryHeader}>
-                          <Text style={styles.categoryTitle}>{categoryName}</Text>
-                          <TouchableOpacity
-                            style={styles.seeMoreButton}
-                            onPress={() => {
-                              navigation.navigate('Products' as never, {
-                                category: {
-                                  id: category.id || categoryProducts[0]?.category_id || '',
-                                  name: categoryName,
-                                  description: '',
-                                  is_active: true,
-                                  created_at: new Date().toISOString(),
-                                  updated_at: new Date().toISOString()
-                                },
-                                vendorId: vendor.id
-                              } as never);
-                            }}
-                          >
-                            <Text style={styles.seeMoreText}>See More</Text>
-                            <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
-                          </TouchableOpacity>
+                    // Sort groups based on allCategories order
+                    const sortedGroups = allCategories.length > 0 ?
+                      // 1. Map allCategories to present groups
+                      allCategories.map(cat => ({
+                        name: cat.name,
+                        data: grouped[cat.name]
+                      }))
+                        .filter(item => item.data && item.data.products.length > 0)
+                        // 2. Append any categories not in allCategories (e.g. 'Other')
+                        .concat(
+                          Object.keys(grouped)
+                            .filter(name => !allCategories.some(c => c.name === name))
+                            .map(name => ({ name, data: grouped[name] }))
+                        )
+                      : // Fallback: just use object keys if categories not loaded yet
+                      Object.entries(grouped).map(([name, data]) => ({ name, data }));
+
+                    return sortedGroups.map(({ name: categoryName, data }) => {
+                      const categoryProducts = data.products;
+                      const category = {
+                        id: data.id,
+                        name: categoryName
+                      };
+
+                      return (
+                        <View key={categoryName} style={styles.categorySection}>
+                          {/* Category Header */}
+                          <View style={styles.categoryHeader}>
+                            <Text style={styles.categoryTitle}>{categoryName}</Text>
+                            <TouchableOpacity
+                              style={styles.seeMoreButton}
+                              onPress={() => {
+                                navigation.navigate('Products' as never, {
+                                  category: {
+                                    id: category.id,
+                                    name: categoryName,
+                                    description: '',
+                                    is_active: true,
+                                    created_at: new Date().toISOString(),
+                                    updated_at: new Date().toISOString()
+                                  },
+                                  vendorId: vendor.id
+                                } as never);
+                              }}
+                            >
+                              <Text style={styles.seeMoreText}>See More</Text>
+                              <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
+                            </TouchableOpacity>
+                          </View>
+
+                          {/* Horizontal Product List with Scroll Buttons */}
+                          <HorizontalProductList
+                            products={categoryProducts}
+                            categoryName={categoryName}
+                          />
                         </View>
-
-                        {/* Horizontal Product List */}
-                        <FlatList
-                          horizontal
-                          data={categoryProducts}
-                          renderItem={({ item }) => renderProductCard(item)}
-                          keyExtractor={(item) => item.id}
-                          showsHorizontalScrollIndicator={false}
-                          contentContainerStyle={styles.productsHorizontalList}
-                          ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
-                        />
-                      </View>
-                    );
-                  })}
+                      );
+                    });
+                  })()}
                 </>
               )}
             </ScrollView>
@@ -1548,6 +1696,67 @@ const VendorProfile: React.FC = () => {
             </View>
           </TouchableOpacity>
 
+        </View>
+      </BottomSheet>
+
+      {/* Share Bottom Sheet */}
+      <BottomSheet
+        ref={shareSheetRef}
+        index={-1}
+        snapPoints={['35%']}
+        enablePanDownToClose
+        backgroundStyle={{ backgroundColor: '#fff' }}
+        handleIndicatorStyle={{ backgroundColor: '#ddd', width: 40 }}
+      >
+        <View style={styles.shareContainer}>
+          <View style={styles.shareHeader}>
+            <Text style={styles.shareTitle}>Share Vendor</Text>
+            <TouchableOpacity onPress={() => shareSheetRef.current?.close()}>
+              <Ionicons name="close-circle" size={28} color="#999" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.shareSubtitle}>Share this vendor's profile with your friends!</Text>
+
+          {/* Share Options */}
+          <View style={styles.shareOptionsContainer}>
+            {/* WhatsApp Button */}
+            <TouchableOpacity
+              style={styles.whatsappButton}
+              activeOpacity={0.8}
+              onPress={async () => {
+                try {
+                  const vendorName = vendor?.business_name || 'this vendor';
+                  const vendorUrl = vendor?.id ? `https://only2u.app/vendor/${vendor.id}` : 'https://only2u.app';
+                  const shareMessage = `Check out ${vendorName} on Only2U 👇\n${vendorUrl}`;
+                  const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(shareMessage)}`;
+
+                  const canOpen = await Linking.canOpenURL(whatsappUrl);
+                  if (canOpen) {
+                    await Linking.openURL(whatsappUrl);
+                  } else {
+                    Toast.show({
+                      type: 'error',
+                      text1: 'WhatsApp not installed',
+                      text2: 'Please install WhatsApp to share'
+                    });
+                  }
+                  shareSheetRef.current?.close();
+                } catch (error) {
+                  Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to share via WhatsApp' });
+                }
+              }}
+            >
+              <View style={styles.whatsappIconContainer}>
+                <Ionicons name="logo-whatsapp" size={28} color="#fff" />
+              </View>
+              <View style={styles.shareButtonContent}>
+                <Text style={styles.shareButtonTitle}>Share on WhatsApp</Text>
+                <Text style={styles.shareButtonSubtitle}>Send to friends & groups</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
         </View>
       </BottomSheet>
     </SafeAreaView>
@@ -2082,7 +2291,8 @@ const styles = StyleSheet.create({
   postItem: {
     width: POST_SIZE,
     height: POST_SIZE,
-    margin: 1,
+    marginRight: 2,
+    marginBottom: 2,
   },
   postImage: {
     width: '100%',
@@ -2099,7 +2309,7 @@ const styles = StyleSheet.create({
   gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 1,
+    width: SCREEN_WIDTH,
   },
   loadMoreButton: {
     flexDirection: 'row',
@@ -2123,8 +2333,8 @@ const styles = StyleSheet.create({
     marginBottom: 1,
   },
   gridItem: {
-    width: (width - 2) / 3,
-    height: (width - 2) / 3,
+    width: (SCREEN_WIDTH - 2) / 3,
+    height: (SCREEN_WIDTH - 2) / 3,
     backgroundColor: '#f0f0f0',
   },
   gridImage: {
@@ -2177,6 +2387,34 @@ const styles = StyleSheet.create({
   productsHorizontalList: {
     paddingHorizontal: 16,
   },
+  horizontalListWrapper: {
+    position: 'relative',
+  },
+  scrollArrowButton: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -20,
+    zIndex: 10,
+  },
+  scrollArrowLeft: {
+    left: 4,
+  },
+  scrollArrowRight: {
+    right: 4,
+  },
+  scrollArrowBackground: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
+  },
   categorySection: {
     marginBottom: 24,
   },
@@ -2195,14 +2433,18 @@ const styles = StyleSheet.create({
   seeMoreButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: 'rgba(245, 63, 122, 0.1)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 63, 122, 0.2)',
   },
   seeMoreText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#F53F7A',
-    marginRight: 2,
+    marginRight: 4,
   },
   taggedGrid: {
     flex: 1,
@@ -2566,6 +2808,68 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.3,
+  },
+  // Share Bottom Sheet Styles
+  shareContainer: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+  },
+  shareHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  shareTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111',
+  },
+  shareSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  shareOptionsContainer: {
+    marginTop: 24,
+    gap: 16,
+  },
+  whatsappButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#25D366',
+    borderRadius: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    shadowColor: '#25D366',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  whatsappIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  shareButtonContent: {
+    flex: 1,
+  },
+  shareButtonTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 2,
+  },
+  shareButtonSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.9)',
   },
 });
 

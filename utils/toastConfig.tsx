@@ -37,7 +37,7 @@ export const toastConfig = {
         </View>
       </View>
       {props?.onViewPress && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.wishlistViewButton}
           onPress={props.onViewPress}
           activeOpacity={0.8}
@@ -47,31 +47,69 @@ export const toastConfig = {
       )}
     </View>
   ),
+  collectionDeleted: ({ text1, text2 }: any) => (
+    <View style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#fff',
+      marginHorizontal: 16,
+      marginTop: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 8,
+      elevation: 8,
+      borderLeftWidth: 4,
+      borderLeftColor: '#F53F7A',
+    }}>
+      <View style={{
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FFF0F5',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+      }}>
+        <Ionicons name="trash-outline" size={22} color="#F53F7A" />
+      </View>
+      <View style={{ flex: 1 }}>
+        {text1 && <Text style={{
+          fontSize: 15,
+          fontWeight: '700',
+          color: '#1a1a1a',
+          marginBottom: 2,
+        }}>{text1}</Text>}
+        {text2 && <Text style={{
+          fontSize: 13,
+          fontWeight: '500',
+          color: '#666',
+        }}>{text2}</Text>}
+      </View>
+    </View>
+  ),
   success: ({ text1, text2 }: any) => {
-    // Check if this is a removal action
+    // Check if this is a removal or deletion action
     const isRemoval = text1?.toLowerCase().includes('removed');
+    const isDeleted = text1?.toLowerCase().includes('deleted');
     // Check if this is a face swap toast - check both text1 and text2
-    const isFaceSwap = text1?.toLowerCase().includes('face swap') || 
-                       text2?.toLowerCase().includes('face swap') ||
-                       text1?.toLowerCase().includes('face swap started') ||
-                       text1?.toLowerCase() === 'face swap started';
-    
-    let iconName = 'heart';
+    const isFaceSwap = text1?.toLowerCase().includes('face swap') ||
+      text2?.toLowerCase().includes('face swap') ||
+      text1?.toLowerCase().includes('face swap started') ||
+      text1?.toLowerCase() === 'face swap started';
+
+    let iconName: any = 'checkmark-circle';
     if (isRemoval) {
       iconName = 'heart-dislike-outline';
     } else if (isFaceSwap) {
       iconName = 'sparkles';
+    } else if (isDeleted) {
+      iconName = 'trash-outline';
     }
-    
-    // Determine border style based on face swap detection
-    const borderStyle = isFaceSwap ? {
-      borderWidth: 2,
-      borderColor: '#F53F7A', // Full pink border for face swap
-    } : {
-      borderLeftWidth: 4,
-      borderLeftColor: '#F53F7A', // Left border for other success toasts
-    };
-    
+
     return (
       <View style={{
         flexDirection: 'row',
@@ -87,10 +125,19 @@ export const toastConfig = {
         shadowOpacity: 0.15,
         shadowRadius: 8,
         elevation: 8,
-        ...borderStyle,
+        borderLeftWidth: 4,
+        borderLeftColor: '#F53F7A',
       }}>
-        <View style={{ marginRight: 12 }}>
-          <Ionicons name={iconName} size={24} color="#F53F7A" />
+        <View style={{
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          backgroundColor: '#FFF0F5',
+          justifyContent: 'center',
+          alignItems: 'center',
+          marginRight: 12,
+        }}>
+          <Ionicons name={iconName} size={22} color="#F53F7A" />
         </View>
         <View style={{ flex: 1 }}>
           {text1 && <Text style={{
@@ -142,24 +189,40 @@ export const toastConfig = {
     </View>
   ),
   error: ({ text1, text2 }: any) => (
-    <View style={[styles.toastContainer, styles.toastError]}>
-      <View style={styles.toastIconContainer}>
-        <Ionicons name="close-circle" size={24} color="#fff" />
+    <View style={styles.toastContainerWhite}>
+      <View style={{
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FFF0F5',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+      }}>
+        <Ionicons name="alert-circle" size={22} color="#F53F7A" />
       </View>
       <View style={styles.toastTextContainer}>
-        {text1 && <Text style={styles.toastTitle}>{text1}</Text>}
-        {text2 && <Text style={styles.toastSubtitle}>{text2}</Text>}
+        {text1 && <Text style={styles.toastTitleDark}>{text1}</Text>}
+        {text2 && <Text style={styles.toastSubtitleDark}>{text2}</Text>}
       </View>
     </View>
   ),
   info: ({ text1, text2 }: any) => (
-    <View style={[styles.toastContainer, styles.toastInfo]}>
-      <View style={styles.toastIconContainer}>
-        <Ionicons name="information-circle" size={24} color="#fff" />
+    <View style={styles.toastContainerWhite}>
+      <View style={{
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FFF0F5',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+      }}>
+        <Ionicons name="information-circle" size={22} color="#F53F7A" />
       </View>
       <View style={styles.toastTextContainer}>
-        {text1 && <Text style={styles.toastTitle}>{text1}</Text>}
-        {text2 && <Text style={styles.toastSubtitle}>{text2}</Text>}
+        {text1 && <Text style={styles.toastTitleDark}>{text1}</Text>}
+        {text2 && <Text style={styles.toastSubtitleDark}>{text2}</Text>}
       </View>
     </View>
   ),
@@ -200,13 +263,65 @@ export const toastConfig = {
     </View>
   ),
   warning: ({ text1, text2 }: any) => (
-    <View style={[styles.toastContainer, styles.toastWarning]}>
-      <View style={styles.toastIconContainer}>
-        <Ionicons name="warning" size={24} color="#fff" />
+    <View style={styles.toastContainerWhite}>
+      <View style={{
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FFF0F5',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+      }}>
+        <Ionicons name="warning" size={22} color="#F53F7A" />
       </View>
       <View style={styles.toastTextContainer}>
-        {text1 && <Text style={styles.toastTitle}>{text1}</Text>}
-        {text2 && <Text style={styles.toastSubtitle}>{text2}</Text>}
+        {text1 && <Text style={styles.toastTitleDark}>{text1}</Text>}
+        {text2 && <Text style={styles.toastSubtitleDark}>{text2}</Text>}
+      </View>
+    </View>
+  ),
+  sizeRequired: ({ text1, text2 }: any) => (
+    <View style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#fff',
+      marginHorizontal: 16,
+      marginTop: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      shadowColor: '#F53F7A',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+      elevation: 8,
+      borderLeftWidth: 4,
+      borderLeftColor: '#F53F7A',
+    }}>
+      <View style={{
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FFF0F5',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+      }}>
+        <Ionicons name="resize-outline" size={22} color="#F53F7A" />
+      </View>
+      <View style={{ flex: 1 }}>
+        {text1 && <Text style={{
+          fontSize: 15,
+          fontWeight: '700',
+          color: '#1a1a1a',
+          marginBottom: 2,
+        }}>{text1}</Text>}
+        {text2 && <Text style={{
+          fontSize: 13,
+          fontWeight: '500',
+          color: '#666',
+        }}>{text2}</Text>}
       </View>
     </View>
   ),

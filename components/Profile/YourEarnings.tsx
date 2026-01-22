@@ -13,6 +13,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,20 +30,52 @@ interface ResellerOrderRecord {
   order_number: string;
   created_at: string;
   total_amount: number;
-  reseller_commission: number;
-  platform_commission: number;
+  reseller_margin_percentage?: number;
+  reseller_margin_amount?: number;
+  original_total?: number;
+  reseller_profit?: number;
   payment_status: string;
   status?: string | null;
   estimated_delivery_date?: string | null;
   expected_completion_date?: string | null;
   items: Array<{
+    id?: string;
     product_id?: string;
     variant_id?: string;
+    product_name?: string;
+    product_image?: string;
+    size?: string;
+    color?: string;
     quantity: number;
     unit_price?: number;
     total_price?: number;
-    reseller_price?: number;
   }>;
+}
+
+// Flattened item for individual display (similar to MyOrders pattern)
+interface FlattenedEarningItem {
+  // Order info
+  orderId: string;
+  orderNumber: string;
+  createdAt: string;
+  orderStatus: string;
+  paymentStatus: string;
+  estimatedDeliveryDate?: string | null;
+  expectedCompletionDate?: string | null;
+
+  // Item info
+  itemId?: string;
+  productId?: string;
+  productName: string;
+  productImage?: string;
+  size?: string;
+  color?: string;
+  quantity: number;
+
+  // Pricing
+  itemBasePrice: number;
+  itemSellingPrice: number;
+  itemProfit: number;
 }
 
 type EnrichedOrder = {
@@ -181,7 +214,7 @@ export default function ResellerEarnings() {
   const { userData } = useUser();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [orders, setOrders] = useState<EnrichedOrder[]>([]);
+  const [orders, setOrders] = useState<FlattenedEarningItem[]>([]);
   const [stats, setStats] = useState<EarningsStats>({
     totalEarnings: 0,
     totalOrders: 0,
@@ -283,8 +316,8 @@ export default function ResellerEarnings() {
       entry.status === 'paid'
         ? 'Payout Completed'
         : entry.status === 'pending'
-        ? 'Payout Pending'
-        : 'Payout Details';
+          ? 'Payout Pending'
+          : 'Payout Details';
 
     const infoLines = [
       `Amount: ${formatCurrency(entry.amount || 0)}`,
@@ -308,24 +341,6 @@ export default function ResellerEarnings() {
       let history = await ResellerService.getPayoutHistory(resellerId, 25);
       if (!history || history.length === 0) {
         history = [
-          {
-            id: 'sample-1',
-            amount: 2500,
-            status: 'paid',
-            paid_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            description: 'Sample payout deposited',
-            order_id: null,
-          },
-          {
-            id: 'sample-2',
-            amount: 1800,
-            status: 'pending',
-            paid_at: null,
-            created_at: new Date().toISOString(),
-            description: 'Awaiting transfer',
-            order_id: null,
-          },
         ] as ResellerEarning[];
       }
       setPayoutHistory(history || []);
@@ -337,14 +352,26 @@ export default function ResellerEarnings() {
   const fetchEarningsData = async () => {
     try {
       setLoading(true);
-      
       if (!userData?.id) {
         setLoading(false);
         return;
       }
 
-      const resellerProfile = await ResellerService.getResellerByUserId(userData.id);
+      console.log('[YourEarnings] Fetching earnings for user:', userData.id);
+
+      // IMPORTANT: Use ensureResellerForUser to auto-create profile if missing
+      // This prevents the screen from being blank if they've never registered but placed correct orders
+      let resellerProfile: Reseller | null = null;
+      try {
+        resellerProfile = await ResellerService.ensureResellerForUser(userData.id);
+      } catch (e) {
+        console.error('[YourEarnings] Failed to ensure reseller profile:', e);
+        // Fallback: try simple get
+        resellerProfile = await ResellerService.getResellerByUserId(userData.id);
+      }
+
       if (!resellerProfile) {
+        console.log('[YourEarnings] No reseller profile found even after ensure');
         setOrders([]);
         setStats({
           totalEarnings: 0,
@@ -360,27 +387,42 @@ export default function ResellerEarnings() {
       loadPayoutHistory(resellerProfile.id);
 
       let query = supabase
-        .from('reseller_orders')
+        .from('orders')
         .select(`
           id,
           order_number,
           created_at,
           total_amount,
-          reseller_commission,
-          platform_commission,
+          reseller_margin_percentage,
+          reseller_margin_amount,
+          reseller_profit,
+          original_total,
           payment_status,
           status,
-          items:reseller_order_items(
+          items:order_items(
+            id,
             product_id,
-            variant_id,
+            product_name,
+            product_image,
+            size,
+            color,
             quantity,
             unit_price,
-            total_price,
-            reseller_price
+            total_price
           )
         `)
-        .eq('reseller_id', resellerProfile.id)
+        .eq('user_id', userData.id)
+        .eq('is_reseller_order', true)
         .order('created_at', { ascending: false });
+
+      // DEBUG: Fetch ALL orders count to compare
+      const { count: allOrdersCount, error: countError } = await supabase
+        .from('orders')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userData.id);
+
+      console.log('[YourEarnings] Total orders (any type):', allOrdersCount);
+      if (countError) console.error('[YourEarnings] Count error:', countError);
 
       const { data, error } = await query;
       if (error) {
@@ -388,94 +430,108 @@ export default function ResellerEarnings() {
       }
 
       const rawOrders: ResellerOrderRecord[] = (data as ResellerOrderRecord[] | null) ?? [];
+      console.log('[YourEarnings] Fetched orders count:', rawOrders.length);
 
-      // Add mock reseller order for sample/demo purposes
-      const mockResellerOrder: EnrichedOrder = {
-        id: '00000000-0000-0000-0000-000000000010',
-        order_number: 'RSL789012',
-        created_at: new Date('2025-11-10').toISOString(),
-        total_amount: 5998,
-        original_total: 4998,
-        reseller_margin_amount: 1000,
-        reseller_profit: 1000,
-        payment_status: 'paid',
-        status: 'delivered',
-        estimated_delivery_date: new Date('2025-11-15').toISOString(),
-        expected_completion_date: new Date('2025-11-20').toISOString(),
-        order_items: [
-          {
-            id: '00000000-0000-0000-0000-000000000011',
-            product_id: '00000000-0000-0000-0000-000000000012',
-            quantity: 1,
-            unit_price: 2499,
-            total_price: 2499,
-            reseller_price: 1999,
-          },
-          {
-            id: '00000000-0000-0000-0000-000000000013',
-            product_id: '00000000-0000-0000-0000-000000000014',
-            quantity: 1,
-            unit_price: 3499,
-            total_price: 3499,
-            reseller_price: 2999,
-          },
-        ],
+      // Flatten orders into individual items (similar to MyOrders pattern)
+      const flattenOrders = (orders: ResellerOrderRecord[]): FlattenedEarningItem[] => {
+        const flattenedItems: FlattenedEarningItem[] = [];
+
+        orders.forEach(order => {
+          const orderTotalAmount = Number(order.total_amount || 0);
+          const orderOriginalTotal = Number(order.original_total || 0);
+          // Calculate profit: use reseller_profit, fallback to margin_amount, then calculate from totals
+          let orderProfit = Number(order.reseller_profit || order.reseller_margin_amount || 0);
+          // If profit is 0 but we have total and original, calculate profit from difference
+          if (orderProfit === 0 && orderTotalAmount > 0 && orderOriginalTotal > 0) {
+            orderProfit = orderTotalAmount - orderOriginalTotal;
+          }
+          const itemsCount = order.items?.length || 1;
+
+          // Calculate profit margin per unit to match OrderDetails logic
+          const totalItemsCount = order.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 1;
+          const marginPerUnit = totalItemsCount > 0 ? orderProfit / totalItemsCount : 0;
+
+          order.items?.forEach((item, index) => {
+            const quantity = item.quantity || 1;
+            // In reseller orders, unit_price is the Selling Price (what customer paid)
+            const unitSellingPrice = Number(item.unit_price || 0);
+            const unitBasePrice = unitSellingPrice - marginPerUnit;
+
+            const itemSellingPrice = unitSellingPrice * quantity;
+            const itemBasePrice = unitBasePrice * quantity;
+            const itemProfit = marginPerUnit * quantity;
+
+            flattenedItems.push({
+              // Order info
+              orderId: order.id,
+              orderNumber: order.order_number,
+              createdAt: order.created_at,
+              orderStatus: order.status || 'pending',
+              paymentStatus: order.payment_status,
+              estimatedDeliveryDate: (order as any).estimated_delivery_date || null,
+              expectedCompletionDate: (order as any).expected_completion_date || null,
+
+              // Item info
+              itemId: item.id || `${order.id}-${index}`,
+              productId: item.product_id,
+              productName: item.product_name || 'Unknown Product',
+              productImage: item.product_image,
+              size: item.size,
+              color: item.color,
+              quantity: quantity,
+
+              // Pricing
+              itemBasePrice: itemBasePrice,
+              itemSellingPrice: itemSellingPrice,
+              itemProfit: itemProfit,
+            });
+          });
+        });
+
+        return flattenedItems;
       };
 
-      const mapOrder = (order: ResellerOrderRecord): EnrichedOrder => {
-        const originalTotal = (order.items || []).reduce((sum, item) => sum + Number(item.total_price || 0), 0);
-        const marginAmount = Number(order.reseller_commission || 0);
-        return {
-          id: order.id,
-          order_number: order.order_number,
-          created_at: order.created_at,
-          total_amount: Number(order.total_amount || 0),
-          original_total: originalTotal,
-          reseller_margin_amount: marginAmount,
-          reseller_profit: marginAmount,
-          payment_status: order.payment_status,
-          status: order.status,
-          estimated_delivery_date: (order as any).estimated_delivery_date || null,
-          expected_completion_date: (order as any).expected_completion_date || null,
-          order_items: order.items || [],
-        };
-      };
+      const allFlattenedItems = flattenOrders(rawOrders);
+      console.log('[YourEarnings] Total flattened items:', allFlattenedItems.length);
 
-      const allEnrichedOrders = [mockResellerOrder, ...rawOrders.map(mapOrder)];
+      // Filter based on selected filter
+      const filteredItems = selectedFilter === 'all'
+        ? allFlattenedItems
+        : allFlattenedItems.filter(item => item.paymentStatus === selectedFilter);
 
-      const filteredOrders = selectedFilter === 'all'
-        ? allEnrichedOrders
-        : allEnrichedOrders.filter(o => o.payment_status === selectedFilter);
+      // Calculate stats from flattened items
+      const totalEarnings = allFlattenedItems.reduce((sum, item) => sum + item.itemProfit, 0);
+      const pendingEarnings = allFlattenedItems
+        .filter(item => item.paymentStatus === 'pending')
+        .reduce((sum, item) => sum + item.itemProfit, 0);
+      const completedEarnings = allFlattenedItems
+        .filter(item => item.paymentStatus === 'paid')
+        .reduce((sum, item) => sum + item.itemProfit, 0);
 
-      const totalEarnings = allEnrichedOrders.reduce((sum, order) => sum + (order.reseller_profit || 0), 0);
-      const pendingEarnings = allEnrichedOrders
-        .filter(o => o.payment_status === 'pending')
-        .reduce((sum, order) => sum + (order.reseller_profit || 0), 0);
-      const completedEarnings = allEnrichedOrders
-        .filter(o => o.payment_status === 'paid')
-        .reduce((sum, order) => sum + (order.reseller_profit || 0), 0);
+      // Get unique order count for stats
+      const uniqueOrderIds = new Set(allFlattenedItems.map(item => item.orderId));
 
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
-      const monthlyTotal = allEnrichedOrders
-        .filter((order) => {
-          const orderDate = new Date(order.created_at);
-          return orderDate >= startOfMonth;
+      const monthlyTotal = allFlattenedItems
+        .filter((item) => {
+          const itemDate = new Date(item.createdAt);
+          return itemDate >= startOfMonth;
         })
-        .reduce((sum, order) => sum + (order.total_amount || 0), 0);
+        .reduce((sum, item) => sum + item.itemProfit, 0);
       const derivedTier = getTierForSales(monthlyTotal);
       setMonthlySales(monthlyTotal);
       setCurrentTier(derivedTier);
 
       setStats({
         totalEarnings,
-        totalOrders: allEnrichedOrders.length,
+        totalOrders: uniqueOrderIds.size,
         pendingEarnings,
         completedEarnings,
       });
 
-      setOrders(filteredOrders);
+      setOrders(filteredItems);
 
     } catch (error) {
       console.error('Error in fetchEarningsData:', error);
@@ -502,142 +558,75 @@ export default function ResellerEarnings() {
     </View>
   );
 
-  const renderOrderItem = ({ item }: { item: EnrichedOrder }) => {
-    const statusTheme = getStatusTheme(item.status || item.payment_status);
-    const quickInfoData = [
-      {
-        label: 'Created',
-        value: formatDisplayDate(new Date(item.created_at)),
-        icon: 'calendar-outline',
-        color: '#6B7280',
-      },
-      {
-        label: 'Status',
-        value: toTitleCase(item.status),
-        icon: 'flag-outline',
-        color: statusTheme.color,
-      },
-      {
-        label: 'Est. Delivery',
-        value: item.estimated_delivery_date
-          ? getEstimatedDateLabel(item.estimated_delivery_date)
-          : getEstimatedDateLabel(item.created_at, 5),
-        icon: 'cube-outline',
-        color: '#F97316',
-      },
-      {
-        label: 'Est. Payout',
-        value: item.expected_completion_date
-          ? getEstimatedDateLabel(item.expected_completion_date)
-          : getEstimatedDateLabel(item.created_at, 12),
-        icon: 'time-outline',
-        color: '#3B82F6',
-      },
-    ];
+  const renderOrderItem = ({ item }: { item: FlattenedEarningItem }) => {
+    const statusTheme = getStatusTheme(item.orderStatus || item.paymentStatus);
 
     return (
       <TouchableOpacity
-        style={styles.orderCard}
+        style={styles.earningsItemCard}
         activeOpacity={0.7}
         onPress={() => {
-          navigation.navigate('OrderDetails', { orderId: item.id });
+          navigation.navigate('OrderDetails', { orderId: item.orderId });
         }}
       >
-      <View style={styles.orderHeader}>
-          <View style={styles.orderHeaderLeft}>
-          <Text style={styles.orderNumber}>#{item.order_number}</Text>
-          </View>
-          <View style={[styles.orderStatusPill, { backgroundColor: statusTheme.bg }]}>
-            <Ionicons name={statusTheme.icon as any} size={14} color={statusTheme.color} />
-            <Text style={[styles.orderStatusText, { color: statusTheme.color }]}>
-              {statusTheme.label}
-          </Text>
-        </View>
-        </View>
-
-        <View style={styles.orderMetaRow}>
-          <View style={styles.orderMetaItem}>
-            <Ionicons name="cube-outline" size={16} color="#6B7280" />
-            <Text style={styles.orderMetaText}>{item.order_items?.length || 0} item(s)</Text>
-          </View>
-          <View style={styles.orderMetaItem}>
-            <Ionicons name="cash-outline" size={16} color="#6B7280" />
-            <Text style={styles.orderMetaText}>{formatCurrency(item.total_amount || 0)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.quickInfoRow}>
-          {quickInfoData.map((info) => (
-            <TouchableOpacity
-              key={`${item.id}-${info.label}`}
-              style={styles.quickInfoPill}
-              activeOpacity={0.85}
-              onPress={() => Alert.alert(info.label, info.value)}
-            >
-              <Ionicons name={info.icon as any} size={14} color={info.color} />
-              <View style={styles.quickInfoTextGroup}>
-                <Text style={styles.quickInfoLabel}>{info.label}</Text>
-                <Text style={[styles.quickInfoValue, { color: info.color }]}>{info.value}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
-      </View>
-
-      <View style={styles.divider} />
-
-      <View style={styles.orderDetails}>
-        <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Original Price</Text>
-            <Text style={styles.detailValue}>{formatCurrency(item.original_total || 0)}</Text>
-        </View>
-        <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Selling Price</Text>
-            <Text style={styles.detailValueBold}>{formatCurrency(item.total_amount || 0)}</Text>
-        </View>
-      </View>
-
-      {/* Delivery Dates for Pending Orders */}
-      {item.payment_status === 'pending' && (item.estimated_delivery_date || item.expected_completion_date) && (
-        <>
-          <View style={styles.divider} />
-          <View style={styles.deliveryInfoContainer}>
-            {item.estimated_delivery_date && (
-              <View style={styles.deliveryRow}>
-                <Ionicons name="location-outline" size={18} color="#F59E0B" />
-                <View style={styles.deliveryTextContainer}>
-                  <Text style={styles.deliveryLabel}>Estimated Delivery</Text>
-                  <Text style={styles.deliveryDate}>
-                    {new Date(item.estimated_delivery_date).toLocaleDateString('en-US', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </Text>
-                </View>
-              </View>
-            )}
-            {item.expected_completion_date && (
-              <View style={styles.deliveryRow}>
-                <Ionicons name="checkmark-circle-outline" size={18} color="#10B981" />
-                <View style={styles.deliveryTextContainer}>
-                  <Text style={styles.deliveryLabel}>Expected Completion</Text>
-                  <Text style={styles.deliveryDate}>
-                    {new Date(item.expected_completion_date).toLocaleDateString('en-US', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </Text>
-                </View>
+        {/* Compact Row: Image + Product Info + Pricing */}
+        <View style={styles.earningsItemTopRow}>
+          {/* Product Image - Smaller */}
+          <View style={styles.earningsItemImageContainer}>
+            {item.productImage ? (
+              <Image
+                source={{ uri: item.productImage }}
+                style={styles.earningsItemImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={[styles.earningsItemImage, styles.earningsItemImagePlaceholder]}>
+                <Ionicons name="image-outline" size={24} color="#C7C7CC" />
               </View>
             )}
           </View>
-        </>
-      )}
 
-      <View style={styles.divider} />
-    </TouchableOpacity>
-  );
+          {/* Product Details - Compact */}
+          <View style={styles.earningsItemInfo}>
+            {/* Product Name */}
+            <Text style={styles.earningsItemName} numberOfLines={1}>
+              {item.productName}
+            </Text>
+
+            {/* Size only */}
+            {item.size && (
+              <Text style={styles.earningsItemMeta} numberOfLines={1}>
+                Size: {item.size}
+              </Text>
+            )}
+
+            {/* Pricing Row - Inline */}
+            <View style={styles.earningsItemPricingInline}>
+              <Text style={styles.pricingLabelSmall}>Base: </Text>
+              <Text style={styles.pricingValueSmall}>{formatCurrency(item.itemBasePrice)}</Text>
+              <Text style={styles.pricingArrow}> → </Text>
+              <Text style={styles.pricingLabelSmall}>Sold: </Text>
+              <Text style={styles.pricingValueSmallBold}>{formatCurrency(item.itemSellingPrice)}</Text>
+            </View>
+          </View>
+
+          {/* Right Side: Profit + Status */}
+          <View style={styles.earningsItemRight}>
+            {/* Profit */}
+            <View style={styles.profitBadgeCompact}>
+              <Text style={styles.profitBadgeTextCompact}>+{formatCurrency(item.itemProfit)}</Text>
+            </View>
+
+            {/* Status Pill */}
+            <View style={[styles.statusPillSmall, { backgroundColor: statusTheme.bg }]}>
+              <Text style={[styles.statusPillTextSmall, { color: statusTheme.color }]}>
+                {statusTheme.label}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
   };
 
   const renderListHeader = () => (
@@ -773,11 +762,13 @@ export default function ResellerEarnings() {
         <View style={styles.headerRight} />
       </View>
 
+
+
       {/* Orders List */}
       <FlatList
         data={orders}
         renderItem={renderOrderItem}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => `${item.orderId}-${item.itemId}`}
         ListHeaderComponent={renderListHeader}
         ListHeaderComponentStyle={styles.listHeaderComponent}
         contentContainerStyle={styles.listContainer}
@@ -853,20 +844,20 @@ export default function ResellerEarnings() {
                       ? `${formatCurrency(tier.min).replace('.00', '')}+`
                       : `${formatCurrency(tier.min).replace('.00', '')} – ${formatCurrency(tier.max).replace('.00', '')}`;
 
-                const sampleVolume = Math.max(2500, Math.min(tier.max === Infinity ? tier.min + 5000 : tier.max, 10000));
-                const tierTheme = tier;
-                const unlocked = monthlySales >= tier.min;
-                const unlockNeed = Math.max(0, tier.min - monthlySales);
-                return (
+                  const sampleVolume = Math.max(2500, Math.min(tier.max === Infinity ? tier.min + 5000 : tier.max, 10000));
+                  const tierTheme = tier;
+                  const unlocked = monthlySales >= tier.min;
+                  const unlockNeed = Math.max(0, tier.min - monthlySales);
+                  return (
                     <View
                       key={tier.name}
                       style={[
                         styles.tierTimelineCard,
-                      {
-                        borderColor: isCurrent ? tierTheme.accent : tierTheme.badgeBg,
-                        backgroundColor: isCurrent ? tierTheme.bg : '#fff',
-                      },
-                      isNext && { borderColor: tierTheme.accent },
+                        {
+                          borderColor: isCurrent ? tierTheme.accent : tierTheme.badgeBg,
+                          backgroundColor: isCurrent ? tierTheme.bg : '#fff',
+                        },
+                        isNext && { borderColor: tierTheme.accent },
                       ]}
                     >
                       <View style={styles.tierTimelineHeader}>
@@ -1914,6 +1905,187 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '700',
+  },
+  // New individual earnings item card styles - COMPACT
+  earningsItemCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  earningsItemTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  earningsItemImageContainer: {
+    position: 'relative',
+  },
+  earningsItemImage: {
+    width: 85,
+    height: 85,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+  },
+  earningsItemImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  earningsItemInfo: {
+    flex: 1,
+    gap: 3,
+  },
+  earningsItemName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  earningsItemMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  earningsItemPricingInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 3,
+    flexWrap: 'wrap',
+  },
+  pricingLabelSmall: {
+    fontSize: 10,
+    color: '#9CA3AF',
+  },
+  pricingValueSmall: {
+    fontSize: 10,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  pricingValueSmallBold: {
+    fontSize: 10,
+    color: '#1F2937',
+    fontWeight: '700',
+  },
+  pricingArrow: {
+    fontSize: 10,
+    color: '#D1D5DB',
+    marginHorizontal: 2,
+  },
+  earningsItemRight: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  profitBadgeCompact: {
+    backgroundColor: '#ECFDF5',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  profitBadgeTextCompact: {
+    color: '#10B981',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusPillSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  statusPillTextSmall: {
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  // Keep old styles for compatibility
+  profitBadge: {
+    position: 'absolute',
+    bottom: -6,
+    left: -6,
+    right: -6,
+    backgroundColor: '#10B981',
+    borderRadius: 8,
+    paddingVertical: 3,
+    alignItems: 'center',
+  },
+  profitBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  earningsItemQty: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    fontWeight: '500',
+  },
+  orderNumberBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  orderNumberText: {
+    fontSize: 11,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  earningsItemPricingRow: {
+    flexDirection: 'row',
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  pricingItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  pricingLabel: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    marginBottom: 4,
+  },
+  pricingValue: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  pricingValueBold: {
+    fontSize: 13,
+    color: '#1F2937',
+    fontWeight: '700',
+  },
+  pricingValueProfit: {
+    fontSize: 13,
+    color: '#10B981',
+    fontWeight: '700',
+  },
+  pricingDivider: {
+    width: 1,
+    backgroundColor: '#F3F4F6',
+  },
+  earningsItemDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  earningsItemDateText: {
+    fontSize: 12,
+    color: '#9CA3AF',
   },
 });
 

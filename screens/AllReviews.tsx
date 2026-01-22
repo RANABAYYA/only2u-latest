@@ -25,7 +25,7 @@ const AllReviews = () => {
 
   const [showReviewMediaViewer, setShowReviewMediaViewer] = useState(false);
   const [reviewMediaIndex, setReviewMediaIndex] = useState(0);
-  const [reviewMediaItems, setReviewMediaItems] = useState<Array<{type: 'image' | 'video', url: string}>>([]);
+  const [reviewMediaItems, setReviewMediaItems] = useState<Array<{ type: 'image' | 'video', url: string }>>([]);
   // Track failed video thumbnail loads to use a fallback image instead of a gray box
   const [failedVideoThumbs, setFailedVideoThumbs] = useState<{ [url: string]: boolean }>({});
   const [videoThumbnails, setVideoThumbnails] = useState<{ [url: string]: string }>({});
@@ -37,7 +37,6 @@ const AllReviews = () => {
 
     const generateThumbnails = async () => {
       console.log('[AllReviews] Generating thumbnails for', allVideos.length, 'videos');
-      
       for (const videoUrl of allVideos) {
         // Skip if already generated
         if (videoThumbnails[videoUrl]) {
@@ -52,7 +51,6 @@ const AllReviews = () => {
             quality: 0.8,
           });
           console.log('[AllReviews] Thumbnail generated:', uri);
-          
           setVideoThumbnails(prev => ({
             ...prev,
             [videoUrl]: uri
@@ -70,9 +68,10 @@ const AllReviews = () => {
 
     generateThumbnails();
   }, [reviews]);
-  
+
   // Review interaction state
   const [helpfulVotes, setHelpfulVotes] = useState<{ [reviewId: string]: boolean }>({});
+  const [expandedReviews, setExpandedReviews] = useState<{ [reviewId: string]: boolean }>({});
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportingReviewId, setReportingReviewId] = useState<string | null>(null);
 
@@ -89,7 +88,6 @@ const AllReviews = () => {
     const now = new Date();
     const diffTime = Math.abs(now.getTime() - date.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
     if (diffDays === 1) return 'Posted 1 day ago';
     if (diffDays < 7) return `Posted ${diffDays} days ago`;
     return `Posted on ${date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
@@ -100,7 +98,6 @@ const AllReviews = () => {
     try {
       const isCurrentlyHelpful = helpfulVotes[reviewId];
       const newHelpfulState = !isCurrentlyHelpful;
-      
       // Update local state
       setHelpfulVotes(prev => ({
         ...prev,
@@ -124,7 +121,6 @@ const AllReviews = () => {
   const handleShareReview = async (review: any) => {
     try {
       const shareMessage = `Check out this review by ${review.reviewer_name || 'Only2U User'}:\n\n"${review.comment}"\n\nRating: ${review.rating}/5 stars`;
-      
       await Share.share({
         message: shareMessage,
         title: 'Product Review',
@@ -162,37 +158,35 @@ const AllReviews = () => {
   // Calculate rating breakdown
   const calculateRatingBreakdown = () => {
     const breakdown = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-    
+
     reviews.forEach(review => {
       breakdown[review.rating as keyof typeof breakdown]++;
     });
-    
+
     return breakdown;
   };
 
   // Render rating breakdown
   const renderRatingBreakdown = () => {
     const breakdown = calculateRatingBreakdown();
-    
     return (
       <View style={styles.ratingBreakdownContainer}>
         {[5, 4, 3, 2, 1].map(rating => {
           const count = breakdown[rating as keyof typeof breakdown];
           const percentage = totalReviews > 0 ? (count / totalReviews) * 100 : 0;
-          
           return (
             <View key={rating} style={styles.ratingBreakdownRow}>
               <Text style={styles.ratingBreakdownNumber}>{rating}</Text>
               <Ionicons name="star" size={14} color="#fcc026" style={{ marginLeft: 4 }} />
               <View style={styles.ratingBreakdownBarContainer}>
-                <View 
+                <View
                   style={[
                     styles.ratingBreakdownBar,
-                    { 
+                    {
                       width: `${percentage}%`,
                       backgroundColor: '#FF9500'
                     }
-                  ]} 
+                  ]}
                 />
               </View>
               <Text style={styles.ratingBreakdownCount}>{count}</Text>
@@ -246,8 +240,8 @@ const AllReviews = () => {
 
         {/* Review Title */}
         <Text style={styles.reviewTitle}>
-          {review.comment && review.comment.length > 50 
-            ? review.comment.substring(0, 50) + '...' 
+          {review.comment && review.comment.length > 50
+            ? review.comment.substring(0, 50) + '...'
             : review.comment || 'Great product!'}
         </Text>
 
@@ -257,21 +251,38 @@ const AllReviews = () => {
         </Text>
 
         {/* Review Text */}
-        {review.comment && review.comment.length > 50 && (
-          <View style={styles.reviewTextContainer}>
-            <Text style={styles.reviewText} numberOfLines={3}>
-              {review.comment}
-            </Text>
-            <TouchableOpacity>
-              <Text style={styles.seeMoreText}>See more</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        {review.comment && review.comment.length > 50 && (() => {
+          const isExpanded = expandedReviews[review.id];
+          const needsExpand = review.comment.length > 150; // Only show See more if text is actually long
+
+          return (
+            <View style={styles.reviewTextContainer}>
+              <Text
+                style={styles.reviewText}
+                numberOfLines={isExpanded ? undefined : 3}
+              >
+                {review.comment}
+              </Text>
+              {needsExpand && (
+                <TouchableOpacity
+                  onPress={() => setExpandedReviews(prev => ({
+                    ...prev,
+                    [review.id]: !prev[review.id]
+                  }))}
+                >
+                  <Text style={[styles.seeMoreText, { color: '#F53F7A' }]}>
+                    {isExpanded ? 'See less' : 'See more'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        })()}
 
         {/* Review Images and Videos */}
         {((review.review_images && review.review_images.length > 0) || (review.review_videos && review.review_videos.length > 0)) && (
-          <ScrollView 
-            horizontal 
+          <ScrollView
+            horizontal
             showsHorizontalScrollIndicator={false}
             style={styles.reviewMediaScrollContainer}
             contentContainerStyle={styles.reviewImagesContainer}
@@ -282,7 +293,6 @@ const AllReviews = () => {
                 ...(review.review_images || []).map((img: string) => ({ type: 'image' as const, url: img })),
                 ...(review.review_videos || []).map((vid: string) => ({ type: 'video' as const, url: vid }))
               ];
-              
               return (
                 <TouchableOpacity
                   key={`review-img-${index}`}
@@ -301,7 +311,6 @@ const AllReviews = () => {
                 </TouchableOpacity>
               );
             })}
-            
             {/* Display Videos */}
             {review.review_videos && review.review_videos.map((video: string, index: number) => {
               const reviewMedia = [
@@ -311,7 +320,6 @@ const AllReviews = () => {
               const videoIndex = (review.review_images?.length || 0) + index;
               // Use generated thumbnail, fallback to placeholder
               const thumbnailUri = videoThumbnails[video] || 'https://images.unsplash.com/photo-1520975922284-9d8ff95b6a88?q=80&w=400&auto=format&fit=crop';
-              
               return (
                 <TouchableOpacity
                   key={`review-vid-${index}`}
@@ -342,17 +350,17 @@ const AllReviews = () => {
 
         {/* Review Actions */}
         <View style={styles.reviewActions}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[
               styles.helpfulButton,
               helpfulVotes[review.id] && styles.helpfulButtonActive
             ]}
             onPress={() => handleHelpfulVote(review.id)}
           >
-            <Ionicons 
-              name={helpfulVotes[review.id] ? "thumbs-up" : "thumbs-up-outline"} 
-              size={16} 
-              color={helpfulVotes[review.id] ? "#F53F7A" : "#333"} 
+            <Ionicons
+              name={helpfulVotes[review.id] ? "thumbs-up" : "thumbs-up-outline"}
+              size={16}
+              color={helpfulVotes[review.id] ? "#F53F7A" : "#333"}
             />
             <Text style={[
               styles.helpfulButtonText,
@@ -361,14 +369,14 @@ const AllReviews = () => {
               Helpful
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.shareButton}
             onPress={() => handleShareReview(review)}
           >
             <Ionicons name="share-outline" size={16} color="#333" />
             <Text style={styles.shareButtonText}>Share</Text>
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.reportButton}
             onPress={() => handleReportReview(review.id)}
           >
@@ -428,7 +436,6 @@ const AllReviews = () => {
               </Text>
             </View>
           </View>
-          
           {/* Rating Breakdown */}
           <View style={styles.ratingBreakdownSection}>
             <Text style={styles.ratingBreakdownTitle}>Rating Breakdown</Text>
@@ -541,12 +548,10 @@ const AllReviews = () => {
             <View style={styles.reportModalIconContainer}>
               <Ionicons name="flag" size={40} color="#F53F7A" />
             </View>
-            
             <Text style={styles.reportModalTitle}>Report Review</Text>
             <Text style={styles.reportModalMessage}>
               Are you sure you want to report this review? This will help us improve our content quality.
             </Text>
-            
             <View style={styles.reportModalButtons}>
               <TouchableOpacity
                 style={styles.reportModalCancelButton}
@@ -557,7 +562,6 @@ const AllReviews = () => {
               >
                 <Text style={styles.reportModalCancelText}>Cancel</Text>
               </TouchableOpacity>
-              
               <TouchableOpacity
                 style={styles.reportModalConfirmButton}
                 onPress={confirmReportReview}
@@ -797,8 +801,8 @@ const styles = StyleSheet.create({
   },
   seeMoreText: {
     fontSize: 14,
-    color: '#007AFF',
-    fontWeight: '500',
+    color: '#F53F7A',
+    fontWeight: '600',
   },
   helpfulText: {
     fontSize: 14,
@@ -862,6 +866,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 20,
+    backgroundColor: '#fff',
   },
   shareButtonText: {
     fontSize: 14,
@@ -869,6 +879,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   reportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 20,
+    backgroundColor: '#fff',
     marginLeft: 'auto',
   },
   reportButtonText: {

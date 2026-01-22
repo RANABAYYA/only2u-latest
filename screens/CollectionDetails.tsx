@@ -13,6 +13,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
+import Toast from 'react-native-toast-message';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -33,7 +34,7 @@ const CollectionDetails = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { userData } = useUser();
-  const { removeFromWishlist } = useWishlist();
+  const { removeFromWishlist, removeMultipleFromWishlist } = useWishlist();
 
   // Get collection info from route params (either old or new format)
   const collectionId = (route.params as any)?.collectionId || (route.params as any)?.collection?.id;
@@ -48,7 +49,6 @@ const CollectionDetails = () => {
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [itemToRemove, setItemToRemove] = useState<any>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showDeleteSuccessModal, setShowDeleteSuccessModal] = useState(false);
 
   useEffect(() => {
     if (collectionId) {
@@ -80,69 +80,9 @@ const CollectionDetails = () => {
 
       if (cpError) throw cpError;
 
-      // Sample data for testing/demo
-      const SAMPLE_PRODUCTS = [
-        {
-          id: 'sample-1',
-          name: 'Classic Cotton T-Shirt',
-          description: 'Premium cotton t-shirt with comfortable fit.',
-          vendor_name: 'Urban Styles',
-          alias_vendor: 'Urban Styles',
-          price: 499,
-          originalPrice: 999,
-          discount: 50,
-          image_urls: ['https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
-          video_urls: [],
-          variants: [],
-          stock: 10,
-        },
-        {
-          id: 'sample-2',
-          name: 'Slim Fit Denim Jeans',
-          description: 'Classic blue denim jeans with perfect stretch.',
-          vendor_name: 'Denim Co.',
-          alias_vendor: 'Denim Co.',
-          price: 1299,
-          originalPrice: 2499,
-          discount: 48,
-          image_urls: ['https://images.unsplash.com/photo-1542272454315-4c01d7abdf4a?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
-          video_urls: [],
-          variants: [],
-          stock: 15,
-        },
-        {
-          id: 'sample-3',
-          name: 'Floral Summer Dress',
-          description: 'Lightweight and breezy dress for summer days.',
-          vendor_name: 'Chic Boutique',
-          alias_vendor: 'Chic Boutique',
-          price: 899,
-          originalPrice: 1799,
-          discount: 50,
-          image_urls: ['https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
-          video_urls: [],
-          variants: [],
-          stock: 8,
-        },
-        {
-          id: 'sample-4',
-          name: 'Running Shoes - Sport Edition',
-          description: 'High performance running shoes for athletes.',
-          vendor_name: 'SportZ',
-          alias_vendor: 'SportZ',
-          price: 2499,
-          originalPrice: 4999,
-          discount: 50,
-          image_urls: ['https://images.unsplash.com/photo-1542291026-7eec264c27ff?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'],
-          video_urls: [],
-          variants: [],
-          stock: 5,
-        }
-      ];
-
       if (!collectionProducts || collectionProducts.length === 0) {
-        // Use sample data if no products found (requested by user)
-        setProducts(SAMPLE_PRODUCTS);
+        // No products in collection - show empty state
+        setProducts([]);
         setLoading(false);
         return;
       }
@@ -283,7 +223,13 @@ const CollectionDetails = () => {
       setCollection(prev => prev ? { ...prev, name: newCollectionName.trim() } : null);
       setShowRenameModal(false);
 
-      Alert.alert('Success', 'Collection renamed successfully');
+      Toast.show({
+        type: 'success',
+        text1: 'Collection Renamed',
+        text2: `Collection renamed to "${newCollectionName.trim()}"`,
+        position: 'top',
+        visibilityTime: 2000,
+      });
     } catch (error) {
       console.error('Error renaming collection:', error);
       Alert.alert('Error', 'Failed to rename collection. Please try again.');
@@ -321,10 +267,8 @@ const CollectionDetails = () => {
             .in('product_id', productIds);
         }
 
-        // 3. Update local Wishlist Context (state & AsyncStorage)
-        productIds.forEach(id => {
-          removeFromWishlist(id);
-        });
+        // 3. Update local Wishlist Context (state & AsyncStorage) - use batch removal
+        removeMultipleFromWishlist(productIds);
       }
 
       // 4. Delete all products links from this collection
@@ -344,9 +288,20 @@ const CollectionDetails = () => {
 
       if (deleteCollectionError) throw deleteCollectionError;
 
-      // Close modal and show success confirmation
+      // Close modal and navigate back
       setShowDeleteModal(false);
-      setShowDeleteSuccessModal(true);
+      navigation.goBack();
+
+      // Show success message
+      setTimeout(() => {
+        Toast.show({
+          type: 'collectionDeleted',
+          text1: 'Collection Deleted',
+          text2: 'Collection and its items have been removed',
+          position: 'top',
+          visibilityTime: 2500,
+        });
+      }, 300);
     } catch (error) {
       console.error('Error deleting collection:', error);
       setShowDeleteModal(false);
@@ -398,7 +353,13 @@ const CollectionDetails = () => {
       setItemToRemove(null);
 
       // Show success message
-      Alert.alert('Success', 'Item removed from wishlist');
+      Toast.show({
+        type: 'success',
+        text1: 'Item Removed',
+        text2: 'Item has been removed from your wishlist',
+        position: 'top',
+        visibilityTime: 2000,
+      });
     } catch (error) {
       console.error('Error removing from collection:', error);
       Alert.alert('Error', 'Failed to remove item from collection');
@@ -555,10 +516,10 @@ const CollectionDetails = () => {
         </View>
       ) : products.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="folder-open-outline" size={64} color="#ccc" />
-          <Text style={styles.emptyTitle}>No items yet</Text>
+          <Ionicons name="heart-outline" size={64} color="#ccc" />
+          <Text style={styles.emptyTitle}>No wishlisted items</Text>
           <Text style={styles.emptySubtitle}>
-            Products you save to this collection will appear here
+            You do not have any wishlisted items.{'\n'}Please add items to your wishlist.
           </Text>
         </View>
       ) : (
@@ -695,29 +656,22 @@ const CollectionDetails = () => {
       >
         <View style={styles.deleteModalOverlay}>
           <View style={styles.deleteModalContainer}>
-            {/* Trash Icon */}
-            <View style={styles.deleteModalIconContainer}>
+            {/* Header with Icon and Title */}
+            <View style={styles.deleteModalHeader}>
               <View style={styles.deleteModalTrashCircle}>
-                <Ionicons name="trash" size={40} color="#F53F7A" />
+                <Ionicons name="trash" size={24} color="#F53F7A" />
               </View>
+              <Text style={styles.deleteModalTitle}>Delete Collection?</Text>
             </View>
-
-            {/* Title */}
-            <Text style={styles.deleteModalTitle}>Delete Collection?</Text>
 
             {/* Collection Name */}
-            <View style={styles.deleteModalCollectionInfo}>
-              <Text style={styles.deleteModalCollectionName} numberOfLines={2}>
-                {collection?.name || 'Collection'}
-              </Text>
-              <Text style={styles.deleteModalItemCount}>
-                {products.length} {products.length === 1 ? 'item' : 'items'}
-              </Text>
-            </View>
+            <Text style={styles.deleteModalCollectionName} numberOfLines={1}>
+              "{collection?.name || 'Collection'}" ({products.length} {products.length === 1 ? 'item' : 'items'})
+            </Text>
 
             {/* Warning Message */}
             <Text style={styles.deleteModalMessage}>
-              All products in this collection will be removed from your wishlist. This action cannot be undone.
+              All items will be removed from your wishlist. This cannot be undone.
             </Text>
 
             {/* Buttons */}
@@ -738,42 +692,6 @@ const CollectionDetails = () => {
                 <Text style={styles.deleteModalDeleteText}>Delete</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Delete Success Modal */}
-      <Modal
-        visible={showDeleteSuccessModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          setShowDeleteSuccessModal(false);
-          navigation.goBack();
-        }}
-      >
-        <View style={styles.successModalOverlay}>
-          <View style={styles.successModalContainer}>
-            <View style={styles.successModalIconContainer}>
-              <View style={styles.successModalCheckCircle}>
-                <Ionicons name="checkmark" size={40} color="#F53F7A" />
-              </View>
-            </View>
-
-            <Text style={styles.successModalTitle}>Success</Text>
-            <Text style={styles.successModalMessage}>Collection and its items deleted successfully</Text>
-
-            <TouchableOpacity
-              style={styles.successModalPrimaryButton}
-              onPress={() => {
-                setShowDeleteSuccessModal(false);
-                navigation.goBack();
-              }}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="arrow-forward" size={18} color="#FFF" />
-              <Text style={styles.successModalPrimaryButtonText}>Continue</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1151,171 +1069,82 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 24,
   },
   deleteModalContainer: {
-    width: '85%',
-    maxWidth: 340,
+    width: '100%',
+    maxWidth: 300,
     backgroundColor: '#fff',
-    borderRadius: 24,
-    padding: 24,
+    borderRadius: 16,
+    padding: 20,
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 15,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 10,
   },
-  deleteModalIconContainer: {
-    marginBottom: 16,
+  deleteModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 10,
   },
   deleteModalTrashCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#FFF0F5',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#F53F7A',
   },
   deleteModalTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     color: '#1a1a1a',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  deleteModalCollectionInfo: {
-    alignItems: 'center',
-    marginBottom: 16,
-    width: '100%',
-    backgroundColor: '#f9f9f9',
-    padding: 16,
-    borderRadius: 12,
   },
   deleteModalCollectionName: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#111',
-    textAlign: 'center',
-    marginBottom: 6,
-  },
-  deleteModalItemCount: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
     color: '#666',
+    textAlign: 'center',
+    marginBottom: 8,
   },
   deleteModalMessage: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 13,
+    color: '#888',
     textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 20,
-    paddingHorizontal: 8,
+    marginBottom: 20,
+    lineHeight: 18,
   },
   deleteModalButtons: {
     flexDirection: 'row',
     width: '100%',
-    gap: 12,
+    gap: 10,
   },
   deleteModalCancelButton: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingVertical: 14,
-    borderRadius: 12,
+    paddingVertical: 12,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   deleteModalCancelText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#333',
   },
   deleteModalDeleteButton: {
     flex: 1,
     backgroundColor: '#F53F7A',
-    paddingVertical: 14,
-    borderRadius: 12,
+    paddingVertical: 12,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#F53F7A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
   },
   deleteModalDeleteText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  // Success Modal Styles
-  successModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  successModalContainer: {
-    width: '85%',
-    maxWidth: 340,
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    padding: 24,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 15,
-    gap: 12,
-  },
-  successModalIconContainer: {
-    marginBottom: 8,
-  },
-  successModalCheckCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#FFF0F5',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#F53F7A',
-  },
-  successModalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    textAlign: 'center',
-  },
-  successModalMessage: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    lineHeight: 20,
-    paddingHorizontal: 8,
-  },
-  successModalPrimaryButton: {
-    marginTop: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    backgroundColor: '#F53F7A',
-    shadowColor: '#F53F7A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  successModalPrimaryButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: '#fff',
   },

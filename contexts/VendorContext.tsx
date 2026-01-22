@@ -73,7 +73,7 @@ interface VendorContextType {
   // Vendor actions
   fetchVendors: () => Promise<void>;
   fetchVendorById: (vendorId: string) => Promise<Vendor | null>;
-  fetchVendorPosts: (vendorId?: string) => Promise<void>;
+  fetchVendorPosts: (vendorId?: string) => Promise<VendorPost[]>;
   fetchVendorStories: (vendorId?: string) => Promise<void>;
   fetchFollowedVendors: () => Promise<void>;
 
@@ -192,9 +192,11 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
       );
 
       setVendorPosts(postsWithLikes);
+      return postsWithLikes;
     } catch (err) {
       console.error('Error fetching vendor posts:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch posts');
+      return [];
     } finally {
       setLoading(false);
     }
@@ -265,7 +267,16 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
 
   // Follow vendor
   const followVendor = useCallback(async (vendorId: string): Promise<boolean> => {
-    if (!user) {
+    let userId = user?.id;
+
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (sessionUser) {
+        userId = sessionUser.id;
+      }
+    }
+
+    if (!userId) {
       console.log('FollowVendor: No user found');
       return false;
     }
@@ -275,7 +286,7 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
       const { error } = await supabase
         .from('vendor_follows')
         .insert({
-          follower_id: user.id,
+          follower_id: userId,
           vendor_id: vendorId
         });
 
@@ -292,7 +303,16 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
 
   // Unfollow vendor
   const unfollowVendor = useCallback(async (vendorId: string): Promise<boolean> => {
-    if (!user) {
+    let userId = user?.id;
+
+    if (!userId) {
+      const { data: { user: sessionUser } } = await supabase.auth.getUser();
+      if (sessionUser) {
+        userId = sessionUser.id;
+      }
+    }
+
+    if (!userId) {
       console.log('UnfollowVendor: No user found');
       return false;
     }
@@ -302,7 +322,7 @@ export const VendorProvider: React.FC<VendorProviderProps> = ({ children }) => {
       const { error } = await supabase
         .from('vendor_follows')
         .delete()
-        .eq('follower_id', user.id)
+        .eq('follower_id', userId)
         .eq('vendor_id', vendorId);
 
       if (error) throw error;

@@ -26,27 +26,36 @@ export default function ResellerDashboard() {
   const [resellerInfo, setResellerInfo] = useState<Reseller | null>(null);
 
   useEffect(() => {
-    fetchDashboardData();
-  }, []);
+    if (userData?.id) {
+      fetchDashboardData();
+    }
+  }, [userData?.id]);
 
   const fetchDashboardData = async () => {
-    if (!userData?.id) return;
+    if (!userData?.id) {
+      setLoading(false);
+      return;
+    }
 
     try {
       setLoading(true);
       const resellerProfile = await ResellerService.getResellerByUserId(userData.id);
-      setResellerInfo(resellerProfile);
-
+      
       if (!resellerProfile) {
+        setResellerInfo(null);
         setDashboardData(null);
+        setLoading(false);
         return;
       }
 
+      setResellerInfo(resellerProfile);
       const dashboard = await ResellerService.getResellerDashboard(resellerProfile.id);
       setDashboardData(dashboard);
     } catch (error: any) {
       console.error('Error fetching dashboard data:', error);
-      Alert.alert('Error', 'Failed to load dashboard data');
+      setResellerInfo(null);
+      setDashboardData(null);
+      Alert.alert('Error', error?.message || 'Failed to load dashboard data. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -153,10 +162,10 @@ export default function ResellerDashboard() {
         {/* Welcome Section */}
         <View style={styles.welcomeSection}>
           <Text style={styles.welcomeTitle}>
-            Welcome back, {resellerInfo.business_name || userData?.name}!
+            Welcome back, {resellerInfo?.business_name || userData?.name || 'Reseller'}!
           </Text>
           <Text style={styles.welcomeSubtitle}>
-            {resellerInfo.is_verified ? '✅ Verified Reseller' : '⏳ Pending Verification'}
+            {resellerInfo?.is_verified ? '✅ Verified Reseller' : '⏳ Pending Verification'}
           </Text>
         </View>
 

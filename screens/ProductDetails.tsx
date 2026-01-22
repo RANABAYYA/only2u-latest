@@ -58,7 +58,9 @@ import { uploadProfilePhoto, validateImage } from '~/utils/profilePhotoUpload';
 import { compressImageForProfilePhoto } from '~/utils/imageCompression';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { addToRecentlyViewed } from '../utils/recentlyViewedService';
 import { getPlayableVideoUrl, isHlsUrl, getFallbackVideoUrl } from '../utils/videoUrlHelpers';
+import { getSetting } from '~/utils/settings';
 
 const { width } = Dimensions.get('window');
 const RESELL_TUTORIAL_VIDEO_URL = 'https://vz-025b9bde-754.b-cdn.net/b0227bc1-daa8-4c85-8233-5e3880ad5828/playlist.m3u8';
@@ -74,6 +76,11 @@ const ProductDetails = () => {
   const route = useRoute<ProductDetailsRouteProp>();
   const { product, productId, scrollToReviews: shouldScrollToReviews } = route.params || {};
   const isFocused = useIsFocused();
+
+  const handleBackPress = useCallback(() => {
+    // Always navigate to home screen instead of goBack to prevent exiting app
+    (navigation as any).replace('TabNavigator');
+  }, [navigation]);
 
   // State for fetched product (when only productId is provided)
   const [fetchedProduct, setFetchedProduct] = useState<any>(null);
@@ -105,6 +112,12 @@ const ProductDetails = () => {
   const [showSizeSelectionModal, setShowSizeSelectionModal] = useState(false);
   const [sizeSelectionDraft, setSizeSelectionDraft] = useState<string | null>(null);
   const [sizeSelectionError, setSizeSelectionError] = useState('');
+  // Sticky buttons state
+  const [showStickyButtons, setShowStickyButtons] = useState(true);
+  const [sizeSectionY, setSizeSectionY] = useState<number>(0);
+  const [showCartSizeSheet, setShowCartSizeSheet] = useState(false);
+  const [cartSizeDraft, setCartSizeDraft] = useState<string | null>(null);
+  const [cartJustAdded, setCartJustAdded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [productImages, setProductImages] = useState<string[]>([]);
@@ -201,6 +214,9 @@ const ProductDetails = () => {
   const [failedVideos, setFailedVideos] = useState<Set<string>>(new Set());
   const [videoFallbackOverrides, setVideoFallbackOverrides] = useState<Record<string, string>>({});
 
+  // Global setting for wholesale combo offer visibility
+  const [showWholesaleCombo, setShowWholesaleCombo] = useState(true);
+
   // Convert Google Drive links to direct download for thumbnail generation
   const resetFullScreenZoom = useCallback(() => {
     baseScale.setValue(1);
@@ -231,6 +247,21 @@ const ProductDetails = () => {
       }
     };
     loadTutorialFlags();
+  }, []);
+
+  // Fetch global setting for wholesale combo offer visibility
+  useEffect(() => {
+    const fetchWholesaleComboSetting = async () => {
+      try {
+        const value = await getSetting('show_wholesale_combo');
+        // Default to true if setting doesn't exist
+        setShowWholesaleCombo(value !== 'false');
+      } catch (error) {
+        console.warn('Failed to fetch wholesale combo setting:', error);
+        setShowWholesaleCombo(true); // Default to true on error
+      }
+    };
+    fetchWholesaleComboSetting();
   }, []);
 
   useEffect(() => {
@@ -442,6 +473,8 @@ const ProductDetails = () => {
 
   // Scroll ref for scrolling to reviews
   const scrollViewRef = useRef<ScrollView>(null);
+  const sizeSectionRef = useRef<View>(null);
+  const scrollYRef = useRef(0); // Track current scroll position
   const [contentHeight, setContentHeight] = useState(0);
 
   // Reviews state
@@ -621,26 +654,19 @@ const ProductDetails = () => {
             setVariants(variantsData);
             console.log('✅ Set variants from fetched product:', variantsData.length);
 
-            // Extract unique sizes and sort in standard order (to find smallest size)
-            const sizesFromProduct = [...new Map(variantsData.map((v) => [v.size.id, v.size])).values()];
-            const sizePriority = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'Free Size'];
-            const getPriority = (name: string) => {
-              const idx = sizePriority.indexOf((name || '').trim());
-              return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
-            };
-            const sortedSizesFromProduct = [...sizesFromProduct].sort((a, b) => {
-              const pa = getPriority(a.name);
-              const pb = getPriority(b.name);
-              if (pa !== pb) return pa - pb;
-              return a.name.localeCompare(b.name);
-            });
-
-            // Set default variant (prioritize smallest size, then first variant with images)
+            // Set default variant (prioritize smallest/lowest size with images)
             if (variantsData.length > 0 && !selectedVariant) {
-              const smallestSizeVariant = variantsData.find((v) => v.size?.id === sortedSizesFromProduct[0]?.id && v.image_urls && v.image_urls.length > 0);
-              const defaultVariant = smallestSizeVariant || variantsData.find((v) => v.image_urls && v.image_urls.length > 0) || variantsData[0];
+              const sizePriorityOrder = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'Free Size'];
+              const getVariantSizePriority = (v: any) => {
+                const sizeName = v.size?.name?.trim().toUpperCase() || '';
+                const idx = sizePriorityOrder.findIndex(s => s.toUpperCase() === sizeName);
+                return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+              };
+              // Sort variants by size priority (smallest first) and pick the first one with images
+              const sortedVariants = [...variantsData].sort((a, b) => getVariantSizePriority(a) - getVariantSizePriority(b));
+              const defaultVariant = sortedVariants.find((v) => v.image_urls && v.image_urls.length > 0) || sortedVariants[0];
               setSelectedVariant(defaultVariant);
-              console.log('✅ Set default variant from fetched product:', defaultVariant.id, 'Size:', defaultVariant.size?.name, '(Smallest available size)');
+              console.log('✅ Set default variant from fetched product:', defaultVariant.id, 'Size:', defaultVariant.size?.name);
             }
           }
         }
@@ -664,6 +690,14 @@ const ProductDetails = () => {
 
   // Use fetched product if available, otherwise use passed product
   const effectiveProduct = fetchedProduct || product;
+
+  // Track recently viewed product
+  useEffect(() => {
+    const productIdToTrack = effectiveProduct?.id || productId;
+    if (productIdToTrack) {
+      addToRecentlyViewed(productIdToTrack);
+    }
+  }, [effectiveProduct?.id, productId]);
 
   const productData = useMemo(
     () => ({
@@ -1204,19 +1238,26 @@ const ProductDetails = () => {
         setSelectedColor(availableColorsArray[0].id);
       }
 
-      // Auto-select smallest size (XS < S < M < L < XL < XXL < Free Size)
-      if (sortedSizes.length > 0 && !selectedSize) {
+      // Auto-select size if it is "no size"
+      if (isNoSizeProduct && !selectedSize) {
         setSelectedSize(sortedSizes[0].id);
-        console.log('✅ Auto-selected smallest size:', sortedSizes[0].name, '(ID:', sortedSizes[0].id, ')');
+        console.log('✅ Auto-selected "no size":', sortedSizes[0].id);
       }
+      // Otherwise Size selection is required - no auto-selection
 
-      // Set default variant if no variant is selected (prioritize smallest size, then first variant with images)
+      // Set default variant if no variant is selected (prioritize smallest/lowest size with images)
       if (variantsData.length > 0 && !selectedVariant) {
-        // Get the smallest size variant
-        const smallestSizeVariant = variantsData.find((v) => v.size?.id === sortedSizes[0]?.id && v.image_urls && v.image_urls.length > 0);
-        const defaultVariant = smallestSizeVariant || variantsData.find((v) => v.image_urls && v.image_urls.length > 0) || variantsData[0];
+        const sizePriorityOrder = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'Free Size'];
+        const getVariantSizePriority = (v: any) => {
+          const sizeName = v.size?.name?.trim().toUpperCase() || '';
+          const idx = sizePriorityOrder.findIndex(s => s.toUpperCase() === sizeName);
+          return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+        };
+        // Sort variants by size priority (smallest first) and pick the first one with images
+        const sortedVariants = [...variantsData].sort((a, b) => getVariantSizePriority(a) - getVariantSizePriority(b));
+        const defaultVariant = sortedVariants.find((v) => v.image_urls && v.image_urls.length > 0) || sortedVariants[0];
         setSelectedVariant(defaultVariant);
-        console.log('✅ Set default variant:', defaultVariant.id, 'Size:', defaultVariant.size?.name, '(Smallest available size)');
+        console.log('✅ Set default variant:', defaultVariant.id, 'Size:', defaultVariant.size?.name);
       }
     } catch (error) {
       console.error('Error fetching variants:', error);
@@ -1364,6 +1405,7 @@ const ProductDetails = () => {
       style={[styles.sizeOption, selectedSize === size.id && styles.selectedSizeOption]}
       onPress={() => {
         setSelectedSize(size.id);
+        setCartJustAdded(false);
       }}>
       <Text style={[styles.sizeText, selectedSize === size.id && styles.selectedSizeText]}>
         {size.name}
@@ -1540,12 +1582,14 @@ const ProductDetails = () => {
     ]).start();
   };
 
-  const handleAddToCart = async () => {
-    // Check size first
-    if (!selectedSize) {
+  const handleAddToCart = async (overrideOptions?: { isReseller?: boolean; price?: number; margin?: number; size?: string }) => {
+    // Check size first (allow override or fallback to state)
+    const effectiveSize = overrideOptions?.size || selectedSize;
+
+    if (!effectiveSize) {
       triggerJitterAnimation(sizeSectionJitter);
       Toast.show({
-        type: 'error',
+        type: 'sizeRequired',
         text1: 'Size Required',
         text2: 'Please select a size to add to cart',
         position: 'top',
@@ -1587,7 +1631,7 @@ const ProductDetails = () => {
     setAddToCartLoading(true);
 
     const selectedColorData = availableColors.find((c) => c.id === selectedColor);
-    const selectedSizeData = availableSizes.find((s) => s.id === selectedSize);
+    const selectedSizeData = availableSizes.find((s) => s.id === effectiveSize);
 
     // Determine the best image to show in cart (Variant Image > Product Image > Fallback)
     const variantImage = selectedVariant?.image_urls?.[0];
@@ -1606,13 +1650,14 @@ const ProductDetails = () => {
       price: selectedVariant?.price || productData.price,
       image: bestImage,
       image_urls: mergedImages,
-      size: selectedSizeData?.name || selectedSize,
+      size: selectedSizeData?.name || effectiveSize,
       color: selectedColorData?.name || selectedColor || 'N/A',
       quantity: quantityToAdd,
       stock: selectedVariant.quantity,
       category: productData.category,
       sku: productData.sku || productData.id,
-      isReseller: false,
+      isReseller: overrideOptions?.isReseller ?? false,
+      resellerPrice: overrideOptions?.price, // Pass custom reseller price if available
     });
 
     setAddToCartLoading(false);
@@ -1628,6 +1673,104 @@ const ProductDetails = () => {
       position: 'top',
       visibilityTime: 2000,
     });
+
+    // Set flag to show "Go to Bag" button
+    setCartJustAdded(true);
+  };
+
+  const handleComboOfferAddToCart = async () => {
+    if (!productData || availableSizes.length === 0) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Product or sizes not available',
+        position: 'top',
+      });
+      return;
+    }
+
+    setAddToCartLoading(true);
+    setShowMarginModal(false);
+
+    try {
+      // Get product images
+      const productImage = productData.image_urls?.[0] || productData.image || '';
+      const productImages = productData.image_urls || (productData.image ? [productData.image] : []);
+
+      // Get selected color if available
+      const selectedColorData = availableColors.find((c) => c.id === selectedColor);
+
+      // Add each size variant to cart
+      for (const size of availableSizes) {
+        // Find variant for this size (prefer selected color, otherwise first available)
+        let variantForSize = variants.find(
+          (v) => v.size_id === size.id && (selectedColor ? v.color_id === selectedColor : true)
+        );
+
+        // If no variant found with selected color, try any variant with this size
+        if (!variantForSize) {
+          variantForSize = variants.find((v) => v.size_id === size.id);
+        }
+
+        if (!variantForSize) {
+          console.warn(`No variant found for size ${size.name}`);
+          continue;
+        }
+
+        // Get base price for this variant (use RSP if available, otherwise regular price)
+        const basePrice = variantForSize.rsp_price || variantForSize.price || productData.price;
+
+        // Calculate discounted price per item (15% discount)
+        const discountedPricePerItem = Math.round(basePrice * 0.85);
+
+        // Use variant image if available, otherwise product image
+        const variantImage = variantForSize?.image_urls?.[0] || productImage;
+        const variantImages = variantForSize?.image_urls || [];
+        const mergedImages = [...new Set([...variantImages, ...productImages])];
+
+        // Add to cart with discounted price
+        addToCart({
+          productId: productData.id,
+          variantId: variantForSize.id,
+          name: productData.name,
+          price: discountedPricePerItem, // Apply 15% discount
+          image: variantImage || productImage,
+          image_urls: mergedImages.length > 0 ? mergedImages : (productImage ? [productImage] : []),
+          size: size.name,
+          color: variantForSize.color?.name || selectedColorData?.name || 'N/A',
+          quantity: 1,
+          stock: variantForSize.quantity,
+          category: productData.category,
+          sku: variantForSize.sku || productData.sku || productData.id,
+          isReseller: true,
+          resellerPrice: discountedPricePerItem, // Set reseller price for combo offer
+        });
+      }
+
+      // Show success toast
+      Toast.show({
+        type: 'success',
+        text1: 'Combo Offer Added! 🎉',
+        text2: `${availableSizes.length} sizes added to cart with 15% discount`,
+        position: 'top',
+        visibilityTime: 3000,
+      });
+
+      // Navigate to cart screen
+      setTimeout(() => {
+        (navigation as any).navigate('Cart');
+      }, 500);
+    } catch (error) {
+      console.error('Error adding combo offer to cart:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to add combo offer to cart',
+        position: 'top',
+      });
+    } finally {
+      setAddToCartLoading(false);
+    }
   };
 
   const fetchUserCoinBalance = async () => {
@@ -2949,7 +3092,7 @@ const ProductDetails = () => {
             <Ionicons name="image-outline" size={64} color="#ccc" />
             <Text style={styles.noImageText}>{t('no_images_available')}</Text>
           </View>
-          <TouchableOpacity style={styles.floatingBackButton} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={styles.floatingBackButton} onPress={handleBackPress}>
             <Ionicons name="arrow-back" size={22} color="#333" />
           </TouchableOpacity>
         </View>
@@ -3250,7 +3393,7 @@ const ProductDetails = () => {
 
         {/* Floating Buttons */}
         <View style={styles.floatingTopButtons}>
-          <TouchableOpacity style={styles.floatingBackButton} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={styles.floatingBackButton} onPress={handleBackPress}>
             <Ionicons name="arrow-back" size={22} color="#333" />
           </TouchableOpacity>
         </View>
@@ -3302,7 +3445,7 @@ const ProductDetails = () => {
         <View style={styles.header}>
           <View style={styles.statusBarSpacer} />
           <View style={styles.headerContent}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+            <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
               <Ionicons name="arrow-back" size={24} color="#333" />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
@@ -3400,6 +3543,17 @@ const ProductDetails = () => {
           style={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={(e) => {
+            const scrollY = e.nativeEvent.contentOffset.y;
+            scrollYRef.current = scrollY;
+            // Hide sticky buttons as soon as user scrolls a little
+            // Show only when at very top of page (within 100px)
+            const shouldShowSticky = scrollY < 100;
+            if (shouldShowSticky !== showStickyButtons) {
+              setShowStickyButtons(shouldShowSticky);
+            }
+          }}
           onContentSizeChange={(contentWidth, contentHeight) => {
             setContentHeight(contentHeight);
           }}>
@@ -3502,7 +3656,28 @@ const ProductDetails = () => {
             </View>
 
             {/* Product Options & Actions Section */}
-            <View style={styles.productOptionsSection}>
+            <View
+              style={styles.productOptionsSection}
+              ref={sizeSectionRef}
+              onLayout={() => {
+                // Measure the position after layout is complete
+                setTimeout(() => {
+                  if (sizeSectionRef.current) {
+                    sizeSectionRef.current.measureInWindow((x, y, width, height) => {
+                      // y is the position from top of screen
+                      // To get position within scroll content:
+                      // scrollContentY = screenY + currentScrollY - headerHeight
+                      // Assume header is ~120px (status bar + header content)
+                      const headerHeight = 120;
+                      const scrollContentY = y + scrollYRef.current - headerHeight;
+                      if (scrollContentY > 0) {
+                        setSizeSectionY(scrollContentY);
+                      }
+                    });
+                  }
+                }, 500);
+              }}
+            >
               {/* Size Selection */}
               {availableSizes.length > 0 && !(availableSizes.length === 1 && availableSizes[0].name.toLowerCase() === 'no size') && (
                 <Animated.View
@@ -3608,7 +3783,13 @@ const ProductDetails = () => {
                           styles.addToCartButtonPro,
                           (getAvailableQuantity() === 0 || addToCartLoading) && styles.buttonDisabled,
                         ]}
-                        onPress={handleAddToCart}
+                        onPress={() => {
+                          if (cartJustAdded) {
+                            navigation.navigate('Cart');
+                          } else {
+                            handleAddToCart();
+                          }
+                        }}
                         disabled={getAvailableQuantity() === 0 || addToCartLoading}
                         activeOpacity={0.85}
                       >
@@ -3617,7 +3798,7 @@ const ProductDetails = () => {
                         ) : (
                           <View style={styles.buttonIconContainer}>
                             <Ionicons
-                              name="cart"
+                              name={cartJustAdded ? 'bag-check' : 'cart'}
                               size={20}
                               color={(getAvailableQuantity() === 0 || !selectedSize) ? '#9CA3AF' : '#fff'}
                             />
@@ -3631,7 +3812,7 @@ const ProductDetails = () => {
                             ? t('adding')
                             : (getAvailableQuantity() === 0
                               ? 'Out of Stock'
-                              : t('add_to_cart'))}
+                              : (cartJustAdded ? 'Go to Bag' : t('add_to_cart')))}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -4129,6 +4310,66 @@ const ProductDetails = () => {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Sticky Buttons - shown when above size section */}
+      {showStickyButtons && !(productData as any).isPersonalized && (
+        <View style={styles.stickyButtonsContainer}>
+          <View style={styles.stickyActionsRow}>
+            {String((productData.category as any) || '').toLowerCase().trim() !== 'dress material' && (
+              <TouchableOpacity
+                style={styles.stickyTryOnButton}
+                onPress={handleTryOnButtonPress}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="camera" size={16} color="#F53F7A" />
+                <Text style={styles.stickyTryOnButtonText}>{t('try_on')}</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[
+                styles.stickyAddToCartButton,
+                (getAvailableQuantity() === 0 || addToCartLoading) && styles.buttonDisabled,
+              ]}
+              onPress={() => {
+                if (cartJustAdded) {
+                  navigation.navigate('Cart');
+                  return;
+                }
+                // If no size selected, show size selection bottom sheet
+                if (!selectedSize) {
+                  setCartSizeDraft(null);
+                  setShowCartSizeSheet(true);
+                } else {
+                  handleAddToCart();
+                }
+              }}
+              disabled={getAvailableQuantity() === 0 || addToCartLoading}
+              activeOpacity={0.85}
+            >
+              {addToCartLoading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons
+                  name={cartJustAdded ? 'bag-check' : 'cart'}
+                  size={16}
+                  color={(getAvailableQuantity() === 0) ? '#9CA3AF' : '#fff'}
+                />
+              )}
+              <Text style={[
+                styles.stickyAddToCartButtonText,
+                (getAvailableQuantity() === 0) && styles.buttonDisabledText,
+              ]}>
+                {addToCartLoading
+                  ? t('adding')
+                  : (getAvailableQuantity() === 0
+                    ? 'Out of Stock'
+                    : (cartJustAdded ? 'Go to Bag' : t('add_to_cart')))}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* SaveToCollectionSheet */}
       <SaveToCollectionSheet
@@ -4988,67 +5229,6 @@ const ProductDetails = () => {
                 <Text style={styles.customPriceHelp}>Leave empty to use selected margin</Text>
               </View>
 
-              {/* Full Set Option - 15% discount on RSP */}
-              {availableSizes && availableSizes.length > 1 && (
-                <View style={{
-                  marginTop: 16,
-                  padding: 16,
-                  backgroundColor: '#FEF3C7',
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: '#F59E0B',
-                }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                    <Ionicons name="gift" size={20} color="#D97706" />
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#92400E', marginLeft: 8 }}>
-                      Combo Offer
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: 14, color: '#78350F', marginBottom: 8 }}>
-                    Buy all available sizes ({availableSizes.length} sizes: {availableSizes.map(s => s.name).join(', ')}) at 15% discount!
-                  </Text>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <View>
-                      <Text style={{ fontSize: 12, color: '#92400E' }}>Full Set Price:</Text>
-                      <Text style={{ fontSize: 18, fontWeight: '700', color: '#D97706' }}>
-                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length * 0.85)}
-                      </Text>
-                      <Text style={{ fontSize: 11, color: '#78350F', textDecorationLine: 'line-through' }}>
-                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length)}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={{
-                        backgroundColor: '#D97706',
-                        paddingHorizontal: 16,
-                        paddingVertical: 10,
-                        borderRadius: 8,
-                      }}
-                      onPress={() => {
-                        setShowMarginModal(false);
-                        // Navigate to catalog share with full set info
-                        const fullSetPrice = Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length * 0.85);
-                        (navigation as any).navigate('CatalogShare', {
-                          product: {
-                            ...productData,
-                            variants: variants,
-                            product_variants: variants,
-                            availableSizes: availableSizes,
-                            isFullSet: true,
-                            fullSetPrice: fullSetPrice,
-                            resellPrice: fullSetPrice,
-                            margin: 0,
-                            basePrice: (selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length
-                          }
-                        });
-                      }}
-                    >
-                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Select Full Set</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
               <View style={styles.marginSummary}>
                 <Text style={styles.marginSummaryTitle}>Profit Summary</Text>
                 {(() => {
@@ -5116,6 +5296,61 @@ const ProductDetails = () => {
                 }}>
                 <Text style={styles.marginContinueText}>Continue to Share</Text>
               </TouchableOpacity>
+
+
+
+              {/* Full Set Option - 15% discount on RSP */}
+              {showWholesaleCombo && availableSizes && availableSizes.length > 1 && (
+                <View style={{
+                  marginTop: 16,
+                  padding: 16,
+                  backgroundColor: '#FFF0F5',
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#F53F7A',
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="gift" size={20} color="#F53F7A" />
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#B91C4B', marginLeft: 8 }}>
+                      Wholesale Combo Offer
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 13, color: '#BE185D', marginBottom: 6 }}>
+                    Buy all available sizes ({availableSizes.length} sizes: {availableSizes.map(s => s.name).join(', ')})
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, backgroundColor: 'rgba(245, 63, 122, 0.1)', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, alignSelf: 'flex-start' }}>
+                    <Ionicons name="pricetag" size={14} color="#F53F7A" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#F53F7A', marginLeft: 6 }}>
+                      Get flat 15% EXTRA Discount
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View>
+                      <Text style={{ fontSize: 12, color: '#B91C4B' }}>Full Set Price:</Text>
+                      <Text style={{ fontSize: 18, fontWeight: '700', color: '#F53F7A' }}>
+                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length * 0.85)}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#BE185D', textDecorationLine: 'line-through' }}>
+                        ₹{Math.round((selectedVariant?.rsp_price || selectedVariant?.price || productData.price) * availableSizes.length)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#F53F7A',
+                        paddingHorizontal: 16,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                      }}
+                      onPress={handleComboOfferAddToCart}
+                      disabled={addToCartLoading}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
+                        {addToCartLoading ? 'Adding...' : 'Add 1 Set to Cart'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </ScrollView>
           </View>
         </View>
@@ -5429,6 +5664,99 @@ const ProductDetails = () => {
               >
                 <Ionicons name="checkmark-circle" size={18} color="#fff" />
                 <Text style={styles.sizeModalConfirmText}>Continue</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Cart Size Selection Bottom Sheet */}
+      <Modal
+        visible={showCartSizeSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCartSizeSheet(false)}
+      >
+        <View style={styles.cartSizeSheetOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowCartSizeSheet(false)}
+          />
+          <View style={styles.cartSizeSheetContent}>
+            <View style={styles.sizeModalHeader}>
+              <Text style={styles.sizeModalTitle}>Select Size</Text>
+              <TouchableOpacity
+                style={styles.sizeModalCloseButton}
+                onPress={() => setShowCartSizeSheet(false)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="close" size={20} color="#1C1C1E" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.sizeModalSubtitle}>
+              Please select a size to add this item to your bag.
+            </Text>
+
+            <View style={styles.sizeOptionsWrap}>
+              {availableSizes.map((size) => (
+                <TouchableOpacity
+                  key={size.id}
+                  style={[
+                    styles.sizeOption,
+                    cartSizeDraft === size.id && styles.selectedSizeOption,
+                  ]}
+                  onPress={() => setCartSizeDraft(size.id)}
+                >
+                  <Text
+                    style={[
+                      styles.sizeText,
+                      cartSizeDraft === size.id && styles.selectedSizeText,
+                    ]}
+                  >
+                    {size.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => {
+                if (cartJustAdded) {
+                  // Navigate to Cart screen
+                  setShowCartSizeSheet(false);
+                  setCartJustAdded(false);
+                  navigation.navigate('Cart');
+                  return;
+                }
+                if (cartSizeDraft) {
+                  // Set the selected size for UI consistency
+                  setSelectedSize(cartSizeDraft);
+
+                  // Call add to cart immediately with the specific size to avoid state closure issues
+                  handleAddToCart({ size: cartSizeDraft });
+                  setCartJustAdded(true);
+                } else {
+                  Toast.show({
+                    type: 'sizeRequired',
+                    text1: 'Size Required',
+                    text2: 'Please select a size first',
+                    position: 'top',
+                    visibilityTime: 2000,
+                  });
+                }
+              }}
+              style={styles.sizeModalConfirmWrapper}
+            >
+              <LinearGradient
+                colors={cartJustAdded ? ['#22C55E', '#16A34A'] : ['#FF8FB1', '#F53F7A']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.sizeModalConfirmButton}
+              >
+                <Ionicons name={cartJustAdded ? 'bag-check' : 'cart'} size={18} color="#fff" />
+                <Text style={styles.sizeModalConfirmText}>{cartJustAdded ? 'Go to Bag' : 'Add to Bag'}</Text>
               </LinearGradient>
             </TouchableOpacity>
           </View>
@@ -8858,6 +9186,85 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#fff',
+  },
+  // Sticky buttons at bottom
+  stickyButtonsContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 10,
+    zIndex: 999,
+  },
+  stickyActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'stretch',
+    width: '100%',
+  },
+  stickyTryOnButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#F53F7A',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    gap: 6,
+    minHeight: 42,
+  },
+  stickyTryOnButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#F53F7A',
+  },
+  stickyAddToCartButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F53F7A',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    gap: 6,
+    minHeight: 42,
+  },
+  stickyAddToCartButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  // Cart size selection bottom sheet
+  cartSizeSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  cartSizeSheetContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 32,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 12,
   },
 });
 

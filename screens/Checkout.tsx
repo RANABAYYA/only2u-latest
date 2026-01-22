@@ -43,20 +43,18 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [successOrderNumber, setSuccessOrderNumber] = useState('');
   const [showPriceBreakdown, setShowPriceBreakdown] = useState(false);
-  
+
   // Default address from address book
   const [defaultAddress, setDefaultAddress] = useState<any | null>(null);
-  
+
   // Coupon state
   const [couponCode, setCouponCode] = useState('');
   const [couponAppliedCode, setCouponAppliedCode] = useState<string | null>(null);
   const [couponDiscountAmount, setCouponDiscountAmount] = useState(0);
-  
   // Address management state
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [newAddress, setNewAddress] = useState('');
   const [savingAddress, setSavingAddress] = useState(false);
-  
   // Phone number management state
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [newPhone, setNewPhone] = useState('');
@@ -64,16 +62,19 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
 
   // Custom alert for contact info
   const [showContactAlert, setShowContactAlert] = useState(false);
-  
+
   // Custom alert for order failed
   const [showOrderFailedAlert, setShowOrderFailedAlert] = useState(false);
   const [orderFailedMessage, setOrderFailedMessage] = useState('');
-  
+
   // Custom alert for shipping address
   const [showAddressRequiredAlert, setShowAddressRequiredAlert] = useState(false);
-  
+
   // Custom alert for empty cart
   const [showEmptyCartAlert, setShowEmptyCartAlert] = useState(false);
+
+  // Track if the completed order was a reseller order (persists after cart clear)
+  const [wasResellerOrder, setWasResellerOrder] = useState(false);
 
   // Reseller calculations from cart items
   const hasResellerItems = cartItems.some(item => item.isReseller);
@@ -482,10 +483,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
   const processRegularOrder = async (itemsToProcess: any[]) => {
     // Temporarily update cart items for processing
     const originalCartItems = cartItems;
-    
+
     // Create a temporary cart context with only in-stock items
     const tempCartItems = itemsToProcess;
-    
+
     if (!defaultAddress) {
       setShowAddressRequiredAlert(true);
       throw new Error('Address required');
@@ -503,7 +504,7 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
         }
         if (item.resellerPrice < originalPrice) {
           Alert.alert(
-            'Invalid Reseller Price', 
+            'Invalid Reseller Price',
             `Selling price cannot be less than the original price for "${item.name}".`
           );
           throw new Error('Invalid reseller price');
@@ -514,14 +515,17 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
     // Process COD order
     console.log('Processing COD order...');
     const orderData = await createOrder('pending', undefined, tempCartItems);
-    
+
     // Remove only the processed items from cart
     const processedItemIds = tempCartItems.map(item => item.id);
     const remainingItems = originalCartItems.filter(item => !processedItemIds.includes(item.id));
-    
+
     // Clear the cart after successful order
+    // Store reseller status BEFORE clearing the cart
+    const isResellerOrder = tempCartItems.some(item => item.isReseller);
+    setWasResellerOrder(isResellerOrder);
     clearCart();
-    
+
     setSuccessOrderNumber(orderData.order_number);
     setShowSuccessAnimation(true);
     return orderData;
@@ -536,7 +540,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
       .eq('user_id', userData.id)
       .eq('is_default', true)
       .single();
-    
     if (!error && data) {
       setDefaultAddress(data);
     }
@@ -572,7 +575,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
 
     try {
       setSavingAddress(true);
-      
       const { error } = await supabase
         .from('users')
         .update({ location: newAddress.trim() })
@@ -645,7 +647,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
 
     try {
       setSavingPhone(true);
-      
       const { error } = await supabase
         .from('users')
         .update({ phone: `+91${cleanPhone}` })
@@ -694,17 +695,9 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
     paymentId?: string,
     itemsToProcess?: any[]
   ) => {
-    const orderItems = itemsToProcess || cartItems;
-    const resellerOrderItems: Array<{
-      productId: string | null;
-      variantId?: string | null;
-      quantity: number;
-      baseUnitPrice: number;
-      resellerUnitPrice: number;
-      baseTotal: number;
-      resellerTotal: number;
-      marginAmount: number;
-    }> = [];
+    const allItems = itemsToProcess || cartItems;
+    const createdOrders: any[] = [];
+
     console.log('Raw userData:', {
       hasUserData: !!userData,
       id: userData?.id,
@@ -714,18 +707,17 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
     });
 
     let userId: string | null = null;
-    
+
     if (userData?.id) {
       const rawId = String(userData.id).trim();
-      console.log('Checking user ID:', { rawId, length: rawId.length });
-      
-      if (rawId === 'mock-user-id' || 
-          rawId === '-m-n/a' || 
-          rawId === '-M-N/A' ||
-          rawId.toLowerCase() === 'n/a' ||
-          rawId === 'undefined' ||
-          rawId === 'null' ||
-          !isValidUUID(rawId)) {
+
+      if (rawId === 'mock-user-id' ||
+        rawId === '-m-n/a' ||
+        rawId === '-M-N/A' ||
+        rawId.toLowerCase() === 'n/a' ||
+        rawId === 'undefined' ||
+        rawId === 'null' ||
+        !isValidUUID(rawId)) {
         console.warn('Invalid user ID detected, setting to null:', rawId);
         userId = null;
       } else {
@@ -733,76 +725,81 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
       }
     }
 
-    const totalAmount = orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const finalAmount = Math.max(0, totalAmount - couponDiscountAmount);
-    const status = paymentStatus === 'paid' ? 'confirmed' : 'pending';
+    // Calculate overall total for discount distribution
+    const overallTotal = allItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-    // Calculate reseller values from order items
-    const originalTotal = orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const resellerTotal = orderItems.reduce((sum, item) => {
-      return sum + (item.isReseller && item.resellerPrice ? item.resellerPrice : item.price * item.quantity);
-    }, 0);
-    const totalProfit = resellerTotal - originalTotal;
-    const hasResellerItems = orderItems.some(item => item.isReseller);
-
-    console.log('Creating order with:', {
-      userId,
-      paymentMethod,
-      paymentStatus,
-      totalAmount: finalAmount,
-      status,
-      hasResellerItems,
-      totalProfit
-    });
-
-    const { data: orderData, error: orderError } = await supabase
-      .from('orders')
-      .insert([
-        {
-          user_id: userId,
-          status: status,
-          payment_method: paymentMethod,
-          payment_status: paymentStatus,
-          payment_id: paymentId || null,
-          total_amount: finalAmount,
-          subtotal: totalAmount,
-          shipping_amount: 0,
-          tax_amount: 0,
-          discount_amount: couponDiscountAmount,
-          shipping_address: userData?.location || 'Not provided',
-          customer_name: userData?.name || 'Guest',
-          customer_email: userData?.email || null,
-          customer_phone: userData?.phone || null,
-          is_reseller_order: hasResellerItems,
-          reseller_margin_percentage: hasResellerItems ? ((totalProfit / originalTotal) * 100) : null,
-          reseller_margin_amount: hasResellerItems ? totalProfit : null,
-          original_total: hasResellerItems ? (originalTotal - couponDiscountAmount) : null,
-          reseller_profit: hasResellerItems ? totalProfit : null,
-        },
-      ])
-      .select('id, order_number')
-      .single();
-
-    if (orderError) {
-      console.error('Order creation error:', orderError);
-      throw new Error(orderError.message || 'Failed to create order');
-    }
-
-    if (!orderData) {
-      throw new Error('Order created but no data returned');
-    }
-
-    console.log('Order created successfully:', orderData);
-
-    const orderItemsPayload = orderItems.map((item: any) => {
+    // Process each item as a separate order
+    for (const item of allItems) {
       const quantity = item.quantity || 1;
       const baseUnitPrice = item.price || 0;
       const baseTotal = baseUnitPrice * quantity;
-      const resellerTotalOverride =
-        item.isReseller && item.resellerPrice ? item.resellerPrice : null;
-      const totalPrice = resellerTotalOverride ?? baseTotal;
-      const unitPrice = resellerTotalOverride ? totalPrice / quantity : baseUnitPrice;
 
+      // Calculate proportional discount for this item
+      // Avoid division by zero
+      const ratio = overallTotal > 0 ? (baseTotal / overallTotal) : 0;
+      const itemDiscount = Math.round(couponDiscountAmount * ratio);
+      const finalAmount = Math.max(0, baseTotal - itemDiscount);
+
+      const status = paymentStatus === 'paid' ? 'confirmed' : 'pending';
+
+      // Reseller calculations for this item
+      const isResellerItem = !!item.isReseller;
+      const resellerTotalOverride = isResellerItem && item.resellerPrice ? item.resellerPrice : null;
+      const resellerTotal = resellerTotalOverride ?? baseTotal;
+      const itemProfit = resellerTotal - baseTotal;
+      const resellerUnitPrice = resellerTotal / quantity;
+
+      console.log('Creating single-item order with:', {
+        userId,
+        paymentMethod,
+        paymentStatus,
+        totalAmount: finalAmount,
+        status,
+        isResellerItem,
+        itemProfit
+      });
+
+      const { data: orderData, error: orderError } = await supabase
+        .from('orders')
+        .insert([
+          {
+            user_id: userId,
+            status: status,
+            payment_method: paymentMethod,
+            payment_status: paymentStatus,
+            payment_id: paymentId || null,
+            total_amount: finalAmount,
+            subtotal: baseTotal,
+            shipping_amount: 0,
+            tax_amount: 0,
+            discount_amount: itemDiscount,
+            shipping_address: userData?.location || 'Not provided',
+            customer_name: userData?.name || 'Guest',
+            customer_email: userData?.email || null,
+            customer_phone: userData?.phone || null,
+            is_reseller_order: isResellerItem,
+            reseller_margin_percentage: isResellerItem ? ((itemProfit / baseTotal) * 100) : null,
+            reseller_margin_amount: isResellerItem ? itemProfit : null,
+            original_total: isResellerItem ? (baseTotal - itemDiscount) : null,
+            reseller_profit: isResellerItem ? itemProfit : null,
+          },
+        ])
+        .select('id, order_number')
+        .single();
+
+      if (orderError) {
+        console.error('Order creation error:', orderError);
+        throw new Error(orderError.message || 'Failed to create order');
+      }
+
+      if (!orderData) {
+        throw new Error('Order created but no data returned');
+      }
+
+      createdOrders.push(orderData);
+      console.log('Order created successfully:', orderData);
+
+      // Create Order Item
       let productId: string | null = null;
       if (isValidUUID(item.productId)) {
         productId = item.productId;
@@ -824,105 +821,106 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
         variantId = item.variant.id;
       }
 
-      if (item.isReseller && productId) {
-        const resellerTotal = resellerTotalOverride ?? baseTotal;
-        const resellerUnitPrice = resellerTotal / quantity;
-        const marginAmount = resellerTotal - baseTotal;
-        resellerOrderItems.push({
-          productId,
-          variantId,
-          quantity,
-          baseUnitPrice,
-          resellerUnitPrice,
-          baseTotal,
-          resellerTotal,
-          marginAmount,
-        });
-      }
-
-      return {
+      const orderItemPayload = {
         order_id: orderData.id,
         product_id: productId,
         product_name: item.name || 'Unknown Product',
         product_image: item.image || null,
         quantity,
-        unit_price: unitPrice,
-        total_price: totalPrice,
+        unit_price: resellerUnitPrice, // Use effective unit price
+        total_price: resellerTotal, // Use effective total price
         size: item.size || null,
         color: item.color || null,
       };
-    });
 
-    console.log('Creating order items:', orderItemsPayload.length, 'items');
+      const { error: itemsError } = await supabase
+        .from('order_items')
+        .insert([orderItemPayload]);
 
-    const { error: itemsError } = await supabase
-      .from('order_items')
-      .insert(orderItemsPayload);
-
-    if (itemsError) {
-      console.error('Order items creation error:', itemsError);
-      await supabase.from('orders').delete().eq('id', orderData.id);
-      throw new Error(itemsError.message || 'Failed to create order items');
-    }
-
-    console.log('Order items created successfully');
-
-    if (hasResellerItems && userId && resellerOrderItems.length > 0) {
-      try {
-        const addressString = formatAddressForReseller(defaultAddress);
-        await ResellerService.logResellerOrderFromCheckout({
-          userId,
-          orderId: orderData.id,
-          orderNumber: orderData.order_number,
-          paymentMethod,
-          paymentStatus,
-          totals: { originalTotal, resellerTotal, totalProfit },
-          items: resellerOrderItems,
-          customer: {
-            name: defaultAddress?.full_name || defaultAddress?.name || userData?.name || 'Customer',
-            phone: defaultAddress?.phone || userData?.phone || null,
-            email: userData?.email || null,
-            address: addressString || userData?.location || null,
-            city: defaultAddress?.city || null,
-            state: defaultAddress?.state || null,
-            pincode: defaultAddress?.postal_code || defaultAddress?.pincode || null,
-          },
-        });
-      } catch (error) {
-        console.error('Failed to sync reseller order data:', error);
+      if (itemsError) {
+        console.error('Order items creation error:', itemsError);
+        // Rollback
+        await supabase.from('orders').delete().eq('id', orderData.id);
+        throw new Error(itemsError.message || 'Failed to create order items');
       }
-    }
 
-    // Log coupon usage if coupon was applied
-    if (couponAppliedCode && orderData?.id && userId) {
-      try {
-        // Fetch coupon details
-        const { data: coupon } = await supabase
-          .from('coupons')
-          .select('id')
-          .eq('code', couponAppliedCode)
-          .single();
+      // Sync specific logical reseller data
+      if (isResellerItem && userId && productId) {
+        try {
+          const addressString = formatAddressForReseller(defaultAddress);
+          const resellerLogItem = {
+            productId,
+            variantId,
+            quantity,
+            baseUnitPrice,
+            resellerUnitPrice,
+            baseTotal,
+            resellerTotal,
+            marginAmount: itemProfit,
+          };
 
-        if (coupon) {
-          // Insert coupon usage record
-          await supabase
-            .from('coupon_usage')
-            .insert({
-              coupon_id: coupon.id,
-              user_id: userId,
-              order_id: orderData.id,
-              discount_amount: couponDiscountAmount,
-            });
-          
-          console.log('Coupon usage logged:', couponAppliedCode);
+          await ResellerService.logResellerOrderFromCheckout({
+            userId,
+            orderId: orderData.id,
+            orderNumber: orderData.order_number,
+            paymentMethod,
+            paymentStatus,
+            totals: {
+              originalTotal: baseTotal,
+              resellerTotal: resellerTotal,
+              totalProfit: itemProfit
+            },
+            items: [resellerLogItem],
+            customer: {
+              name: defaultAddress?.full_name || defaultAddress?.name || userData?.name || 'Customer',
+              phone: defaultAddress?.phone || userData?.phone || null,
+              email: userData?.email || null,
+              address: addressString || userData?.location || null,
+              city: defaultAddress?.city || null,
+              state: defaultAddress?.state || null,
+              pincode: defaultAddress?.postal_code || defaultAddress?.pincode || null,
+            },
+          });
+        } catch (error) {
+          console.error('Failed to sync reseller order data:', error);
         }
-      } catch (error) {
-        console.error('Failed to log coupon usage:', error);
-        // Don't fail the order if coupon logging fails
       }
+
+      // Log coupon usage
+      if (couponAppliedCode && userId) {
+        try {
+          const { data: coupon } = await supabase
+            .from('coupons')
+            .select('id')
+            .eq('code', couponAppliedCode)
+            .single();
+
+          if (coupon) {
+            await supabase
+              .from('coupon_usage')
+              .insert({
+                coupon_id: coupon.id,
+                user_id: userId,
+                order_id: orderData.id,
+                discount_amount: itemDiscount,
+              });
+          }
+        } catch (error) {
+          console.error('Failed to log coupon usage:', error);
+        }
+      }
+    } // End Loop
+
+    // Return logic to show all order numbers
+    if (createdOrders.length === 0) throw new Error('No orders created');
+
+    // We modify the returned order object to include all order numbers for display purposes
+    const resultOrder = { ...createdOrders[createdOrders.length - 1] };
+    if (createdOrders.length > 1) {
+      resultOrder.order_number = createdOrders.map(o => o.order_number).join(', ');
     }
 
-    return orderData;
+    return resultOrder;
   };
 
   const handlePayNow = async () => {
@@ -937,13 +935,13 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
       // Check stock availability for all items
       const { outOfStockItems, inStockItems } = await checkStockAvailability();
 
-      console.log('Stock check results:', { 
-        outOfStockCount: outOfStockItems.length, 
-        inStockCount: inStockItems.length 
+      console.log('Stock check results:', {
+        outOfStockCount: outOfStockItems.length,
+        inStockCount: inStockItems.length
       });
 
       let draftOrderNumber: string | null = null;
-      
+
       if (outOfStockItems.length > 0) {
         try {
           const draftOrder = await createDraftOrderForOutOfStock(outOfStockItems);
@@ -990,13 +988,13 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
   };
 
   const renderOrderItem = (item: any, index: number) => (
-    <View 
-      key={`${item.id}-${index}`} 
+    <View
+      key={`${item.id}-${index}`}
       style={styles.orderItem}
     >
-      <Image 
-        source={{ uri: item.image || 'https://via.placeholder.com/80' }} 
-        style={styles.itemImage} 
+      <Image
+        source={{ uri: item.image || 'https://via.placeholder.com/80' }}
+        style={styles.itemImage}
       />
       <View style={styles.itemDetails}>
         <Text style={styles.itemName} numberOfLines={2}>
@@ -1029,8 +1027,8 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
   const subtotal = useMemo(() => {
     return cartItems.reduce((total, item) => {
       // Use reseller price if item is being resold, otherwise use regular price
-      const itemPrice = item.isReseller && item.resellerPrice 
-        ? item.resellerPrice 
+      const itemPrice = item.isReseller && item.resellerPrice
+        ? item.resellerPrice
         : item.price * item.quantity;
       return total + itemPrice;
     }, 0);
@@ -1054,7 +1052,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
   }, [cartItems]);
 
   const productDiscount = subtotalMrp - subtotalRsp;
-  
   const shippingAmount = 0;
   const totalSavings = couponDiscountAmount;
   const totalDiscount = productDiscount + totalSavings;
@@ -1218,13 +1215,18 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
         }}
         onViewOrders={() => {
           setShowSuccessAnimation(false);
-          // Navigate to MyOrders which is nested in TabNavigator > Home stack
-          (navigation as any).navigate('TabNavigator', {
-            screen: 'Home',
-            params: {
-              screen: 'MyOrders',
-            },
-          });
+          // If reseller order, navigate to YourEarnings (reseller earnings screen), otherwise MyOrders
+          if (wasResellerOrder) {
+            (navigation as any).navigate('YourEarnings');
+          } else {
+            // Navigate to MyOrders which is nested in TabNavigator > Home stack
+            (navigation as any).navigate('TabNavigator', {
+              screen: 'Home',
+              params: {
+                screen: 'MyOrders',
+              },
+            });
+          }
         }}
       />
 
@@ -1273,7 +1275,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
               </Text>
             </TouchableOpacity>
           </View>
-          
           {defaultAddress ? (
             <View style={styles.addressBox}>
               <Text style={styles.addressName}>{defaultAddress.full_name || 'Customer'}</Text>
@@ -1290,7 +1291,7 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
               {defaultAddress.phone && (
                 <Text style={styles.addressPhone}>Phone: {defaultAddress.phone}</Text>
               )}
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => (navigation as any).navigate('AddressBook', { selectMode: true })}
                 style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1.5, borderColor: '#F53F7A', borderRadius: 8, alignItems: 'center' }}
               >
@@ -1517,7 +1518,7 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
 
       {/* Sticky Bottom Bar */}
       <View style={[styles.stickyBottom, { paddingBottom: footerBottomPadding }]}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.footerPriceInfo}
           onPress={() => setShowPriceBreakdown(true)}
           activeOpacity={0.7}
@@ -1528,9 +1529,9 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
           </View>
           <Text style={styles.footerPriceValue}>₹{payable.toFixed(2)}</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.checkoutButton, (loading || !paymentMethod) && styles.checkoutButtonDisabled]} 
+
+        <TouchableOpacity
+          style={[styles.checkoutButton, (loading || !paymentMethod) && styles.checkoutButtonDisabled]}
           onPress={handlePayNow}
           disabled={loading || !paymentMethod}
           activeOpacity={0.8}
@@ -1558,8 +1559,8 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
         animationType="slide"
         onRequestClose={handleCancelAddress}
       >
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={{ flex: 1 }}
         >
           <View style={styles.modalOverlay}>
@@ -1570,7 +1571,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                   <Ionicons name="close" size={24} color="#666" />
                 </TouchableOpacity>
               </View>
-              
               <ScrollView style={styles.modalBody}>
                 <Text style={styles.inputLabel}>Full Address</Text>
                 <TextInput
@@ -1583,12 +1583,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                   numberOfLines={4}
                   textAlignVertical="top"
                 />
-                
                 <Text style={styles.helperText}>
                   Include complete address with street, city, state, and pincode
                 </Text>
               </ScrollView>
-              
               <View style={styles.modalFooter}>
                 <TouchableOpacity
                   style={styles.modalCancelBtn}
@@ -1597,7 +1595,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                 >
                   <Text style={styles.modalCancelText}>Cancel</Text>
                 </TouchableOpacity>
-                
                 <TouchableOpacity
                   style={[styles.modalSaveBtn, savingAddress && styles.modalSaveBtnDisabled]}
                   onPress={handleSaveAddress}
@@ -1622,8 +1619,8 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
         animationType="slide"
         onRequestClose={handleCancelPhone}
       >
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={{ flex: 1 }}
         >
           <View style={styles.modalOverlay}>
@@ -1634,7 +1631,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                   <Ionicons name="close" size={24} color="#666" />
                 </TouchableOpacity>
               </View>
-              
               <View style={styles.modalBody}>
                 <Text style={styles.inputLabel}>Mobile Number</Text>
                 <View style={styles.phoneInputRow}>
@@ -1656,12 +1652,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                     maxLength={10}
                   />
                 </View>
-                
                 <Text style={styles.helperText}>
                   Enter your 10-digit mobile number for order updates
                 </Text>
               </View>
-              
               <View style={styles.modalFooter}>
                 <TouchableOpacity
                   style={styles.modalCancelBtn}
@@ -1670,7 +1664,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                 >
                   <Text style={styles.modalCancelText}>Cancel</Text>
                 </TouchableOpacity>
-                
                 <TouchableOpacity
                   style={[styles.modalSaveBtn, savingPhone && styles.modalSaveBtnDisabled]}
                   onPress={handleSavePhone}
@@ -1699,7 +1692,7 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
             {/* Header */}
             <View style={styles.breakdownHeader}>
               <Text style={styles.breakdownTitle}>Price Breakdown</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setShowPriceBreakdown(false)}
                 style={styles.breakdownCloseButton}
               >
@@ -1727,7 +1720,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                   <Text style={styles.breakdownValueGreen}>+₹{totalResellerProfit.toFixed(2)}</Text>
                 </View>
               )}
-              
               <View style={styles.breakdownItem}>
                 <Text style={styles.breakdownLabel}>Delivery Charges</Text>
                 {shippingAmount === 0 ? (
@@ -1770,7 +1762,7 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
             </ScrollView>
 
             {/* Close Button */}
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.breakdownDoneButton}
               onPress={() => setShowPriceBreakdown(false)}
               activeOpacity={0.8}
@@ -1792,12 +1784,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
           <View style={styles.alertContainer}>
             {/* Title */}
             <Text style={styles.alertTitle}>Contact Information Required</Text>
-            
             {/* Message */}
             <Text style={styles.alertMessage}>
               Please provide your name and phone number for online payments.
             </Text>
-            
             {/* Buttons */}
             <View style={styles.alertButtonsContainer}>
               <TouchableOpacity
@@ -1807,7 +1797,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
               >
                 <Text style={styles.alertButtonCancelText}>CANCEL</Text>
               </TouchableOpacity>
-              
               <TouchableOpacity
                 style={styles.alertButtonSecondary}
                 onPress={() => {
@@ -1818,7 +1807,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
               >
                 <Text style={styles.alertButtonSecondaryText}>USE COD INSTEAD</Text>
               </TouchableOpacity>
-              
               <TouchableOpacity
                 style={styles.alertButtonPrimary}
                 onPress={() => {
@@ -1845,12 +1833,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
           <View style={styles.alertContainer}>
             {/* Title */}
             <Text style={styles.alertTitle}>Order Failed</Text>
-            
             {/* Message */}
             <Text style={styles.alertMessage}>
               {orderFailedMessage}
             </Text>
-            
             {/* Button */}
             <TouchableOpacity
               style={styles.alertButtonPrimary}
@@ -1874,12 +1860,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
           <View style={styles.alertContainer}>
             {/* Title */}
             <Text style={styles.alertTitle}>Shipping Address Required</Text>
-            
             {/* Message */}
             <Text style={styles.alertMessage}>
               Please add your shipping address before proceeding.
             </Text>
-            
             {/* Buttons */}
             <View style={styles.alertButtonsContainer}>
               <TouchableOpacity
@@ -1889,7 +1873,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
               >
                 <Text style={styles.alertButtonCancelText}>CANCEL</Text>
               </TouchableOpacity>
-              
               <TouchableOpacity
                 style={styles.alertButtonPrimary}
                 onPress={() => {
@@ -1916,12 +1899,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
           <View style={styles.alertContainer}>
             {/* Title */}
             <Text style={styles.alertTitle}>Empty Cart</Text>
-            
             {/* Message */}
             <Text style={styles.alertMessage}>
               Please add items to your cart before checking out.
             </Text>
-            
             {/* Button */}
             <TouchableOpacity
               style={styles.alertButtonPrimary}

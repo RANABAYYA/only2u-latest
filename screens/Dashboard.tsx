@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,9 @@ import {
   Dimensions,
   Linking,
   Share,
+  StyleProp,
+  ViewStyle,
+  BackHandler,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -31,11 +34,12 @@ import type { Product, Category } from '~/types/product';
 import { Only2ULogo } from '../components/common';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
-import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+import BottomSheet, { BottomSheetScrollView, BottomSheetModal, BottomSheetBackdrop, BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import Toast from 'react-native-toast-message';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import NewYearSpecials from '~/components/Dashboard/NewYearSpecials';
+import DashboardLoader from '~/components/DashboardLoader';
 
 type DashboardNavigationProp = StackNavigationProp<RootStackParamList>;
 
@@ -96,6 +100,50 @@ const Dashboard = () => {
   const shimmerAnimation = useRef(new Animated.Value(0)).current;
   const [showCoinsModal, setShowCoinsModal] = useState(false);
   const [referralCode, setReferralCode] = useState<string>('');
+
+  // Search suggestions state
+  const [searchSuggestions, setSearchSuggestions] = useState<any[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Filter States
+  const filterSheetRef = useRef<BottomSheetModal>(null);
+  const snapPoints = useMemo(() => ['85%'], []);
+  const [activeFilterCategory, setActiveFilterCategory] = useState<string>('Category');
+  const [activeBrandInfluencerTab, setActiveBrandInfluencerTab] = useState<'brands' | 'influencers'>('brands');
+  const [brands, setBrands] = useState<any[]>([]);
+  const [influencers, setInfluencers] = useState<any[]>([]);
+  const [sizes, setSizes] = useState<any[]>([]);
+
+  // Selection States
+  // distinct from 'categories' data used for display sections
+  const [selectedFilterCategories, setSelectedFilterCategories] = useState<string[]>([]);
+  const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
+  const [selectedInfluencers, setSelectedInfluencers] = useState<string[]>([]);
+  const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
+  const [filterMinPrice, setFilterMinPrice] = useState<string>('');
+  const [filterMaxPrice, setFilterMaxPrice] = useState<string>('');
+  const [selectedRating, setSelectedRating] = useState<number | null>(null);
+
+  // Search in filters
+  const [vendorSearchQuery, setVendorSearchQuery] = useState('');
+  const [influencerSearchQuery, setInfluencerSearchQuery] = useState('');
+
+  // Filtered lists for UI
+  const filteredVendors = useMemo(() => {
+    if (!vendorSearchQuery.trim()) return brands;
+    return brands.filter(vendor =>
+      (vendor.store_name || vendor.vendor_name || '').toLowerCase().includes(vendorSearchQuery.toLowerCase())
+    );
+  }, [brands, vendorSearchQuery]);
+
+  const filteredInfluencers = useMemo(() => {
+    if (!influencerSearchQuery.trim()) return influencers;
+    return influencers.filter(influencer =>
+      (influencer.name || '').toLowerCase().includes(influencerSearchQuery.toLowerCase())
+    );
+  }, [influencers, influencerSearchQuery]);
 
   // Generate referral code
   const generateReferralCode = useCallback(() => {
@@ -201,6 +249,20 @@ const Dashboard = () => {
     }, [userData?.id])
   );
 
+  // Handle hardware back button when category filter is active
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (selectedFilterCategories.length > 0) {
+        // Clear category filter and return to normal view
+        setSelectedFilterCategories([]);
+        return true; // Prevent default back behavior
+      }
+      return false; // Allow default back behavior
+    });
+
+    return () => backHandler.remove();
+  }, [selectedFilterCategories]);
+
   // Also refresh when address bottom sheet is opened
   useEffect(() => {
     if (addressSheetVisible && userData?.id) {
@@ -257,6 +319,21 @@ const Dashboard = () => {
 
     checkFirstLaunch();
   }, []);
+
+  // Clear search on tab press (Home tab)
+  useEffect(() => {
+    const parentNav = navigation.getParent();
+    if (!parentNav) return;
+
+    const unsubscribe = parentNav.addListener('tabPress', (e) => {
+      // Clear search text when Home tab is pressed
+      setSearchText('');
+      // Optional: Scroll to top logic could go here if needed, 
+      // but clearing search usually resets the view enough for this requirement.
+    });
+
+    return unsubscribe;
+  }, [navigation]);
 
   // Welcome animation sequence
   const startWelcomeAnimation = () => {
@@ -690,7 +767,9 @@ const Dashboard = () => {
     }
 
     if (forceRefresh) {
-      setIsRefreshing(true);
+      // setIsRefreshing(true);
+      // Show custom loader even on refresh as per user request
+      setIsInitialLoading(true);
     } else {
       setIsInitialLoading(true);
     }
@@ -700,10 +779,17 @@ const Dashboard = () => {
       setErrorMessage('');
 
       // Fetch all data in parallel
+      // Fetch all data in parallel, but handle dependencies
       await Promise.all([
         fetchFeatureSections(),
-        fetchCategories(),
         fetchFeaturedProducts(),
+        // Chain categories and their products together
+        (async () => {
+          const fetchedCategories = await fetchCategories();
+          if (fetchedCategories && fetchedCategories.length > 0) {
+            await fetchCategoryProducts(fetchedCategories);
+          }
+        })()
       ]);
 
       setLastFetchTime(now);
@@ -763,11 +849,12 @@ const Dashboard = () => {
     }
   };
 
-  useEffect(() => {
-    if (categories.length > 0) {
-      fetchCategoryProducts();
-    }
-  }, [categories]);
+  // Removed automatic fetching of category products on categories change to prevent double loading/blinking
+  // useEffect(() => {
+  //   if (categories.length > 0) {
+  //     fetchCategoryProducts();
+  //   }
+  // }, [categories]);
 
   // Shimmer animation effect
   useEffect(() => {
@@ -818,12 +905,14 @@ const Dashboard = () => {
 
       if (error) {
         console.error('Error fetching categories:', error);
-        return;
+        return [];
       }
 
       setCategories(data || []);
+      return data || [];
     } catch (error) {
       console.error('Error fetching categories:', error);
+      return [];
     }
   };
 
@@ -945,12 +1034,12 @@ const Dashboard = () => {
     }
   };
 
-  const fetchCategoryProducts = async () => {
+  const fetchCategoryProducts = async (currentCategories: Category[] = categories) => {
     try {
       // Fetch products for each category
       const categoryProductsData: { [categoryId: string]: Product[] } = {};
 
-      for (const category of categories) {
+      for (const category of currentCategories) {
         try {
           const { data, error } = await supabase
             .from('products')
@@ -1054,13 +1143,15 @@ const Dashboard = () => {
     ratingData,
     userSize,
     onPress,
-    shimmerAnimation
+    shimmerAnimation,
+    style,
   }: {
     product: Product;
     ratingData?: { rating: number; reviews: number };
     userSize?: string;
     onPress: (product: Product) => void;
     shimmerAnimation: Animated.Value;
+    style?: StyleProp<ViewStyle>;
   }) => {
     const [imageLoadingState, setImageLoadingState] = useState<'loading' | 'loaded' | 'error'>('loading');
 
@@ -1070,7 +1161,7 @@ const Dashboard = () => {
 
     return (
       <TouchableOpacity
-        style={styles.productCard}
+        style={[styles.productCard, style]}
         onPress={() => onPress(product)}
         activeOpacity={0.7}
       >
@@ -1169,38 +1260,253 @@ const Dashboard = () => {
       alias_vendor: product.alias_vendor || '',
       return_policy: product.return_policy || '',
     };
-    navigation.navigate('ProductDetails', { product: productForDetails });
+    navigation.replace('ProductDetails', { product: productForDetails });
   }, [navigation, userData?.size, productRatings]);
+
+  // Fetch search suggestions from database
+  const fetchSearchSuggestions = useCallback(async (query: string) => {
+    if (!query.trim() || query.trim().length < 2) {
+      setSearchSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    setLoadingSuggestions(true);
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select(`
+          id,
+          name,
+          mrp_price,
+          rsp_price,
+          discount_percentage,
+          image_urls,
+          vendor_name,
+          product_variants (
+            id,
+            mrp_price,
+            rsp_price,
+            discount_percentage,
+            image_urls,
+            size:sizes(name)
+          )
+        `)
+        .ilike('name', `%${query.trim()}%`)
+        .eq('is_active', true)
+        .limit(8);
+
+      if (error) {
+        console.error('Error fetching suggestions:', error);
+        setSearchSuggestions([]);
+      } else {
+        console.log('🔍 Search suggestions fetched:', data?.length || 0, 'results');
+        setSearchSuggestions(data || []);
+        setShowSuggestions(true);
+        console.log('🔍 showSuggestions set to true');
+      }
+    } catch (error) {
+      console.error('Error fetching suggestions:', error);
+      setSearchSuggestions([]);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }, []);
+
+  // Fetch Filter Data
+  const fetchBrands = async () => {
+    try {
+      const { data, error } = await supabase.from('vendors').select('*').order('business_name', { ascending: true });
+      if (!error && data) {
+        console.log('✅ Fetched Brands:', data.length);
+        setBrands(data);
+      } else if (error) {
+        console.error('❌ Error fetching brands:', error);
+      }
+    } catch (error) { console.error('Error fetching brands catch:', error); }
+  };
+
+  const fetchInfluencers = async () => {
+    try {
+      const { data, error } = await supabase.from('influencer_profiles').select('*').order('name', { ascending: true });
+      if (!error && data) {
+        console.log('✅ Fetched Influencers:', data.length);
+        setInfluencers(data);
+      } else if (error) {
+        console.error('❌ Error fetching influencers:', error);
+      }
+    } catch (error) { console.error('Error fetching influencers catch:', error); }
+  };
+
+  const fetchSizes = async () => {
+    try {
+      const { data, error } = await supabase.from('sizes').select('*');
+      if (!error && data) {
+        console.log('✅ Fetched Sizes:', data.length);
+        // Sort sizes manually if needed, or rely on order
+        // Use the custom sort logic from Products.tsx for better UX
+        const sizeOrder: { [key: string]: number } = {
+          'XS': 1, 'S': 2, 'M': 3, 'L': 4, 'XL': 5, 'XXL': 6, '2XL': 6, '3XL': 7, 'XXXL': 7, '4XL': 8, '5XL': 9, 'Free Size': 10
+        };
+        const sortedSizes = [...data].sort((a, b) => {
+          const aOrder = sizeOrder[a.name?.toUpperCase()] || 999;
+          const bOrder = sizeOrder[b.name?.toUpperCase()] || 999;
+          if (aOrder !== 999 && bOrder !== 999) return aOrder - bOrder;
+          return a.name?.localeCompare(b.name || '');
+        });
+        setSizes(sortedSizes);
+      } else if (error) {
+        console.error('❌ Error fetching sizes:', error);
+      }
+    } catch (error) { console.error('Error fetching sizes catch:', error); }
+  };
+
+  useEffect(() => {
+    fetchBrands();
+    fetchInfluencers();
+    fetchSizes();
+  }, []);
+
+  // Filter Handlers
+  const toggleCategorySelection = (id: string) => {
+    setSelectedFilterCategories(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  };
+
+  const toggleBrandSelection = (id: string) => {
+    setSelectedBrands(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  };
+
+  const toggleInfluencerSelection = (id: string) => {
+    setSelectedInfluencers(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  };
+
+  const toggleSizeSelection = (id: string) => {
+    setSelectedSizes(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  };
+
+  const handleResetFilters = () => {
+    setSelectedFilterCategories([]);
+    setSelectedBrands([]);
+    setSelectedInfluencers([]);
+    setSelectedSizes([]);
+    setFilterMinPrice('');
+    setFilterMaxPrice('');
+    setSelectedRating(null);
+  };
+
+  const handleApplyFilters = () => {
+    filterSheetRef.current?.dismiss();
+    // Re-render will happen automatically as getAllSearchResults depends on filter states (to be updated)
+  };
+
+  const filterCategories = ['Category', 'Brand/Influencer', 'Size', 'Price Range'];
+  const hasActiveFilters = (category: string) => {
+    switch (category) {
+      case 'Category': return selectedFilterCategories.length > 0;
+      case 'Brand/Influencer': return selectedBrands.length > 0 || selectedInfluencers.length > 0;
+      case 'Size': return selectedSizes.length > 0;
+      case 'Price Range': return !!filterMinPrice || !!filterMaxPrice;
+      default: return false;
+    }
+  };
+
+  const handleClearAllFilters = () => handleResetFilters();
+
+  // Handle search text change with debounce
+  const handleSearchChange = useCallback((text: string) => {
+    setSearchText(text);
+
+    // Clear previous debounce timer
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+
+    if (!text.trim()) {
+      setSearchSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    // Debounce the suggestion fetch
+    searchDebounceRef.current = setTimeout(() => {
+      fetchSearchSuggestions(text);
+    }, 300);
+  }, [fetchSearchSuggestions]);
+
+  // Handle suggestion selection
+  const handleSuggestionSelect = useCallback((product: any) => {
+    setShowSuggestions(false);
+    setSearchText('');
+
+    // Navigate to product details
+    const productForDetails = {
+      id: product.id,
+      name: product.name,
+      price: product.rsp_price || product.mrp_price || 0,
+      mrp_price: product.mrp_price || 0,
+      rsp_price: product.rsp_price || 0,
+      discount_percentage: product.discount_percentage || 0,
+      image: product.image_urls?.[0] || '',
+      vendor_name: product.vendor_name || '',
+    };
+    navigation.replace('ProductDetails', { product: productForDetails });
+  }, [navigation]);
 
   // Helper function to check if product matches search (by name, SKU, or variant SKU)
   const productMatchesSearch = (product: any) => {
-    if (!searchText.trim()) return true;
+    const isFiltering = selectedFilterCategories.length > 0 || selectedBrands.length > 0 || selectedInfluencers.length > 0 || selectedSizes.length > 0 || filterMinPrice || filterMaxPrice || selectedRating !== null;
 
-    const searchLower = searchText.toLowerCase().trim();
-
-    // Search by product name
-    if (product.name?.toLowerCase().includes(searchLower)) {
-      return true;
+    // Text Search
+    let matchesText = true;
+    if (searchText.trim()) {
+      const searchLower = searchText.toLowerCase().trim();
+      matchesText = product.name?.toLowerCase().includes(searchLower) ||
+        product.sku?.toLowerCase().includes(searchLower) ||
+        product.variants?.some((v: any) => v.sku?.toLowerCase().includes(searchLower));
     }
 
-    // Search by product SKU
-    if (product.sku?.toLowerCase().includes(searchLower)) {
-      return true;
+    if (!matchesText) return false;
+
+    // Filter Logic
+    if (selectedFilterCategories.length > 0) {
+      if (!selectedFilterCategories.includes(product.category_id)) return false;
     }
 
-    // Search by variant SKUs
-    if (product.variants && Array.isArray(product.variants)) {
-      return product.variants.some((variant: any) =>
-        variant.sku?.toLowerCase().includes(searchLower)
-      );
+    if (selectedBrands.length > 0) {
+      const selectedBrandNames = brands.filter(b => selectedBrands.includes(b.id)).map(b => (b.store_name || b.vendor_name || '').toLowerCase());
+      const productVendor = (product.vendor_name || product.alias_vendor || '').toLowerCase();
+      if (!selectedBrandNames.includes(productVendor)) return false;
     }
 
-    return false;
+    if (selectedSizes.length > 0) {
+      const selectedSizeNames = sizes.filter(s => selectedSizes.includes(s.id)).map(s => s.name);
+      const hasSize = product.variants?.some((v: any) => {
+        const sName = v.size?.name || v.size_name;
+        return selectedSizeNames.includes(sName);
+      });
+      if (!hasSize) return false;
+    }
+
+    if (filterMinPrice || filterMaxPrice) {
+      const price = getUserPrice(product);
+      if (filterMinPrice && price < parseFloat(filterMinPrice)) return false;
+      if (filterMaxPrice && price > parseFloat(filterMaxPrice)) return false;
+    }
+
+    if (selectedRating !== null) {
+      const reviews = product.product_reviews || product.reviews || [];
+      const avg = calculateAverageRating(reviews);
+      if (avg < selectedRating) return false;
+    }
+
+    return true;
   };
 
   // Get all search results (combine all products when searching)
   const getAllSearchResults = () => {
-    if (!searchText.trim()) return [];
+    const isFiltering = selectedFilterCategories.length > 0 || selectedBrands.length > 0 || selectedInfluencers.length > 0 || selectedSizes.length > 0 || filterMinPrice || filterMaxPrice || selectedRating !== null;
+
+    if (!searchText.trim() && !isFiltering) return [];
 
     const allProducts = [
       ...trendingProducts,
@@ -1219,6 +1525,39 @@ const Dashboard = () => {
   // Check if user is actively searching
   const isSearching = searchText.trim().length > 0;
   const searchResults = getAllSearchResults();
+
+  // Check if category filter is actively applied (for grid view mode)
+  const isFilteringCategory = selectedFilterCategories.length > 0;
+
+  // Get filtered products for grid view when category filter is applied
+  const getFilteredProductsForGrid = () => {
+    if (!isFilteringCategory) return [];
+
+    const allProducts = [
+      ...trendingProducts,
+      ...bestSellerProducts,
+      ...Object.values(categoryProducts).flat(),
+    ];
+
+    // Remove duplicates by id
+    const uniqueProducts = Array.from(
+      new Map(allProducts.map(item => [item.id, item])).values()
+    );
+
+    return uniqueProducts.filter(productMatchesSearch);
+  };
+
+  const filteredGridProducts = getFilteredProductsForGrid();
+
+  // Get selected category name for header
+  const getSelectedCategoryName = () => {
+    if (selectedFilterCategories.length === 0) return '';
+    const category = categories.find(c => selectedFilterCategories.includes(c.id));
+    if (selectedFilterCategories.length === 1) {
+      return category?.name || 'Filtered Products';
+    }
+    return `${selectedFilterCategories.length} Categories Selected`;
+  };
 
   // Filtered products (for individual sections when not searching)
   const filteredTrendingProducts = trendingProducts.filter(productMatchesSearch);
@@ -1291,6 +1630,62 @@ const Dashboard = () => {
           </ScrollView>
         )}
       </View>
+    );
+  };
+
+  // Search Product Card (Grid Style)
+  const SearchProductCard = ({ product, onPress }: { product: Product; onPress: (product: Product) => void }) => {
+    const ratingData = productRatings[product.id] ?? { rating: 0, reviews: 0 };
+    const vendorName = product.vendor_name || product.alias_vendor || 'Only2U';
+    const userPrice = getUserPrice(product, userData?.size);
+    const originalPrice = getOriginalPrice(product, userData?.size);
+    const discount = getDiscountPercentage(product);
+
+    return (
+      <TouchableOpacity onPress={() => onPress(product)} style={styles.verticalCard} activeOpacity={0.9}>
+        <View style={styles.verticalImageContainer}>
+          <Image source={{ uri: getFirstSafeProductImage(product) }} style={styles.verticalImage} />
+
+          {/* Best Seller / Trending Badge */}
+          {product.featured_type && (
+            <View style={[styles.verticalBadge, { backgroundColor: product.featured_type === 'best_seller' ? '#4CAF50' : '#FF9800' }]}>
+              <Text style={styles.verticalBadgeText}>
+                {product.featured_type === 'best_seller' ? 'Best Seller' : 'Trending'}
+              </Text>
+            </View>
+          )}
+
+          {/* Wishlist Heart Icon */}
+          <TouchableOpacity style={styles.verticalWishlistButton}>
+            <Ionicons name="heart-outline" size={20} color="#666" />
+          </TouchableOpacity>
+
+          {/* Rating Badge (Bottom Right) */}
+          <View style={styles.ratingBadgeOverlay}>
+            <View style={styles.ratingBadgeOnImage}>
+              <Ionicons name="star" size={12} color="#FFD600" />
+              <Text style={styles.ratingBadgeValue}>{ratingData.rating.toFixed(1)}</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.verticalDetails}>
+          <Text style={styles.verticalVendorText} numberOfLines={1}>{vendorName}</Text>
+          <Text style={styles.verticalProductName} numberOfLines={1}>{product.name}</Text>
+
+          <View style={styles.verticalPriceRow}>
+            {discount > 0 && (
+              <Text style={styles.verticalOriginalPrice}>₹{originalPrice.toFixed(0)}</Text>
+            )}
+            <Text style={styles.verticalPrice}>₹{userPrice.toFixed(0)}</Text>
+            {discount > 0 && (
+              <View style={styles.verticalDiscountBadge}>
+                <Text style={styles.verticalDiscountText}>{discount.toFixed(0)}% OFF</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </TouchableOpacity>
     );
   };
 
@@ -1452,12 +1847,62 @@ const Dashboard = () => {
         <View style={styles.searchResultsGrid}>
           {searchResults.map((product) => (
             <View key={product.id} style={styles.searchResultCard}>
-              <ProductCard
+              <SearchProductCard
                 product={product}
-                ratingData={productRatings[product.id]}
-                userSize={userData?.size}
                 onPress={handleProductPress}
-                shimmerAnimation={shimmerAnimation}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+
+  // Render category filter grid view
+  const renderCategoryFilterGrid = () => (
+    <View style={styles.categoryFilterContainer}>
+      {/* Category Filter Header */}
+      <View style={styles.categoryFilterHeader}>
+        <TouchableOpacity
+          style={styles.categoryFilterBackButton}
+          onPress={() => {
+            // Clear category filter and return to normal view
+            setSelectedFilterCategories([]);
+            handleResetFilters();
+          }}
+        >
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.categoryFilterTitle}>{getSelectedCategoryName()}</Text>
+        <TouchableOpacity
+          style={styles.categoryFilterButton}
+          onPress={() => filterSheetRef.current?.present()}
+        >
+          <Ionicons name="options-outline" size={24} color="#F53F7A" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Products Count */}
+      <View style={styles.categoryFilterCountRow}>
+        <Text style={styles.categoryFilterCountText}>{filteredGridProducts.length} products found</Text>
+      </View>
+
+      {/* Products Grid - Edge to edge, no gaps */}
+      {filteredGridProducts.length === 0 ? (
+        <View style={styles.noResultsContainer}>
+          <Ionicons name="shirt-outline" size={64} color="#ccc" />
+          <Text style={styles.noResultsTitle}>No products found</Text>
+          <Text style={styles.noResultsText}>
+            Try selecting a different category
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.categoryFilterGrid}>
+          {filteredGridProducts.map((product) => (
+            <View key={product.id} style={styles.categoryFilterCard}>
+              <SearchProductCard
+                product={product}
+                onPress={handleProductPress}
               />
             </View>
           ))}
@@ -1474,7 +1919,7 @@ const Dashboard = () => {
         placeholder="Search Product"
         placeholderTextColor="#888"
         value={searchText}
-        onChangeText={setSearchText}
+        onChangeText={handleSearchChange}
         returnKeyType="search"
         autoFocus={false}
       />
@@ -1491,771 +1936,1181 @@ const Dashboard = () => {
   );
 
   return (
-    <View style={styles.container}>
-      {/* Welcome Animation Overlay */}
-      {showWelcomeAnimation && (
-        <Animated.View
-          style={[
-            styles.welcomeOverlay,
-            {
-              opacity: welcomeOpacity,
-            },
-          ]}
-        >
-          {/* Animated gradient background */}
-          <LinearGradient
-            colors={['#FFFFFF', '#FFF5F7', '#FFE5EC', '#FFF5F7', '#FFFFFF']}
-            style={StyleSheet.absoluteFillObject}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          />
+    <BottomSheetModalProvider>
+      <View style={styles.container}>
+        {/* Search Suggestions Overlay - Rendered at root level to prevent clipping */}
+        {showSuggestions && searchSuggestions.length > 0 && (
+          <View style={styles.suggestionsOverlay}>
+            <TouchableOpacity
+              style={styles.suggestionsBackdrop}
+              activeOpacity={1}
+              onPress={() => setShowSuggestions(false)}
+            />
+            <View style={styles.suggestionsDropdown}>
+              <ScrollView
+                style={{ maxHeight: 350 }}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {searchSuggestions.map((rawProduct, index) => {
+                  // Map the raw product data to match the expected Product structure for helpers
+                  const product = {
+                    ...rawProduct,
+                    variants: rawProduct.product_variants?.map((v: any) => ({
+                      ...v,
+                      price: v.rsp_price // Map rsp_price to price for getUserPrice
+                    })) || []
+                  };
 
-          {/* Particles background layer */}
-          <View style={styles.particlesContainer}>
-            {[...Array(20)].map((_, i) => (
-              <View
-                key={`particle-${i}`}
-                style={[
-                  styles.particle,
-                  {
-                    left: `${Math.random() * 100}%`,
-                    top: `${Math.random() * 100}%`,
-                    width: 2 + Math.random() * 4,
-                    height: 2 + Math.random() * 4,
-                    opacity: 0.3 + Math.random() * 0.4,
-                  },
-                ]}
-              />
-            ))}
+                  const userPrice = getUserPrice(product);
+                  const originalPrice = getOriginalPrice(product);
+                  const discountPercentage = getDiscountPercentage(product);
+
+                  return (
+                    <TouchableOpacity
+                      key={product.id}
+                      style={[
+                        styles.suggestionItem,
+                        index === searchSuggestions.length - 1 && { borderBottomWidth: 0 }
+                      ]}
+                      onPress={() => handleSuggestionSelect(product)}
+                      activeOpacity={0.7}
+                    >
+                      <Image
+                        source={{ uri: getFirstSafeProductImage(product) }}
+                        style={styles.suggestionImage}
+                        contentFit="cover"
+                        transition={200}
+                      />
+                      <View style={styles.suggestionInfo}>
+                        <Text style={styles.suggestionName} numberOfLines={1}>
+                          {product.name}
+                        </Text>
+                        <View style={styles.suggestionPriceRow}>
+                          <Text style={styles.suggestionPrice}>
+                            ₹{userPrice.toFixed(0)}
+                          </Text>
+                          {discountPercentage > 0 && (
+                            <>
+                              <Text style={styles.suggestionMrp}>₹{originalPrice.toFixed(0)}</Text>
+                              <Text style={styles.suggestionDiscount}>{discountPercentage.toFixed(0)}% OFF</Text>
+                            </>
+                          )}
+                        </View>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color="#ccc" />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
           </View>
+        )}
 
+        {/* Welcome Animation Overlay */}
+        {showWelcomeAnimation && (
           <Animated.View
             style={[
-              styles.welcomeContent,
+              styles.welcomeOverlay,
               {
-                transform: [{ scale: welcomeScale }],
+                opacity: welcomeOpacity,
               },
             ]}
           >
-            {/* Enhanced floating decorative elements with variety */}
-            {floatingElements.map((element, index) => {
-              const size = 25 + (index % 4) * 12;
-              const colors = ['#FF3F6C', '#FFE5EC', '#F53F7A', '#FF6B9D', '#FFC0DB', '#FF85A1'];
-              const shapes = ['circle', 'square', 'diamond', 'star'];
-              const shapeType = shapes[index % 4];
-
-              return (
-                <Animated.View
-                  key={index}
-                  style={[
-                    styles.floatingElement,
-                    {
-                      left: `${10 + (index % 4) * 25}%`,
-                      top: `${15 + Math.floor(index / 4) * 28}%`,
-                      opacity: element.opacity,
-                      transform: [
-                        { translateY: element.translateY },
-                        { translateX: element.translateX },
-                        { scale: element.scale },
-                        {
-                          rotate: element.rotate.interpolate({
-                            inputRange: [-1, 0, 1],
-                            outputRange: ['-180deg', '0deg', '180deg'],
-                          }),
-                        },
-                      ],
-                    },
-                  ]}
-                >
-                  {shapeType === 'circle' && (
-                    <View style={[
-                      styles.floatingShape,
-                      {
-                        backgroundColor: colors[index % colors.length],
-                        width: size,
-                        height: size,
-                        borderRadius: size / 2,
-                      },
-                    ]} />
-                  )}
-                  {shapeType === 'square' && (
-                    <View style={[
-                      styles.floatingShape,
-                      {
-                        backgroundColor: colors[index % colors.length],
-                        width: size,
-                        height: size,
-                        borderRadius: 8,
-                      },
-                    ]} />
-                  )}
-                  {shapeType === 'diamond' && (
-                    <View style={[
-                      styles.floatingShape,
-                      {
-                        backgroundColor: colors[index % colors.length],
-                        width: size,
-                        height: size,
-                        borderRadius: 4,
-                        transform: [{ rotate: '45deg' }],
-                      },
-                    ]} />
-                  )}
-                  {shapeType === 'star' && (
-                    <View style={[
-                      styles.floatingShape,
-                      styles.starShape,
-                      {
-                        backgroundColor: colors[index % colors.length],
-                        width: size,
-                        height: size,
-                      },
-                    ]} />
-                  )}
-                </Animated.View>
-              );
-            })}
-
-            {/* Ripple effect behind logo */}
-            <Animated.View
-              style={[
-                styles.rippleCircle,
-                {
-                  opacity: rippleOpacity.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.6, 0],
-                  }),
-                  transform: [{ scale: rippleScale }],
-                },
-              ]}
+            {/* Animated gradient background */}
+            <LinearGradient
+              colors={['#FFFFFF', '#FFF5F7', '#FFE5EC', '#FFF5F7', '#FFFFFF']}
+              style={StyleSheet.absoluteFillObject}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
             />
 
-            {/* Welcome message with enhanced effects */}
-            <View style={styles.welcomeMessageContainer}>
-              {/* Logo with glow effect */}
+            {/* Particles background layer */}
+            <View style={styles.particlesContainer}>
+              {[...Array(20)].map((_, i) => (
+                <View
+                  key={`particle-${i}`}
+                  style={[
+                    styles.particle,
+                    {
+                      left: `${Math.random() * 100}%`,
+                      top: `${Math.random() * 100}%`,
+                      width: 2 + Math.random() * 4,
+                      height: 2 + Math.random() * 4,
+                      opacity: 0.3 + Math.random() * 0.4,
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+
+            <Animated.View
+              style={[
+                styles.welcomeContent,
+                {
+                  transform: [{ scale: welcomeScale }],
+                },
+              ]}
+            >
+              {/* Enhanced floating decorative elements with variety */}
+              {floatingElements.map((element, index) => {
+                const size = 25 + (index % 4) * 12;
+                const colors = ['#FF3F6C', '#FFE5EC', '#F53F7A', '#FF6B9D', '#FFC0DB', '#FF85A1'];
+                const shapes = ['circle', 'square', 'diamond', 'star'];
+                const shapeType = shapes[index % 4];
+
+                return (
+                  <Animated.View
+                    key={index}
+                    style={[
+                      styles.floatingElement,
+                      {
+                        left: `${10 + (index % 4) * 25}%`,
+                        top: `${15 + Math.floor(index / 4) * 28}%`,
+                        opacity: element.opacity,
+                        transform: [
+                          { translateY: element.translateY },
+                          { translateX: element.translateX },
+                          { scale: element.scale },
+                          {
+                            rotate: element.rotate.interpolate({
+                              inputRange: [-1, 0, 1],
+                              outputRange: ['-180deg', '0deg', '180deg'],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  >
+                    {shapeType === 'circle' && (
+                      <View style={[
+                        styles.floatingShape,
+                        {
+                          backgroundColor: colors[index % colors.length],
+                          width: size,
+                          height: size,
+                          borderRadius: size / 2,
+                        },
+                      ]} />
+                    )}
+                    {shapeType === 'square' && (
+                      <View style={[
+                        styles.floatingShape,
+                        {
+                          backgroundColor: colors[index % colors.length],
+                          width: size,
+                          height: size,
+                          borderRadius: 8,
+                        },
+                      ]} />
+                    )}
+                    {shapeType === 'diamond' && (
+                      <View style={[
+                        styles.floatingShape,
+                        {
+                          backgroundColor: colors[index % colors.length],
+                          width: size,
+                          height: size,
+                          borderRadius: 4,
+                          transform: [{ rotate: '45deg' }],
+                        },
+                      ]} />
+                    )}
+                    {shapeType === 'star' && (
+                      <View style={[
+                        styles.floatingShape,
+                        styles.starShape,
+                        {
+                          backgroundColor: colors[index % colors.length],
+                          width: size,
+                          height: size,
+                        },
+                      ]} />
+                    )}
+                  </Animated.View>
+                );
+              })}
+
+              {/* Ripple effect behind logo */}
               <Animated.View
                 style={[
-                  styles.logoCircle,
+                  styles.rippleCircle,
                   {
-                    shadowOpacity: logoGlow.interpolate({
+                    opacity: rippleOpacity.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0.4, 0.8],
+                      outputRange: [0.6, 0],
                     }),
-                    shadowRadius: logoGlow.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [20, 35],
-                    }),
+                    transform: [{ scale: rippleScale }],
                   },
                 ]}
-              >
-                <LinearGradient
-                  colors={['#FF3F6C', '#F53F7A', '#FF6B9D']}
-                  style={styles.logoGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <Text style={styles.logoText}>O<Text style={styles.logoSubText}>2</Text>U</Text>
-                </LinearGradient>
+              />
 
-                {/* Shimmer overlay */}
+              {/* Welcome message with enhanced effects */}
+              <View style={styles.welcomeMessageContainer}>
+                {/* Logo with glow effect */}
                 <Animated.View
                   style={[
-                    styles.shimmerOverlay,
+                    styles.logoCircle,
                     {
-                      transform: [{
-                        translateX: shimmerPosition.interpolate({
-                          inputRange: [-1, 1],
-                          outputRange: [-200, 200],
-                        }),
-                      }],
+                      shadowOpacity: logoGlow.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.4, 0.8],
+                      }),
+                      shadowRadius: logoGlow.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [20, 35],
+                      }),
                     },
                   ]}
                 >
                   <LinearGradient
-                    colors={['transparent', 'rgba(255, 255, 255, 0.6)', 'transparent']}
-                    style={{ width: 100, height: 120 }}
+                    colors={['#FF3F6C', '#F53F7A', '#FF6B9D']}
+                    style={styles.logoGradient}
                     start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                  />
-                </Animated.View>
-              </Animated.View>
+                    end={{ x: 1, y: 1 }}
+                  >
+                    <Text style={styles.logoText}>O<Text style={styles.logoSubText}>2</Text>U</Text>
+                  </LinearGradient>
 
-              {/* Animated text */}
-              <View style={styles.textContainer}>
-                <Text style={styles.welcomeTitle}>
-                  <Text style={styles.welcomeTitleGradient}>Welcome to </Text>
-                  <Text style={styles.welcomeTitleBrand}>Only2U</Text>
-                </Text>
-                <View style={styles.subtitleContainer}>
-                  <Ionicons name="sparkles" size={16} color="#F53F7A" />
-                  <Text style={styles.welcomeSubtitle}>Your personalized fashion experience</Text>
-                  <Ionicons name="sparkles" size={16} color="#F53F7A" />
-                </View>
-              </View>
-
-              {/* Decorative dots */}
-              <View style={styles.dotsContainer}>
-                {[0, 1, 2].map((i) => (
-                  <View
-                    key={i}
+                  {/* Shimmer overlay */}
+                  <Animated.View
                     style={[
-                      styles.decorativeDot,
-                      { backgroundColor: i === 1 ? '#FF3F6C' : '#FFE5EC' },
-                    ]}
-                  />
-                ))}
-              </View>
-            </View>
-          </Animated.View>
-        </Animated.View>
-      )}
-
-      {/* Animated Content Wrapper */}
-      <Animated.View
-        style={[
-          styles.contentWrapper,
-          {
-            opacity: contentOpacity,
-          },
-        ]}
-      >
-        {/* Enhanced Header with Integrated Search */}
-        <Animated.View style={{ transform: [{ translateY: headerSlide }] }}>
-          <SafeAreaView edges={['top']} style={styles.safeHeader}>
-            <View style={styles.header}>
-              {/* Top Row: Logo + Actions */}
-              <View style={styles.headerTopRow}>
-                <View style={styles.logoContainer}>
-                  <Only2ULogo size="medium" />
-                  <TouchableOpacity
-                    style={styles.locationRow}
-                    onPress={() => {
-                      setAddressSheetVisible(true);
-                      addressSheetRef.current?.expand();
-                    }}
-                  >
-                    <Ionicons name="location" size={12} color="#F53F7A" />
-                    <Text style={styles.cityText}>
-                      {selectedAddress
-                        ? `${selectedAddress.city}, ${selectedAddress.state}`
-                        : userData?.location || 'Select location'}
-                    </Text>
-                    <Ionicons name="chevron-down" size={12} color="#6B7280" />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.headerRight}>
-                  <TouchableOpacity
-                    style={styles.coinBadge}
-                    onPress={() => setShowCoinsModal(true)}
-                    activeOpacity={0.7}
-                  >
-                    <MaterialCommunityIcons name="face-man-shimmer" size={16} color="#F53F7A" />
-                    <Text style={styles.coinText}>{userData?.coin_balance || 0}</Text>
-                  </TouchableOpacity>
-                  {/* Wishlist Heart Icon */}
-                  <TouchableOpacity style={styles.iconButton} onPress={() => navigation.navigate('Wishlist')}>
-                    <Ionicons name="heart-outline" size={22} color="#F53F7A" />
-                    {wishlistUnreadCount > 0 && (
-                      <View style={styles.badge}>
-                        <Text style={styles.badgeText}>{wishlistUnreadCount > 99 ? '99+' : wishlistUnreadCount}</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.profileButton}
-                    onPress={() => navigation.navigate('Profile')}
-                  >
-                    {userData?.profilePhoto ? (
-                      <Image source={{ uri: userData.profilePhoto }} style={styles.avatarImage} />
-                    ) : (
-                      <Ionicons name="person-outline" size={16} color="#333" />
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Bottom Row: Integrated Search Bar */}
-              <View style={styles.searchBarIntegrated}>
-                <Ionicons name="search-outline" size={20} color="#888" />
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search Products"
-                  placeholderTextColor="#888"
-                  value={searchText}
-                  onChangeText={setSearchText}
-                  returnKeyType="search"
-                />
-              </View>
-            </View>
-          </SafeAreaView>
-        </Animated.View>
-        {/* End Header Animation */}
-
-        {/* Initial Loading Screen */}
-        {isInitialLoading && !hasError ? (
-          <View style={styles.fullScreenLoading}>
-            <ScrollView
-              style={styles.skeletonScrollView}
-              contentContainerStyle={styles.skeletonContentContainer}
-              showsVerticalScrollIndicator={false}
-            >
-              {/* Header Skeleton */}
-              <View style={styles.skeletonHeader}>
-                <Animated.View
-                  style={[
-                    styles.skeletonLogo,
-                    {
-                      opacity: shimmerAnimation.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0.3, 0.7],
-                      }),
-                    },
-                  ]}
-                />
-                <View style={styles.skeletonHeaderRight}>
-                  {[1, 2, 3, 4].map((item) => (
-                    <Animated.View
-                      key={item}
-                      style={[
-                        styles.skeletonIcon,
-                        {
-                          opacity: shimmerAnimation.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0.3, 0.7],
+                      styles.shimmerOverlay,
+                      {
+                        transform: [{
+                          translateX: shimmerPosition.interpolate({
+                            inputRange: [-1, 1],
+                            outputRange: [-200, 200],
                           }),
-                        },
-                      ]}
-                    />
-                  ))}
-                </View>
-              </View>
-
-              {/* Search Bar Skeleton */}
-              <Animated.View
-                style={[
-                  styles.skeletonSearchBar,
-                  {
-                    opacity: shimmerAnimation.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.3, 0.7],
-                    }),
-                  },
-                ]}
-              />
-
-              {/* Categories Skeleton */}
-              <View style={styles.skeletonSection}>
-                <View style={styles.skeletonSectionHeader}>
-                  <View style={styles.skeletonTitle} />
-                  <View style={styles.skeletonSeeMore} />
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[1, 2, 3, 4, 5].map((item) => (
-                    <View key={item} style={styles.skeletonCategoryCard}>
-                      <View style={styles.skeletonCategoryImage} />
-                      <View style={styles.skeletonCategoryTitle} />
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-
-              {/* Trending Products Skeleton */}
-              <View style={styles.skeletonSection}>
-                <View style={styles.skeletonSectionHeader}>
-                  <View style={styles.skeletonTitle} />
-                  <View style={styles.skeletonSeeMore} />
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[1, 2, 3, 4].map((item) => (
-                    <View key={item} style={styles.skeletonProductCard}>
-                      <View style={styles.skeletonProductImage} />
-                      <View style={styles.skeletonProductTitle} />
-                      <View style={styles.skeletonProductPrice} />
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-
-              {/* Best Sellers Skeleton */}
-              <View style={styles.skeletonSection}>
-                <View style={styles.skeletonSectionHeader}>
-                  <View style={styles.skeletonTitle} />
-                  <View style={styles.skeletonSeeMore} />
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[1, 2, 3, 4].map((item) => (
-                    <View key={item} style={styles.skeletonProductCard}>
-                      <View style={styles.skeletonProductImage} />
-                      <View style={styles.skeletonProductTitle} />
-                      <View style={styles.skeletonProductPrice} />
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-
-              {/* Category Section Skeleton */}
-              <View style={styles.skeletonSection}>
-                <View style={styles.skeletonSectionHeader}>
-                  <View style={styles.skeletonTitle} />
-                  <View style={styles.skeletonSeeMore} />
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[1, 2, 3, 4].map((item) => (
-                    <View key={item} style={styles.skeletonProductCard}>
-                      <View style={styles.skeletonProductImage} />
-                      <View style={styles.skeletonProductTitle} />
-                      <View style={styles.skeletonProductPrice} />
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-            </ScrollView>
-          </View>
-        ) : hasError ? (
-          <View style={styles.errorContainer}>
-            <Ionicons name="cloud-offline-outline" size={64} color="#999" />
-            <Text style={styles.errorTitle}>Something went wrong</Text>
-            <Text style={styles.errorMessage}>{errorMessage}</Text>
-            <TouchableOpacity
-              style={styles.retryButton}
-              onPress={() => {
-                setHasError(false);
-                setErrorMessage('');
-                setIsInitialLoading(true);
-                loadDashboardData(true);
-              }}
-            >
-              <Text style={styles.retryButtonText}>Try Again</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            style={styles.scrollContent}
-            contentContainerStyle={styles.scrollContentContainer}
-            refreshControl={
-              <RefreshControl
-                refreshing={isRefreshing}
-                onRefresh={() => loadDashboardData(true)}
-                colors={['#F53F7A']}
-                tintColor="#F53F7A"
-              />
-            }
-          >
-            {/* Show search results if user is actively searching */}
-            {isSearching ? (
-              renderSearchResults()
-            ) : (
-              <>
-                {/* Dynamic Sections based on admin panel ordering */}
-                {featureSections.map((section, index) => (
-                  <View key={section.id}>
-                    {renderSectionByType(section)}
-                  </View>
-                ))}
-
-                {/* Category-specific product sections (shown after main sections) */}
-                {categories.map((category) => renderCategorySection(category))}
-              </>
-            )}
-
-            {/* Policies Footer */}
-            <View style={styles.policiesFooter}>
-              <Text style={styles.policiesFooterText}>Legal & Policies</Text>
-              <View style={styles.policiesFooterLinks}>
-                <TouchableOpacity
-                  style={styles.policyFooterLink}
-                  onPress={() => navigation.navigate('TermsAndConditions' as any)}
-                >
-                  <Text style={styles.policyFooterLinkText}>Terms</Text>
-                </TouchableOpacity>
-                <Text style={styles.policyFooterSeparator}>•</Text>
-                <TouchableOpacity
-                  style={styles.policyFooterLink}
-                  onPress={() => navigation.navigate('PrivacyPolicy' as any)}
-                >
-                  <Text style={styles.policyFooterLinkText}>Privacy</Text>
-                </TouchableOpacity>
-                <Text style={styles.policyFooterSeparator}>•</Text>
-                <TouchableOpacity
-                  style={styles.policyFooterLink}
-                  onPress={() => navigation.navigate('RefundPolicy' as any)}
-                >
-                  <Text style={styles.policyFooterLinkText}>Refund</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-          </ScrollView>
-        )}
-
-        {/* Address Selection Bottom Sheet */}
-        {addressSheetVisible && (
-          <BottomSheet
-            ref={addressSheetRef}
-            index={0}
-            snapPoints={['70%']}
-            enablePanDownToClose
-            onClose={() => setAddressSheetVisible(false)}
-          >
-            <BottomSheetScrollView style={styles.addressSheetContent}>
-              <View style={styles.addressSheetHeader}>
-                <Text style={styles.addressSheetTitle}>Select Delivery Address</Text>
-                <TouchableOpacity
-                  style={styles.addNewAddressButton}
-                  onPress={() => {
-                    setAddressSheetVisible(false);
-                    addressSheetRef.current?.close();
-                    navigation.navigate('AddressBook' as never);
-                  }}
-                >
-                  <Ionicons name="add-circle" size={20} color="#F53F7A" />
-                  <Text style={styles.addNewAddressText}>Add New</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Pincode Availability Checker */}
-              <View style={styles.pincodeChecker}>
-                <Text style={styles.pincodeCheckerTitle}>Check Delivery Availability</Text>
-                <View style={styles.pincodeInputRow}>
-                  <TextInput
-                    style={styles.pincodeInput}
-                    placeholder="Enter Pincode"
-                    value={pincode}
-                    onChangeText={setPincode}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    placeholderTextColor="#999"
-                  />
-                  <TouchableOpacity
-                    style={[styles.checkButton, checkingPincode && styles.checkButtonDisabled]}
-                    onPress={handleCheckPincode}
-                    disabled={checkingPincode}
-                  >
-                    {checkingPincode ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.checkButtonText}>Check</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-                {pincodeAvailable !== null && (
-                  <View style={[styles.availabilityResult, pincodeAvailable ? styles.availableResult : styles.unavailableResult]}>
-                    <Ionicons
-                      name={pincodeAvailable ? 'checkmark-circle' : 'close-circle'}
-                      size={18}
-                      color={pincodeAvailable ? '#10b981' : '#ef4444'}
-                    />
-                    <Text style={[styles.availabilityText, pincodeAvailable ? styles.availableText : styles.unavailableText]}>
-                      {pincodeAvailable ? 'Delivery available to this location' : 'Currently not serviceable'}
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.dividerLine} />
-
-              {addresses.length === 0 ? (
-                <View style={styles.emptyAddressContainer}>
-                  <Ionicons name="location-outline" size={48} color="#999" />
-                  <Text style={styles.emptyAddressText}>No addresses added yet</Text>
-                  <TouchableOpacity
-                    style={styles.addFirstAddressButton}
-                    onPress={() => {
-                      setAddressSheetVisible(false);
-                      addressSheetRef.current?.close();
-                      navigation.navigate('AddressBook' as never);
-                    }}
-                  >
-                    <Text style={styles.addFirstAddressText}>Add Your First Address</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.addressList}>
-                  {addresses.map((address) => (
-                    <TouchableOpacity
-                      key={address.id}
-                      style={[
-                        styles.addressCard,
-                        selectedAddress?.id === address.id && styles.selectedAddressCard
-                      ]}
-                      onPress={() => handleAddressSelect(address)}
-                    >
-                      <View style={styles.addressCardHeader}>
-                        <View style={styles.addressCardNameRow}>
-                          <Text style={styles.addressCardName}>{address.full_name}</Text>
-                          {address.is_default && (
-                            <View style={styles.defaultBadge}>
-                              <Text style={styles.defaultBadgeText}>Default</Text>
-                            </View>
-                          )}
-                        </View>
-                        {selectedAddress?.id === address.id && (
-                          <Ionicons name="checkmark-circle" size={24} color="#F53F7A" />
-                        )}
-                      </View>
-                      <Text style={styles.addressCardPhone}>{address.phone}</Text>
-                      <Text style={styles.addressCardAddress}>
-                        {address.address_line1}
-                        {address.address_line2 && `, ${address.address_line2}`}
-                      </Text>
-                      <Text style={styles.addressCardCity}>
-                        {address.city}, {address.state} - {address.pincode}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-            </BottomSheetScrollView>
-          </BottomSheet>
-        )}
-
-      </Animated.View>
-      {/* End Animated Content Wrapper */}
-
-      {/* Coins Info Modal - Outside Animated.View for proper visibility */}
-      <Modal
-        visible={showCoinsModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowCoinsModal(false)}
-        statusBarTranslucent={true}
-      >
-        <View style={styles.coinsModalOverlay}>
-          <View style={styles.coinsModalContainer}>
-            {/* Header */}
-            <View style={styles.coinsModalHeader}>
-              <View style={styles.coinsModalHeaderContent}>
-                <View style={styles.coinsModalIconWrapper}>
-                  <MaterialCommunityIcons name="face-man-shimmer" size={20} color="#F53F7A" />
-                </View>
-                <Text style={styles.coinsModalTitle}>Your Coins</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.coinsModalCloseButton}
-                onPress={() => setShowCoinsModal(false)}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="close" size={22} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Scrollable Content */}
-            <ScrollView
-              style={styles.coinsModalScrollView}
-              contentContainerStyle={styles.coinsModalScrollContent}
-              showsVerticalScrollIndicator={false}
-              bounces={false}
-            >
-              {/* Current Balance Card */}
-              <View style={styles.coinsBalanceCard}>
-                <Text style={styles.coinsBalanceLabel}>Current Balance</Text>
-                <View style={styles.coinsBalanceRow}>
-                  <Text style={styles.coinsBalanceValue}>{userData?.coin_balance || 0}</Text>
-                  <Text style={styles.coinsBalanceUnit}>coins</Text>
-                </View>
-              </View>
-
-              {/* Redeem Info Card */}
-              <View style={styles.coinsRedeemCard}>
-                <View style={styles.coinsRedeemHeader}>
-                  <Ionicons name="gift" size={14} color="#F53F7A" />
-                  <Text style={styles.coinsRedeemTitle}>Redeem Coins</Text>
-                </View>
-
-                {/* Shopping Redemption */}
-                <View style={styles.coinsRedeemItem}>
-                  <View style={styles.coinsRedeemIconContainer}>
-                    <Ionicons name="bag-check" size={14} color="#10B981" />
-                  </View>
-                  <Text style={styles.coinsRedeemItemText}>
-                    Redeem <Text style={styles.coinsRedeemHighlight}>100 coins</Text> for every ₹1000 worth of products you purchase
-                  </Text>
-                </View>
-
-                {/* Face Swap Redemption */}
-                <View style={styles.coinsRedeemItem}>
-                  <View style={styles.coinsRedeemIconContainer}>
-                    <MaterialCommunityIcons name="face-man-shimmer" size={14} color="#F53F7A" />
-                  </View>
-                  <Text style={styles.coinsRedeemItemText}>
-                    Redeem <Text style={styles.coinsRedeemHighlight}>50 coins</Text> for each face swap
-                  </Text>
-                </View>
-              </View>
-
-              {/* Ways to Earn Section */}
-              <View style={styles.coinsEarnSection}>
-                <Text style={styles.coinsEarnSectionTitle}>Ways to Earn Coins</Text>
-
-                {userData?.id && referralCode ? (
-                  <TouchableOpacity
-                    style={styles.coinsReferFriendsSimple}
-                    onPress={handleShareReferral}
-                    activeOpacity={0.7}
+                        }],
+                      },
+                    ]}
                   >
                     <LinearGradient
-                      colors={['#25D366', '#128C7E']}
+                      colors={['transparent', 'rgba(255, 255, 255, 0.6)', 'transparent']}
+                      style={{ width: 100, height: 120 }}
                       start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.coinsReferralCard}
-                    >
-                      <View style={styles.coinsReferralIconContainer}>
-                        <Ionicons name="logo-whatsapp" size={32} color="#fff" />
-                      </View>
-                      <View style={styles.coinsReferFriendsTextContainer}>
-                        <Text style={styles.coinsEarn100Title}>🎁 Refer & Earn 100 coins</Text>
-                        <Text style={styles.coinsEarn100Subtitle}>Share on WhatsApp to earn 100 coins</Text>
-                      </View>
-                      <View style={styles.coinsShareArrow}>
-                        <Ionicons name="arrow-forward-circle" size={32} color="rgba(255,255,255,0.9)" />
-                      </View>
-                    </LinearGradient>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.coinsEarnItem}>
-                    <View style={[styles.coinsEarnIcon, { backgroundColor: '#F3E8FF' }]}>
-                      <Ionicons name="person-add" size={18} color="#8B5CF6" />
-                    </View>
-                    <View style={styles.coinsEarnContent}>
-                      <Text style={styles.coinsEarnItemTitle}>Refer Friends</Text>
-                      <Text style={styles.coinsEarnItemDesc}>
-                        Invite friends and earn 100 coins
-                      </Text>
-                    </View>
-                  </View>
-                )}
+                      end={{ x: 1, y: 0 }}
+                    />
+                  </Animated.View>
+                </Animated.View>
 
-                <View style={styles.coinsEarnItem}>
-                  <View style={[styles.coinsEarnIcon, { backgroundColor: '#ECFDF5' }]}>
-                    <Ionicons name="cart" size={18} color="#10B981" />
+                {/* Animated text */}
+                <View style={styles.textContainer}>
+                  <Text style={styles.welcomeTitle}>
+                    <Text style={styles.welcomeTitleGradient}>Welcome to </Text>
+                    <Text style={styles.welcomeTitleBrand}>Only2U</Text>
+                  </Text>
+                  <View style={styles.subtitleContainer}>
+                    <Ionicons name="sparkles" size={16} color="#F53F7A" />
+                    <Text style={styles.welcomeSubtitle}>Your personalized fashion experience</Text>
+                    <Ionicons name="sparkles" size={16} color="#F53F7A" />
                   </View>
-                  <View style={styles.coinsEarnContent}>
-                    <Text style={styles.coinsEarnItemTitle}>Make a Purchase</Text>
-                    <Text style={styles.coinsEarnItemDesc}>
-                      Get 10% of your order value as coins
-                    </Text>
+                </View>
+
+                {/* Decorative dots */}
+                <View style={styles.dotsContainer}>
+                  {[0, 1, 2].map((i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.decorativeDot,
+                        { backgroundColor: i === 1 ? '#FF3F6C' : '#FFE5EC' },
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
+            </Animated.View>
+          </Animated.View>
+        )}
+
+        {/* Animated Content Wrapper */}
+        <Animated.View
+          style={[
+            styles.contentWrapper,
+            {
+              opacity: contentOpacity,
+            },
+          ]}
+        >
+          {/* Enhanced Header with Integrated Search */}
+          <Animated.View style={{ transform: [{ translateY: headerSlide }] }}>
+            <SafeAreaView edges={['top']} style={styles.safeHeader}>
+              <View style={styles.header}>
+                {/* Top Row: Logo + Actions */}
+                <View style={styles.headerTopRow}>
+                  <View style={styles.logoContainer}>
+                    <Only2ULogo size="medium" />
+                    <TouchableOpacity
+                      style={styles.locationRow}
+                      onPress={() => {
+                        setAddressSheetVisible(true);
+                        addressSheetRef.current?.expand();
+                      }}
+                    >
+                      <Ionicons name="location" size={12} color="#F53F7A" />
+                      <Text style={styles.cityText}>
+                        {selectedAddress
+                          ? `${selectedAddress.city}, ${selectedAddress.state}`
+                          : userData?.location || 'Select location'}
+                      </Text>
+                      <Ionicons name="chevron-down" size={12} color="#6B7280" />
+                    </TouchableOpacity>
                   </View>
-                  <View style={styles.coinsEarnAmountBadge}>
-                    <Text style={styles.coinsEarnAmount}>+10%</Text>
+
+                  <View style={styles.headerRight}>
+                    <TouchableOpacity
+                      style={styles.coinBadge}
+                      onPress={() => setShowCoinsModal(true)}
+                      activeOpacity={0.7}
+                    >
+                      <MaterialCommunityIcons name="face-man-shimmer" size={16} color="#F53F7A" />
+                      <Text style={styles.coinText}>{userData?.coin_balance || 0}</Text>
+                    </TouchableOpacity>
+                    {/* Wishlist Heart Icon */}
+                    <TouchableOpacity style={styles.iconButton} onPress={() => navigation.navigate('Wishlist')}>
+                      <Ionicons name="heart-outline" size={22} color="#F53F7A" />
+                      {wishlistUnreadCount > 0 && (
+                        <View style={styles.badge}>
+                          <Text style={styles.badgeText}>{wishlistUnreadCount > 99 ? '99+' : wishlistUnreadCount}</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.profileButton}
+                      onPress={() => navigation.navigate('Profile')}
+                    >
+                      {userData?.profilePhoto ? (
+                        <Image source={{ uri: userData.profilePhoto }} style={styles.avatarImage} />
+                      ) : (
+                        <Ionicons name="person-outline" size={16} color="#333" />
+                      )}
+                    </TouchableOpacity>
                   </View>
+                </View>
+
+                {/* Bottom Row: Integrated Search Bar with Suggestions */}
+                <View style={{ position: 'relative', zIndex: 1000, flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={[styles.searchBarIntegrated, { flex: 1 }]}>
+                    <Ionicons name="search-outline" size={20} color="#888" />
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="Search products..."
+                      placeholderTextColor="#888"
+                      value={searchText}
+                      onChangeText={handleSearchChange}
+                      onFocus={() => searchText.trim().length >= 2 && setShowSuggestions(true)}
+                      returnKeyType="search"
+                    />
+                    {searchText.length > 0 && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setSearchText('');
+                          setSearchSuggestions([]);
+                          setShowSuggestions(false);
+                        }}
+                        style={{ padding: 4 }}
+                      >
+                        <Ionicons name="close-circle" size={18} color="#999" />
+                      </TouchableOpacity>
+                    )}
+                    {loadingSuggestions && (
+                      <ActivityIndicator size="small" color="#F53F7A" style={{ marginLeft: 8 }} />
+                    )}
+                  </View>
+
+                  {/* Filter Button */}
+                  <TouchableOpacity
+                    style={{
+                      marginLeft: 10,
+                      width: 44,
+                      height: 44,
+                      backgroundColor: '#f5f5f5',
+                      borderRadius: 12,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}
+                    onPress={() => filterSheetRef.current?.present()}
+                  >
+                    <Ionicons name="options-outline" size={24} color="#333" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </SafeAreaView>
+          </Animated.View>
+          {/* End Header Animation */}
+
+          {/* Initial Loading Screen */}
+          {isInitialLoading && !hasError ? (
+            <DashboardLoader />
+          ) : hasError ? (
+            <View style={styles.errorContainer}>
+              <Ionicons name="cloud-offline-outline" size={64} color="#999" />
+              <Text style={styles.errorTitle}>Something went wrong</Text>
+              <Text style={styles.errorMessage}>{errorMessage}</Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={() => {
+                  setHasError(false);
+                  setErrorMessage('');
+                  setIsInitialLoading(true);
+                  loadDashboardData(true);
+                }}
+              >
+                <Text style={styles.retryButtonText}>Try Again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              style={styles.scrollContent}
+              contentContainerStyle={styles.scrollContentContainer}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshing}
+                  onRefresh={() => loadDashboardData(true)}
+                  colors={['#F53F7A']}
+                  tintColor="#F53F7A"
+                />
+              }
+            >
+              {/* Show search results if user is actively searching */}
+              {isSearching ? (
+                renderSearchResults()
+              ) : isFilteringCategory ? (
+                // Show category filter grid when category filter is applied
+                renderCategoryFilterGrid()
+              ) : (
+                <>
+                  {/* Dynamic Sections based on admin panel ordering */}
+                  {featureSections.map((section, index) => (
+                    <View key={section.id}>
+                      {renderSectionByType(section)}
+                    </View>
+                  ))}
+
+                  {/* Category-specific product sections (shown after main sections) */}
+                  {categories.map((category) => renderCategorySection(category))}
+                </>
+              )}
+
+              {/* Policies Footer */}
+              <View style={styles.policiesFooter}>
+                <Text style={styles.policiesFooterText}>Legal & Policies</Text>
+                <View style={styles.policiesFooterLinks}>
+                  <TouchableOpacity
+                    style={styles.policyFooterLink}
+                    onPress={() => navigation.navigate('TermsAndConditions' as any)}
+                  >
+                    <Text style={styles.policyFooterLinkText}>Terms</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.policyFooterSeparator}>•</Text>
+                  <TouchableOpacity
+                    style={styles.policyFooterLink}
+                    onPress={() => navigation.navigate('PrivacyPolicy' as any)}
+                  >
+                    <Text style={styles.policyFooterLinkText}>Privacy</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.policyFooterSeparator}>•</Text>
+                  <TouchableOpacity
+                    style={styles.policyFooterLink}
+                    onPress={() => navigation.navigate('RefundPolicy' as any)}
+                  >
+                    <Text style={styles.policyFooterLinkText}>Refund</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
-              {/* Close Button */}
-              <TouchableOpacity
-                style={styles.coinsModalButton}
-                onPress={() => setShowCoinsModal(false)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.coinsModalButtonText}>Got it!</Text>
-              </TouchableOpacity>
             </ScrollView>
+          )}
+
+          {/* Address Selection Bottom Sheet */}
+          {
+            addressSheetVisible && (
+              <BottomSheet
+                ref={addressSheetRef}
+                index={0}
+                snapPoints={['70%']}
+                enablePanDownToClose
+                onClose={() => setAddressSheetVisible(false)}
+              >
+                <BottomSheetScrollView style={styles.addressSheetContent}>
+                  <View style={styles.addressSheetHeader}>
+                    <Text style={styles.addressSheetTitle}>Select Delivery Address</Text>
+                    <TouchableOpacity
+                      style={styles.addNewAddressButton}
+                      onPress={() => {
+                        setAddressSheetVisible(false);
+                        addressSheetRef.current?.close();
+                        navigation.navigate('AddressBook' as never);
+                      }}
+                    >
+                      <Ionicons name="add-circle" size={20} color="#F53F7A" />
+                      <Text style={styles.addNewAddressText}>Add New</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Pincode Availability Checker */}
+                  <View style={styles.pincodeChecker}>
+                    <Text style={styles.pincodeCheckerTitle}>Check Delivery Availability</Text>
+                    <View style={styles.pincodeInputRow}>
+                      <TextInput
+                        style={styles.pincodeInput}
+                        placeholder="Enter Pincode"
+                        value={pincode}
+                        onChangeText={setPincode}
+                        keyboardType="number-pad"
+                        maxLength={6}
+                        placeholderTextColor="#999"
+                      />
+                      <TouchableOpacity
+                        style={[styles.checkButton, checkingPincode && styles.checkButtonDisabled]}
+                        onPress={handleCheckPincode}
+                        disabled={checkingPincode}
+                      >
+                        {checkingPincode ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={styles.checkButtonText}>Check</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                    {pincodeAvailable !== null && (
+                      <View style={[styles.availabilityResult, pincodeAvailable ? styles.availableResult : styles.unavailableResult]}>
+                        <Ionicons
+                          name={pincodeAvailable ? 'checkmark-circle' : 'close-circle'}
+                          size={18}
+                          color={pincodeAvailable ? '#10b981' : '#ef4444'}
+                        />
+                        <Text style={[styles.availabilityText, pincodeAvailable ? styles.availableText : styles.unavailableText]}>
+                          {pincodeAvailable ? 'Delivery available to this location' : 'Currently not serviceable'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.dividerLine} />
+
+                  {addresses.length === 0 ? (
+                    <View style={styles.emptyAddressContainer}>
+                      <Ionicons name="location-outline" size={48} color="#999" />
+                      <Text style={styles.emptyAddressText}>No addresses added yet</Text>
+                      <TouchableOpacity
+                        style={styles.addFirstAddressButton}
+                        onPress={() => {
+                          setAddressSheetVisible(false);
+                          addressSheetRef.current?.close();
+                          navigation.navigate('AddressBook' as never);
+                        }}
+                      >
+                        <Text style={styles.addFirstAddressText}>Add Your First Address</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.addressList}>
+                      {addresses.map((address) => (
+                        <TouchableOpacity
+                          key={address.id}
+                          style={[
+                            styles.addressCard,
+                            selectedAddress?.id === address.id && styles.selectedAddressCard
+                          ]}
+                          onPress={() => handleAddressSelect(address)}
+                        >
+                          <View style={styles.addressCardHeader}>
+                            <View style={styles.addressCardNameRow}>
+                              <Text style={styles.addressCardName}>{address.full_name}</Text>
+                              {address.is_default && (
+                                <View style={styles.defaultBadge}>
+                                  <Text style={styles.defaultBadgeText}>Default</Text>
+                                </View>
+                              )}
+                            </View>
+                            {selectedAddress?.id === address.id && (
+                              <Ionicons name="checkmark-circle" size={24} color="#F53F7A" />
+                            )}
+                          </View>
+                          <Text style={styles.addressCardPhone}>{address.phone}</Text>
+                          <Text style={styles.addressCardAddress}>
+                            {address.address_line1}
+                            {address.address_line2 && `, ${address.address_line2}`}
+                          </Text>
+                          <Text style={styles.addressCardCity}>
+                            {address.city}, {address.state} - {address.pincode}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </BottomSheetScrollView>
+              </BottomSheet>
+            )
+          }
+
+        </Animated.View >
+        {/* End Animated Content Wrapper */}
+
+        {/* Coins Info Modal - Outside Animated.View for proper visibility */}
+        <Modal
+          visible={showCoinsModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowCoinsModal(false)}
+          statusBarTranslucent={true}
+        >
+          <View style={styles.coinsModalOverlay}>
+            <View style={styles.coinsModalContainer}>
+              {/* Header */}
+              <View style={styles.coinsModalHeader}>
+                <View style={styles.coinsModalHeaderContent}>
+                  <View style={styles.coinsModalIconWrapper}>
+                    <MaterialCommunityIcons name="face-man-shimmer" size={20} color="#F53F7A" />
+                  </View>
+                  <Text style={styles.coinsModalTitle}>Your Coins</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.coinsModalCloseButton}
+                  onPress={() => setShowCoinsModal(false)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="close" size={22} color="#6B7280" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Scrollable Content */}
+              <ScrollView
+                style={styles.coinsModalScrollView}
+                contentContainerStyle={styles.coinsModalScrollContent}
+                showsVerticalScrollIndicator={false}
+                bounces={false}
+              >
+                {/* Current Balance Card */}
+                <View style={styles.coinsBalanceCard}>
+                  <Text style={styles.coinsBalanceLabel}>Current Balance</Text>
+                  <View style={styles.coinsBalanceRow}>
+                    <Text style={styles.coinsBalanceValue}>{userData?.coin_balance || 0}</Text>
+                    <Text style={styles.coinsBalanceUnit}>coins</Text>
+                  </View>
+                </View>
+
+                {/* Redeem Info Card */}
+                <View style={styles.coinsRedeemCard}>
+                  <View style={styles.coinsRedeemHeader}>
+                    <Ionicons name="gift" size={14} color="#F53F7A" />
+                    <Text style={styles.coinsRedeemTitle}>Redeem Coins</Text>
+                  </View>
+
+                  {/* Shopping Redemption */}
+                  <View style={styles.coinsRedeemItem}>
+                    <View style={styles.coinsRedeemIconContainer}>
+                      <Ionicons name="bag-check" size={14} color="#10B981" />
+                    </View>
+                    <Text style={styles.coinsRedeemItemText}>
+                      Redeem <Text style={styles.coinsRedeemHighlight}>100 coins</Text> for every ₹1000 worth of products you purchase
+                    </Text>
+                  </View>
+
+                  {/* Face Swap Redemption */}
+                  <View style={styles.coinsRedeemItem}>
+                    <View style={styles.coinsRedeemIconContainer}>
+                      <MaterialCommunityIcons name="face-man-shimmer" size={14} color="#F53F7A" />
+                    </View>
+                    <Text style={styles.coinsRedeemItemText}>
+                      Redeem <Text style={styles.coinsRedeemHighlight}>50 coins</Text> for each face swap
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Ways to Earn Section */}
+                <View style={styles.coinsEarnSection}>
+                  <Text style={styles.coinsEarnSectionTitle}>Ways to Earn Coins</Text>
+
+                  {userData?.id && referralCode ? (
+                    <TouchableOpacity
+                      style={styles.coinsReferFriendsSimple}
+                      onPress={handleShareReferral}
+                      activeOpacity={0.7}
+                    >
+                      <LinearGradient
+                        colors={['#25D366', '#128C7E']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.coinsReferralCard}
+                      >
+                        <View style={styles.coinsReferralIconContainer}>
+                          <Ionicons name="logo-whatsapp" size={32} color="#fff" />
+                        </View>
+                        <View style={styles.coinsReferFriendsTextContainer}>
+                          <Text style={styles.coinsEarn100Title}>🎁 Refer & Earn 100 coins</Text>
+                          <Text style={styles.coinsEarn100Subtitle}>Share on WhatsApp to earn 100 coins</Text>
+                        </View>
+                        <View style={styles.coinsShareArrow}>
+                          <Ionicons name="arrow-forward-circle" size={32} color="rgba(255,255,255,0.9)" />
+                        </View>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.coinsEarnItem}>
+                      <View style={[styles.coinsEarnIcon, { backgroundColor: '#F3E8FF' }]}>
+                        <Ionicons name="person-add" size={18} color="#8B5CF6" />
+                      </View>
+                      <View style={styles.coinsEarnContent}>
+                        <Text style={styles.coinsEarnItemTitle}>Refer Friends</Text>
+                        <Text style={styles.coinsEarnItemDesc}>
+                          Invite friends and earn 100 coins
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
+                  <View style={styles.coinsEarnItem}>
+                    <View style={[styles.coinsEarnIcon, { backgroundColor: '#ECFDF5' }]}>
+                      <Ionicons name="cart" size={18} color="#10B981" />
+                    </View>
+                    <View style={styles.coinsEarnContent}>
+                      <Text style={styles.coinsEarnItemTitle}>Make a Purchase</Text>
+                      <Text style={styles.coinsEarnItemDesc}>
+                        Get 10% of your order value as coins
+                      </Text>
+                    </View>
+                    <View style={styles.coinsEarnAmountBadge}>
+                      <Text style={styles.coinsEarnAmount}>+10%</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Close Button */}
+                <TouchableOpacity
+                  style={styles.coinsModalButton}
+                  onPress={() => setShowCoinsModal(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.coinsModalButtonText}>Got it!</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
           </View>
-        </View>
-      </Modal>
-    </View>
+        </Modal>
+
+        {/* Filter Bottom Sheet */}
+        <BottomSheetModal
+          ref={filterSheetRef}
+          index={0}
+          snapPoints={snapPoints}
+          backdropComponent={(props) => (
+            <BottomSheetBackdrop {...props} opacity={0.5} disappearsOnIndex={-1} pressBehavior="close" />
+          )}
+          enablePanDownToClose={true}
+          style={{ borderRadius: 24, overflow: 'hidden' }}
+          handleIndicatorStyle={{ backgroundColor: '#e0e0e0', width: 40 }}
+        >
+          <View style={{ flex: 1, backgroundColor: '#fff' }}>
+            {/* Header */}
+            <View style={styles.filterHeader}>
+              <Text style={styles.filterHeaderTitle}>Filters</Text>
+              <TouchableOpacity onPress={handleClearAllFilters}>
+                <Text style={styles.clearAllButton}>CLEAR ALL</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Two Column Layout */}
+            <View style={styles.filterTwoColumn}>
+              {/* Left Column - Filter Categories */}
+              <View style={styles.filterLeftColumn}>
+                <Text style={styles.filterCategoriesTitle}>Filters</Text>
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  {filterCategories.map((category) => {
+                    const hasFilters = hasActiveFilters(category);
+                    return (
+                      <TouchableOpacity
+                        key={category}
+                        style={[
+                          styles.filterCategoryItem,
+                          activeFilterCategory === category && styles.filterCategoryItemActive
+                        ]}
+                        onPress={() => setActiveFilterCategory(category)}>
+                        <View style={styles.filterCategoryTextContainer}>
+                          <Text style={[
+                            styles.filterCategoryText,
+                            activeFilterCategory === category && styles.filterCategoryTextActive
+                          ]}>
+                            {category}
+                          </Text>
+                          {hasFilters && (
+                            <View style={styles.filterIndicatorDot} />
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              {/* Right Column - Filter Options */}
+              <View style={styles.filterRightColumn}>
+                <View style={{ flex: 1 }}>
+                  {/* Category Filter */}
+                  {activeFilterCategory === 'Category' && (
+                    <View style={styles.filterOptionsContainer}>
+                      <Text style={styles.filterSectionTitle}>
+                        {categories.length} {categories.length === 1 ? 'Category' : 'Categories'} Available
+                      </Text>
+                      <BottomSheetScrollView showsVerticalScrollIndicator={false}>
+                        {categories.length > 0 ? (
+                          categories.map((cat) => (
+                            <TouchableOpacity
+                              key={cat.id}
+                              style={styles.filterOptionRow}
+                              onPress={() => toggleCategorySelection(cat.id)}>
+                              <View style={styles.checkboxContainer}>
+                                <Ionicons
+                                  name={selectedFilterCategories.includes(cat.id) ? 'checkmark-circle' : 'ellipse-outline'}
+                                  size={20}
+                                  color={selectedFilterCategories.includes(cat.id) ? '#F53F7A' : '#999'}
+                                />
+                              </View>
+                              <Text style={styles.filterOptionText}>{cat.name}</Text>
+                            </TouchableOpacity>
+                          ))
+                        ) : (
+                          <View style={styles.emptyFilterState}>
+                            <Text style={styles.emptyFilterText}>No categories available</Text>
+                          </View>
+                        )}
+                      </BottomSheetScrollView>
+                    </View>
+                  )}
+
+                  {/* Brand/Influencer Filter with Tabs */}
+                  {activeFilterCategory === 'Brand/Influencer' && (
+                    <View style={styles.filterOptionsContainer}>
+                      {/* Tabs */}
+                      <View style={styles.brandInfluencerTabs}>
+                        <TouchableOpacity
+                          style={[
+                            styles.brandInfluencerTab,
+                            activeBrandInfluencerTab === 'brands' && styles.brandInfluencerTabActive
+                          ]}
+                          onPress={() => setActiveBrandInfluencerTab('brands')}
+                        >
+                          <Text style={[
+                            styles.brandInfluencerTabText,
+                            activeBrandInfluencerTab === 'brands' && styles.brandInfluencerTabTextActive
+                          ]}>
+                            Brands ({filteredVendors.length})
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.brandInfluencerTab,
+                            activeBrandInfluencerTab === 'influencers' && styles.brandInfluencerTabActive
+                          ]}
+                          onPress={() => setActiveBrandInfluencerTab('influencers')}
+                        >
+                          <Text style={[
+                            styles.brandInfluencerTabText,
+                            activeBrandInfluencerTab === 'influencers' && styles.brandInfluencerTabTextActive
+                          ]}>
+                            Influencers ({filteredInfluencers.length})
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Brands Tab */}
+                      {activeBrandInfluencerTab === 'brands' && (
+                        <>
+                          <TextInput
+                            style={styles.vendorSearchInput}
+                            placeholder="Search brands..."
+                            value={vendorSearchQuery}
+                            onChangeText={setVendorSearchQuery}
+                            placeholderTextColor="#999"
+                          />
+                          <BottomSheetScrollView style={styles.vendorList} showsVerticalScrollIndicator={true}>
+                            {filteredVendors.length === 0 ? (
+                              <View style={styles.emptyFilterState}>
+                                <Ionicons name="business-outline" size={40} color="#ccc" />
+                                <Text style={styles.emptyFilterText}>No brands available</Text>
+                              </View>
+                            ) : (
+                              filteredVendors.map((vendor: any) => {
+                                const isSelected = selectedBrands.includes(vendor.id);
+                                return (
+                                  <TouchableOpacity
+                                    key={vendor.id}
+                                    style={[
+                                      styles.filterOptionRow,
+                                      { paddingVertical: 10 }
+                                    ]}
+                                    onPress={() => toggleBrandSelection(vendor.id)}>
+                                    <View style={{
+                                      width: 44,
+                                      height: 44,
+                                      borderRadius: 22,
+                                      borderWidth: isSelected ? 3 : 2,
+                                      borderColor: isSelected ? '#F53F7A' : '#E5E5E5',
+                                      backgroundColor: isSelected ? '#FFF0F5' : '#F5F5F5',
+                                      justifyContent: 'center',
+                                      alignItems: 'center',
+                                      marginRight: 12,
+                                      overflow: 'hidden',
+                                    }}>
+                                      {(vendor.profile_image_url || vendor.store_logo_url) ? (
+                                        <Image
+                                          source={{ uri: vendor.profile_image_url || vendor.store_logo_url }}
+                                          style={{ width: 40, height: 40, borderRadius: 20 }}
+                                        />
+                                      ) : (
+                                        <View style={{
+                                          width: 40,
+                                          height: 40,
+                                          borderRadius: 20,
+                                          backgroundColor: isSelected ? '#FFF0F5' : '#E8E8E8',
+                                          justifyContent: 'center',
+                                          alignItems: 'center',
+                                        }}>
+                                          <Ionicons
+                                            name="business"
+                                            size={20}
+                                            color={isSelected ? '#F53F7A' : '#999'}
+                                          />
+                                        </View>
+                                      )}
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                      <Text style={[
+                                        styles.filterOptionText,
+                                        isSelected && { color: '#F53F7A', fontWeight: '600' }
+                                      ]}>{vendor.store_name || vendor.business_name}</Text>
+                                    </View>
+                                    {isSelected && (
+                                      <View style={{
+                                        width: 24,
+                                        height: 24,
+                                        borderRadius: 12,
+                                        backgroundColor: '#F53F7A',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                      }}>
+                                        <Ionicons name="checkmark" size={16} color="#fff" />
+                                      </View>
+                                    )}
+                                  </TouchableOpacity>
+                                );
+                              })
+                            )}
+                          </BottomSheetScrollView>
+                        </>
+                      )}
+
+                      {/* Influencers Tab */}
+                      {activeBrandInfluencerTab === 'influencers' && (
+                        <>
+                          <TextInput
+                            style={styles.vendorSearchInput}
+                            placeholder="Search influencers..."
+                            value={influencerSearchQuery}
+                            onChangeText={setInfluencerSearchQuery}
+                            placeholderTextColor="#999"
+                          />
+                          <BottomSheetScrollView style={styles.vendorList} showsVerticalScrollIndicator={true}>
+                            {filteredInfluencers.length === 0 ? (
+                              <View style={styles.emptyFilterState}>
+                                <Ionicons name="person-outline" size={40} color="#ccc" />
+                                <Text style={styles.emptyFilterText}>No influencers available</Text>
+                              </View>
+                            ) : (
+                              filteredInfluencers.map((influencer: any) => {
+                                const isSelected = selectedInfluencers.includes(influencer.id);
+                                return (
+                                  <TouchableOpacity
+                                    key={influencer.id}
+                                    style={[
+                                      styles.filterOptionRow,
+                                      { paddingVertical: 10 }
+                                    ]}
+                                    onPress={() => toggleInfluencerSelection(influencer.id)}>
+                                    <View style={{
+                                      width: 44,
+                                      height: 44,
+                                      borderRadius: 22,
+                                      borderWidth: isSelected ? 3 : 2,
+                                      borderColor: isSelected ? '#F53F7A' : '#E5E5E5',
+                                      backgroundColor: isSelected ? '#FFF0F5' : '#F5F5F5',
+                                      justifyContent: 'center',
+                                      alignItems: 'center',
+                                      marginRight: 12,
+                                      overflow: 'hidden',
+                                    }}>
+                                      {influencer.profile_photo ? (
+                                        <Image
+                                          source={{ uri: influencer.profile_photo }}
+                                          style={{ width: 40, height: 40, borderRadius: 20 }}
+                                        />
+                                      ) : (
+                                        <View style={{
+                                          width: 40,
+                                          height: 40,
+                                          borderRadius: 20,
+                                          backgroundColor: isSelected ? '#FFF0F5' : '#E8E8E8',
+                                          justifyContent: 'center',
+                                          alignItems: 'center',
+                                        }}>
+                                          <Ionicons
+                                            name="person"
+                                            size={20}
+                                            color={isSelected ? '#F53F7A' : '#999'}
+                                          />
+                                        </View>
+                                      )}
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        <Text style={[
+                                          styles.filterOptionText,
+                                          isSelected && { color: '#F53F7A', fontWeight: '600' }
+                                        ]}>
+                                          {influencer.name || influencer.username}
+                                        </Text>
+                                      </View>
+                                    </View>
+                                    {isSelected && (
+                                      <View style={{
+                                        width: 24,
+                                        height: 24,
+                                        borderRadius: 12,
+                                        backgroundColor: '#F53F7A',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                      }}>
+                                        <Ionicons name="checkmark" size={16} color="#fff" />
+                                      </View>
+                                    )}
+                                  </TouchableOpacity>
+                                );
+                              })
+                            )}
+                          </BottomSheetScrollView>
+                        </>
+                      )}
+                    </View>
+                  )}
+
+                  {/* Size Filter */}
+                  {activeFilterCategory === 'Size' && (
+                    <View style={styles.filterOptionsContainer}>
+                      <BottomSheetScrollView showsVerticalScrollIndicator={false}>
+                        {sizes.length > 0 ? (
+                          sizes.map((size) => (
+                            <TouchableOpacity
+                              key={size.id}
+                              style={styles.filterOptionRow}
+                              onPress={() => toggleSizeSelection(size.id)}>
+                              <View style={styles.checkboxContainer}>
+                                <Ionicons
+                                  name={selectedSizes.includes(size.id) ? 'checkmark' : 'square-outline'}
+                                  size={20}
+                                  color={selectedSizes.includes(size.id) ? '#F53F7A' : '#999'}
+                                />
+                              </View>
+                              <Text style={styles.filterOptionText}>{size.name}</Text>
+                            </TouchableOpacity>
+                          ))
+                        ) : (
+                          <View style={styles.emptyFilterState}>
+                            <Ionicons name="resize-outline" size={48} color="#ccc" />
+                            <Text style={styles.emptyFilterText}>No sizes available</Text>
+                          </View>
+                        )}
+                      </BottomSheetScrollView>
+                    </View>
+                  )}
+
+                  {/* Price Range Filter */}
+                  {activeFilterCategory === 'Price Range' && (
+                    <View style={styles.filterOptionsContainer}>
+                      <Text style={styles.filterSectionTitle}>Price Range</Text>
+                      <View style={styles.priceRangeContainer}>
+                        <TextInput
+                          style={styles.priceInput}
+                          placeholder="Min Price"
+                          value={filterMinPrice}
+                          onChangeText={setFilterMinPrice}
+                          keyboardType="numeric"
+                          placeholderTextColor="#999"
+                        />
+                        <Text style={styles.priceRangeSeparator}>to</Text>
+                        <TextInput
+                          style={styles.priceInput}
+                          placeholder="Max Price"
+                          value={filterMaxPrice}
+                          onChangeText={setFilterMaxPrice}
+                          keyboardType="numeric"
+                          placeholderTextColor="#999"
+                        />
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Rating Filter */}
+                  {activeFilterCategory === 'Rating' && (
+                    <View style={styles.filterOptionsContainer}>
+                      <Text style={styles.filterSectionTitle}>Customer Ratings</Text>
+                      <BottomSheetScrollView showsVerticalScrollIndicator={false}>
+                        {[4, 3, 2, 1].map((rating) => (
+                          <TouchableOpacity
+                            key={rating}
+                            style={styles.filterOptionRow}
+                            onPress={() => setSelectedRating(selectedRating === rating ? null : rating)}>
+                            <View style={styles.checkboxContainer}>
+                              <Ionicons
+                                name={selectedRating === rating ? 'radio-button-on' : 'radio-button-off'}
+                                size={20}
+                                color={selectedRating === rating ? '#F53F7A' : '#999'}
+                              />
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              {Array.from({ length: 5 }).map((_, i) => (
+                                <Ionicons
+                                  key={i}
+                                  name={i < rating ? "star" : "star-outline"}
+                                  size={16}
+                                  color="#FFD700"
+                                  style={{ marginRight: 2 }}
+                                />
+                              ))}
+                              <Text style={styles.filterOptionText}>& Up</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </BottomSheetScrollView>
+                    </View>
+                  )}
+                </View>
+              </View>
+            </View>
+
+            {/* Footer Buttons */}
+            <View style={styles.filterFooter}>
+              <TouchableOpacity
+                style={styles.filterCloseButton}
+                onPress={() => filterSheetRef.current?.dismiss()}>
+                <Text style={styles.filterCloseButtonText}>CLOSE</Text>
+              </TouchableOpacity>
+
+              <View style={styles.filterFooterDivider} />
+
+              <TouchableOpacity
+                style={styles.filterApplyButton}
+                onPress={handleApplyFilters}>
+                <Text style={styles.filterApplyButtonText}>APPLY</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </BottomSheetModal>
+      </View >
+    </BottomSheetModalProvider>
   );
 };
 
@@ -2660,6 +3515,83 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     gap: 10,
+  },
+  suggestionsDropdown: {
+    position: 'absolute',
+    top: 120,
+    left: 16,
+    right: 16,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+    overflow: 'hidden',
+    zIndex: 9999,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    gap: 12,
+  },
+  suggestionImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: '#f5f5f5',
+  },
+  suggestionInfo: {
+    flex: 1,
+  },
+  suggestionName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 3,
+  },
+  suggestionPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  suggestionPrice: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F53F7A',
+  },
+  suggestionMrp: {
+    fontSize: 12,
+    color: '#999',
+    textDecorationLine: 'line-through',
+  },
+  suggestionDiscount: {
+    fontSize: 11,
+    color: '#4CAF50',
+    fontWeight: '600',
+  },
+  suggestionsOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 9999,
+  },
+  suggestionsBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.3)',
   },
   scrollContent: {
     flex: 1,
@@ -3488,11 +4420,12 @@ const styles = StyleSheet.create({
   searchResultsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    marginHorizontal: -8, // Adjust for card padding
   },
   searchResultCard: {
-    width: '48%',
-    marginBottom: 16,
+    width: '50%',
+    padding: 8, // Create spacing
+    marginBottom: 0,
   },
   noResultsContainer: {
     flex: 1,
@@ -3656,6 +4589,414 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  // Vertical Card Styles (Matched with Products.tsx Grid)
+  // Vertical Card Styles (Matched with Products.tsx Grid)
+  verticalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 0,
+    overflow: 'hidden',
+    borderWidth: 0.5,
+    borderColor: '#e0e0e0',
+    width: '100%',
+    elevation: 2, // Slight shadow for card effect
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    marginBottom: 16,
+  },
+  verticalImageContainer: {
+    position: 'relative',
+    width: '100%',
+  },
+  verticalImage: {
+    width: '100%',
+    height: 220,
+  },
+  verticalBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    zIndex: 1,
+  },
+  verticalBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  verticalWishlistButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  ratingBadgeOverlay: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10, // Moved to bottom right
+    zIndex: 999,
+  },
+  ratingBadgeOnImage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16, // Pill shape
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  ratingBadgeValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#333',
+  },
+  verticalDetails: {
+    padding: 10,
+  },
+  verticalVendorText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#333', // Darker black for vendor
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  verticalProductName: {
+    fontWeight: '500',
+    fontSize: 12,
+    color: '#888', // Gray for product name
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  verticalPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  verticalOriginalPrice: {
+    fontSize: 12,
+    color: '#999',
+    textDecorationLine: 'line-through',
+  },
+  verticalPrice: {
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  verticalDiscountBadge: {
+    backgroundColor: '#F53F7A',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  verticalDiscountText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  // Filter Styles
+  filterHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  filterHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+  },
+  clearAllButton: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F53F7A',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  filterTwoColumn: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  filterLeftColumn: {
+    width: '33%',
+    backgroundColor: '#fafafa',
+    borderRightWidth: 1,
+    borderRightColor: '#e0e0e0',
+  },
+  filterCategoriesTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  filterCategoryItem: {
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  filterCategoryItemActive: {
+    backgroundColor: '#f5f5f5',
+    borderLeftWidth: 3,
+    borderLeftColor: '#F53F7A',
+  },
+  filterCategoryTextContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  filterCategoryText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  filterCategoryTextActive: {
+    color: '#333',
+    fontWeight: '600',
+  },
+  filterIndicatorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#F53F7A',
+  },
+  filterRightColumn: {
+    flex: 1,
+    width: '67%',
+    backgroundColor: '#fff',
+  },
+  filterOptionsContainer: {
+    flex: 1,
+    padding: 16,
+  },
+  brandInfluencerTabs: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    borderRadius: 8,
+    backgroundColor: '#f5f5f5',
+    padding: 4,
+  },
+  brandInfluencerTab: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  brandInfluencerTabActive: {
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  brandInfluencerTabText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#666',
+  },
+  brandInfluencerTabTextActive: {
+    color: '#F53F7A',
+    fontWeight: '600',
+  },
+  checkboxContainer: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    alignSelf: 'center',
+    marginRight: 12,
+  },
+  vendorSearchInput: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    marginBottom: 12,
+    backgroundColor: '#f9f9f9',
+  },
+  vendorList: {
+    flex: 1,
+  },
+  emptyFilterState: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  emptyFilterText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 12,
+  },
+  emptyFilterSubtext: {
+    fontSize: 13,
+    color: '#999',
+    marginTop: 6,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  filterOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  filterOptionText: {
+    fontSize: 14,
+    color: '#333',
+    marginLeft: 8,
+    flex: 1,
+  },
+  filterSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  filterSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  priceRangeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  priceInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    backgroundColor: '#f9f9f9',
+  },
+  priceRangeSeparator: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  filterFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    backgroundColor: '#fff',
+  },
+  filterCloseButton: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  filterCloseButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  filterFooterDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: '#e0e0e0',
+    marginHorizontal: 20,
+  },
+  filterApplyButton: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  filterApplyButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F53F7A',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  sizeProductCount: {
+    fontSize: 13,
+    color: '#666',
+    marginLeft: 4,
+  },
+  // Category Filter Grid Styles
+  categoryFilterContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  categoryFilterHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  categoryFilterBackButton: {
+    padding: 8,
+  },
+  categoryFilterTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    flex: 1,
+    textAlign: 'center',
+  },
+  categoryFilterButton: {
+    padding: 8,
+  },
+  categoryFilterCountRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#f8f9fa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  categoryFilterCountText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '600',
+  },
+  // Category Filter Grid - exactly like search results
+  categoryFilterGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 8, // Outer spacing
+  },
+  categoryFilterCard: {
+    width: '50%',
+    padding: 8, // Inner spacing (creates gap)
   },
 });
 

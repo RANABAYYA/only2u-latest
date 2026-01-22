@@ -22,6 +22,7 @@ interface WishlistContextType {
   unreadCount: number;
   addToWishlist: (product: WishlistProduct) => void;
   removeFromWishlist: (productId: string) => void;
+  removeMultipleFromWishlist: (productIds: string[]) => void;
   toggleWishlist: (product: WishlistProduct) => void;
   isInWishlist: (productId: string) => boolean;
   clearWishlist: () => void;
@@ -101,11 +102,11 @@ export const WishlistProvider: React.FC<{ children: ReactNode }> = ({ children }
 
     const updatedWishlist = [...wishlist, product];
     setWishlist(updatedWishlist);
-    
+
     // Increment unread count
     const newUnreadCount = unreadCount + 1;
     setUnreadCount(newUnreadCount);
-    
+
     // Save both wishlist and unread count
     const unreadCountKey = getUnreadCountKey();
     if (unreadCountKey) {
@@ -114,14 +115,62 @@ export const WishlistProvider: React.FC<{ children: ReactNode }> = ({ children }
     saveWishlist();
   };
 
-  const removeFromWishlist = (productId: string) => {
+  const removeFromWishlist = async (productId: string) => {
     if (!userData?.id) {
       return;
     }
 
-    const updatedWishlist = wishlist.filter(item => item.id !== productId);
-    setWishlist(updatedWishlist);
-    saveWishlist();
+    setWishlist(currentWishlist => {
+      const updatedWishlist = currentWishlist.filter(item => String(item.id) !== String(productId));
+      // Save immediately with the new value
+      AsyncStorage.setItem(`wishlist_${userData.id}`, JSON.stringify(updatedWishlist)).catch(err =>
+        console.error('Error saving wishlist:', err)
+      );
+      return updatedWishlist;
+    });
+
+    // Decrement unread count (don't go below 0)
+    const newUnreadCount = Math.max(0, unreadCount - 1);
+    setUnreadCount(newUnreadCount);
+    const unreadCountKey = getUnreadCountKey();
+    if (unreadCountKey) {
+      if (newUnreadCount > 0) {
+        await AsyncStorage.setItem(unreadCountKey, newUnreadCount.toString());
+      } else {
+        await AsyncStorage.removeItem(unreadCountKey);
+      }
+    }
+  };
+
+  const removeMultipleFromWishlist = async (productIds: string[]) => {
+    if (!userData?.id || productIds.length === 0) {
+      return;
+    }
+
+    const idsToRemove = new Set(productIds.map(id => String(id)));
+    const removedCount = productIds.length;
+
+    setWishlist(currentWishlist => {
+      const updatedWishlist = currentWishlist.filter(item => !idsToRemove.has(String(item.id)));
+      // Save immediately with the new value
+      AsyncStorage.setItem(`wishlist_${userData.id}`, JSON.stringify(updatedWishlist)).catch(err =>
+        console.error('Error saving wishlist:', err)
+      );
+      console.log(`Removed ${productIds.length} items from wishlist. Remaining: ${updatedWishlist.length}`);
+      return updatedWishlist;
+    });
+
+    // Decrement unread count by the number of items removed (don't go below 0)
+    const newUnreadCount = Math.max(0, unreadCount - removedCount);
+    setUnreadCount(newUnreadCount);
+    const unreadCountKey = getUnreadCountKey();
+    if (unreadCountKey) {
+      if (newUnreadCount > 0) {
+        await AsyncStorage.setItem(unreadCountKey, newUnreadCount.toString());
+      } else {
+        await AsyncStorage.removeItem(unreadCountKey);
+      }
+    }
   };
 
   const toggleWishlist = (product: WishlistProduct) => {
@@ -146,7 +195,6 @@ export const WishlistProvider: React.FC<{ children: ReactNode }> = ({ children }
     try {
       setWishlist([]);
       await AsyncStorage.removeItem(`wishlist_${userData.id}`);
-      
       // Also clear unread count
       const unreadCountKey = getUnreadCountKey();
       if (unreadCountKey) {
@@ -178,6 +226,7 @@ export const WishlistProvider: React.FC<{ children: ReactNode }> = ({ children }
     unreadCount,
     addToWishlist,
     removeFromWishlist,
+    removeMultipleFromWishlist,
     toggleWishlist,
     isInWishlist,
     clearWishlist,

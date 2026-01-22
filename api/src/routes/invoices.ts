@@ -63,83 +63,145 @@ const router = express.Router();
  */
 router.get('/', async (req, res, next) => {
   try {
-    const { customer_id, status, from_date, to_date, page = 1, limit = 50 } = req.query;
+    const { user_id, status, from_date, to_date, page = 1, limit = 50 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     const values: any[] = [];
     let where = 'WHERE 1=1';
 
-    if (customer_id) {
-      values.push(customer_id);
-      where += ` AND customer_id = $${values.length}`;
+    if (user_id) {
+      values.push(user_id);
+      where += ` AND o.user_id = $${values.length}`;
     }
     if (status) {
       values.push(status);
-      where += ` AND status = $${values.length}`;
+      where += ` AND o.status = $${values.length}`;
     }
     if (from_date) {
       values.push(from_date);
-      where += ` AND invoice_date >= $${values.length}`;
+      where += ` AND o.created_at >= $${values.length}`;
     }
     if (to_date) {
       values.push(to_date);
-      where += ` AND invoice_date <= $${values.length}`;
+      where += ` AND o.created_at <= $${values.length}`;
     }
 
     values.push(Number(limit), offset);
-    const { rows } = await pool.query(
-      `SELECT * FROM invoices ${where} ORDER BY invoice_date DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
-      values
+    const ordersQuery = `
+      SELECT 
+        o.id,
+        o.order_number,
+        o.created_at,
+        o.status,
+        o.payment_method,
+        o.payment_status,
+        o.payment_id,
+        o.total_amount,
+        o.subtotal,
+        o.discount_amount,
+        o.tax_amount,
+        o.shipping_amount,
+        o.shipping_address,
+        o.user_id,
+        o.customer_name,
+        o.customer_email,
+        o.customer_phone,
+        o.is_reseller_order
+      FROM orders o
+      ${where}
+      ORDER BY o.created_at DESC
+      LIMIT $${values.length - 1} OFFSET $${values.length}
+    `;
+
+    const { rows: orders } = await pool.query(ordersQuery, values);
+
+    // Fetch order items for each order and transform to invoice format
+    const invoices = await Promise.all(
+      orders.map(async (order) => {
+        // Fetch order items
+        const itemsResult = await pool.query(
+          `SELECT 
+            oi.id,
+            oi.product_id,
+            oi.product_name,
+            oi.product_image,
+            oi.quantity,
+            oi.unit_price,
+            oi.total_price,
+            oi.size,
+            oi.color
+          FROM order_items oi
+          WHERE oi.order_id = $1`,
+          [order.id]
+        );
+
+        // Transform order_items to invoice_lines format
+        const invoice_lines = itemsResult.rows.map((item: any) => ({
+          product_code: item.product_id || 'N/A',
+          product_name: item.product_name || 'Unknown Product',
+          quantity: item.quantity || 1,
+          unit_price: parseFloat(item.unit_price) || 0,
+          discount: 0,
+          tax: 0,
+          subtotal: parseFloat(item.total_price) || (parseFloat(item.unit_price) * item.quantity),
+        }));
+
+        // Determine invoice type based on order
+        const invoiceType = order.is_reseller_order ? 'B2B' : 'B2C';
+
+        // Map payment method
+        const paymentModeMap: Record<string, string> = {
+          'cod': 'COD',
+          'upi': 'UPI',
+          'card': 'Card',
+          'netbanking': 'NEFT',
+          'wallet': 'Wallet',
+          'razorpay': 'Online',
+        };
+        const paymentMode = paymentModeMap[order.payment_method?.toLowerCase()] || order.payment_method || 'COD';
+
+        // Extract state from shipping address for place_of_supply
+        const addressParts = order.shipping_address?.split(',') || [];
+        const state = addressParts.length > 2 ? addressParts[addressParts.length - 2]?.trim() : 'Telangana';
+
+        return {
+          id: order.id,
+          invoice_no: order.order_number,
+          invoice_date: order.created_at,
+          invoice_type: invoiceType,
+          supply_type: 'IntraState',
+          transaction_type: 'Sale',
+          place_of_supply: state,
+          place_of_delivery: state,
+          payment_mode: paymentMode,
+          payment_transaction_id: order.payment_id || null,
+          payment_date_time: order.payment_status === 'paid' ? order.created_at : null,
+          partner_id: order.user_id,
+          customer_name: order.customer_name,
+          customer_email: order.customer_email,
+          customer_phone: order.customer_phone,
+          shipping_address: order.shipping_address,
+          status: order.status,
+          payment_status: order.payment_status,
+          subtotal: parseFloat(order.subtotal) || 0,
+          discount_amount: parseFloat(order.discount_amount) || 0,
+          tax_amount: parseFloat(order.tax_amount) || 0,
+          shipping_amount: parseFloat(order.shipping_amount) || 0,
+          total_amount: parseFloat(order.total_amount) || 0,
+          is_reseller_order: order.is_reseller_order,
+          invoice_lines: invoice_lines,
+        };
+      })
     );
 
+    // Get total count
     const countValues = values.slice(0, -2);
-    const countResult = await pool.query(`SELECT COUNT(*) FROM invoices ${where}`, countValues);
+    const countResult = await pool.query(`SELECT COUNT(*) FROM orders o ${where}`, countValues);
     const total = parseInt(countResult.rows[0].count);
-
-    // Aggregate invoice lines (join products for code/name)
-    const invoiceIds = rows.map(r => r.id);
-    let linesByInvoice: Record<string, any[]> = {};
-    if (invoiceIds.length > 0) {
-      const itemsQuery = `
-        SELECT ii.invoice_id,
-               p.sku AS product_code,
-               p.name AS product_name,
-               ii.quantity,
-               ii.unit_price,
-               ii.discount_amount AS discount,
-               ii.tax_amount AS tax,
-               (ii.unit_price * ii.quantity - ii.discount_amount) AS subtotal
-        FROM invoice_items ii
-        JOIN products p ON p.id = ii.product_id
-        WHERE ii.invoice_id = ANY($1::uuid[])
-      `;
-      const itemsRes = await pool.query(itemsQuery, [invoiceIds]);
-      for (const row of itemsRes.rows) {
-        const key = row.invoice_id;
-        if (!linesByInvoice[key]) linesByInvoice[key] = [];
-        linesByInvoice[key].push({
-          product_code: row.product_code,
-          product_name: row.product_name,
-          quantity: Number(row.quantity),
-          unit_price: Number(row.unit_price),
-          discount: Number(row.discount || 0),
-          tax: Number(row.tax || 0),
-          subtotal: Number(row.subtotal || 0),
-        });
-      }
-    }
-
-    // Map response format to include required fields
-    const formatted = rows.map((inv: any) => ({
-      ...inv,
-      invoice_no: inv.invoice_no ?? inv.invoice_number ?? null,
-      partner_id: String(inv.customer_id),
-      invoice_lines: linesByInvoice[inv.id] || [],
-    }));
 
     res.json({
       success: true,
       data: {
-        invoices: formatted,
+        invoices: invoices,
         pagination: {
           page: Number(page),
           limit: Number(limit),
@@ -151,7 +213,7 @@ router.get('/', async (req, res, next) => {
     });
   } catch (err) {
     const code = (err as any)?.code;
-    if (code === '42P01') {
+    if (code === '42P01' || code === '42703') {
       return res.json({
         success: true,
         data: {
@@ -207,8 +269,33 @@ router.get('/', async (req, res, next) => {
  */
 router.get('/:id', async (req, res, next) => {
   try {
-    const invoiceResult = await pool.query('SELECT * FROM invoices WHERE id = $1', [req.params.id]);
-    if (!invoiceResult.rows[0]) {
+    // Fetch order by ID
+    const orderResult = await pool.query(
+      `SELECT 
+        o.id,
+        o.order_number,
+        o.created_at,
+        o.status,
+        o.payment_method,
+        o.payment_status,
+        o.payment_id,
+        o.total_amount,
+        o.subtotal,
+        o.discount_amount,
+        o.tax_amount,
+        o.shipping_amount,
+        o.shipping_address,
+        o.user_id,
+        o.customer_name,
+        o.customer_email,
+        o.customer_phone,
+        o.is_reseller_order
+      FROM orders o
+      WHERE o.id = $1`,
+      [req.params.id]
+    );
+
+    if (!orderResult.rows[0]) {
       return res.status(404).json({
         success: false,
         data: null,
@@ -216,47 +303,94 @@ router.get('/:id', async (req, res, next) => {
       });
     }
 
+    const order = orderResult.rows[0];
+
+    // Fetch order items
     const itemsResult = await pool.query(
-      `SELECT p.sku AS product_code,
-              p.name AS product_name,
-              ii.quantity,
-              ii.unit_price,
-              ii.discount_amount AS discount,
-              ii.tax_amount AS tax,
-              (ii.unit_price * ii.quantity - ii.discount_amount) AS subtotal
-       FROM invoice_items ii
-       JOIN products p ON p.id = ii.product_id
-       WHERE ii.invoice_id = $1`,
+      `SELECT 
+        oi.id,
+        oi.product_id,
+        oi.product_name,
+        oi.product_image,
+        oi.quantity,
+        oi.unit_price,
+        oi.total_price,
+        oi.size,
+        oi.color
+      FROM order_items oi
+      WHERE oi.order_id = $1`,
       [req.params.id]
     );
 
+    // Transform order_items to invoice_lines format
+    const invoice_lines = itemsResult.rows.map((item: any) => ({
+      product_code: item.product_id || 'N/A',
+      product_name: item.product_name || 'Unknown Product',
+      quantity: item.quantity || 1,
+      unit_price: parseFloat(item.unit_price) || 0,
+      discount: 0,
+      tax: 0,
+      subtotal: parseFloat(item.total_price) || (parseFloat(item.unit_price) * item.quantity),
+    }));
+
+    // Determine invoice type
+    const invoiceType = order.is_reseller_order ? 'B2B' : 'B2C';
+
+    // Map payment method
+    const paymentModeMap: Record<string, string> = {
+      'cod': 'COD',
+      'upi': 'UPI',
+      'card': 'Card',
+      'netbanking': 'NEFT',
+      'wallet': 'Wallet',
+      'razorpay': 'Online',
+    };
+    const paymentMode = paymentModeMap[order.payment_method?.toLowerCase()] || order.payment_method || 'COD';
+
+    // Extract state from shipping address
+    const addressParts = order.shipping_address?.split(',') || [];
+    const state = addressParts.length > 2 ? addressParts[addressParts.length - 2]?.trim() : 'Telangana';
+
+    const invoice = {
+      id: order.id,
+      invoice_no: order.order_number,
+      invoice_date: order.created_at,
+      invoice_type: invoiceType,
+      supply_type: 'IntraState',
+      transaction_type: 'Sale',
+      place_of_supply: state,
+      place_of_delivery: state,
+      payment_mode: paymentMode,
+      payment_transaction_id: order.payment_id || null,
+      payment_date_time: order.payment_status === 'paid' ? order.created_at : null,
+      partner_id: order.user_id,
+      customer_name: order.customer_name,
+      customer_email: order.customer_email,
+      customer_phone: order.customer_phone,
+      shipping_address: order.shipping_address,
+      status: order.status,
+      payment_status: order.payment_status,
+      subtotal: parseFloat(order.subtotal) || 0,
+      discount_amount: parseFloat(order.discount_amount) || 0,
+      tax_amount: parseFloat(order.tax_amount) || 0,
+      shipping_amount: parseFloat(order.shipping_amount) || 0,
+      total_amount: parseFloat(order.total_amount) || 0,
+      is_reseller_order: order.is_reseller_order,
+      invoice_lines: invoice_lines,
+    };
+
     res.json({
       success: true,
-      data: {
-        invoice: {
-          ...invoiceResult.rows[0],
-          invoice_no: invoiceResult.rows[0].invoice_no ?? invoiceResult.rows[0].invoice_number ?? null,
-          partner_id: String(invoiceResult.rows[0].customer_id),
-        },
-        invoice_lines: itemsResult.rows.map((row: any) => ({
-          product_code: row.product_code,
-          product_name: row.product_name,
-          quantity: Number(row.quantity),
-          unit_price: Number(row.unit_price),
-          discount: Number(row.discount || 0),
-          tax: Number(row.tax || 0),
-          subtotal: Number(row.subtotal || 0),
-        })),
-      },
+      data: { invoice },
       error: null,
     });
   } catch (err) {
     const code = (err as any)?.code;
-    if (code === '42P01') {
+    if (code === '42P01' || code === '42703') {
       return res.status(404).json({
         success: false,
         data: null,
-        error: { code: 'NOT_CONFIGURED', message: 'Invoices table not configured' },
+        error: { code: 'NOT_CONFIGURED', message: 'Orders table not configured' },
       });
     }
     next(err);

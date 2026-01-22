@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "886462856389",
+    "project_id": "only2u-97cf1",
+    "storage_bucket": "only2u-97cf1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:886462856389:android:b573b9a82ad1f9b4c6c4ac",
+        "android_client_info": {
+          "package_name": "com.only2u.only2u"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCB_o0fZUiEJNchLwyQapyEfFfpxik3YJ4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

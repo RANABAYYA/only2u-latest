@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  FlatList,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -23,6 +25,24 @@ import Toast from 'react-native-toast-message';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
+import { fetchRecentlyViewedProducts, RecentProduct } from '~/utils/recentlyViewedService';
+import TrackingProgressBar from '~/components/TrackingProgressBar';
+
+import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+
+interface Address {
+  id: string;
+  user_id: string;
+  full_name: string;
+  phone: string;
+  address_line1: string;
+  address_line2?: string;
+  city: string;
+  state: string;
+  pincode: string;
+  is_default: boolean;
+  created_at?: string;
+}
 
 interface OrderItem {
   id: string;
@@ -49,6 +69,10 @@ interface OrderDetails {
   shipped_at?: string;
   delivered_at?: string;
   order_items: OrderItem[];
+  // Reselling fields
+  is_reseller_order?: boolean;
+  reseller_profit?: number;
+  reseller_margin_amount?: number;
 }
 
 type ActionType = 'review' | 'return' | 'replacement';
@@ -61,6 +85,7 @@ const OrderDetails = () => {
   const insets = useSafeAreaInsets();
 
   const orderId = (route.params as any)?.orderId;
+  const itemId = (route.params as any)?.itemId;
 
   const [loading, setLoading] = useState(true);
   const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null);
@@ -68,6 +93,11 @@ const OrderDetails = () => {
   const [actionModalVisible, setActionModalVisible] = useState(false);
   const [currentAction, setCurrentAction] = useState<ActionType | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Address Update State
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [addressSheetVisible, setAddressSheetVisible] = useState(false);
+  const addressSheetRef = React.useRef<BottomSheet>(null);
 
   // Review state
   const [rating, setRating] = useState(0);
@@ -77,6 +107,14 @@ const OrderDetails = () => {
 
   // Return/Replacement state
   const [returnReason, setReturnReason] = useState('');
+
+  // Recently Viewed State
+  const [recentlyViewed, setRecentlyViewed] = useState<RecentProduct[]>([]);
+  const [recentlyViewedLoading, setRecentlyViewedLoading] = useState(false);
+  const recentlyViewedListRef = useRef<FlatList>(null);
+  const CARD_WIDTH = 160;
+
+
   const [returnDescription, setReturnDescription] = useState('');
   const [returnImages, setReturnImages] = useState<string[]>([]);
   const [replacementSize, setReplacementSize] = useState<string>('');
@@ -107,12 +145,53 @@ const OrderDetails = () => {
     'Other',
   ];
 
+  const CANCELLATION_REASONS = [
+    'Changed my mind',
+    'Found better price elsewhere',
+    'Ordered by mistake',
+    'Delivery time too long',
+    'Payment issues',
+    'Product no longer needed',
+    'Other',
+  ];
+
+  // Cancel order state
+  const [cancelModalVisible, setCancelModalVisible] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelDescription, setCancelDescription] = useState('');
+
 
   useEffect(() => {
     if (orderId) {
       fetchOrderDetails();
     }
   }, [orderId]);
+
+  // Fetch recently viewed products
+  useEffect(() => {
+    const loadRecentlyViewed = async () => {
+      setRecentlyViewedLoading(true);
+      try {
+        const products = await fetchRecentlyViewedProducts();
+        setRecentlyViewed(products);
+      } catch (error) {
+        console.warn('Failed to load recently viewed:', error);
+      } finally {
+        setRecentlyViewedLoading(false);
+      }
+    };
+    loadRecentlyViewed();
+  }, []);
+
+  // Scroll recently viewed list
+  const scrollRecentlyViewed = useCallback((direction: 'left' | 'right') => {
+    if (!recentlyViewedListRef.current || recentlyViewed.length === 0) return;
+    const scrollAmount = CARD_WIDTH * 2;
+    recentlyViewedListRef.current.scrollToOffset({
+      offset: direction === 'right' ? scrollAmount : 0,
+      animated: true,
+    });
+  }, [recentlyViewed.length]);
 
   const fetchOrderDetails = async () => {
     try {
@@ -157,7 +236,7 @@ const OrderDetails = () => {
             },
           ],
         };
-        
+
         setOrderDetails(mockOrderDetails);
         setLoading(false);
         return;
@@ -217,7 +296,7 @@ const OrderDetails = () => {
                   },
                 ],
               };
-              
+
               setOrderDetails(mockResellerOrderDetails);
               setLoading(false);
               return;
@@ -225,43 +304,7 @@ const OrderDetails = () => {
 
             const { data: resellerOrderData, error: resellerOrderError } = await supabase
               .from('reseller_orders')
-              .select(`
-                id,
-                order_number,
-                status,
-                total_amount,
-                created_at,
-                payment_status,
-                payment_method,
-                customer_name,
-                customer_phone,
-                customer_email,
-                customer_address,
-                customer_city,
-                customer_state,
-                customer_pincode,
-                tracking_number,
-                shipped_at,
-                delivered_at,
-                items:reseller_order_items(
-                  id,
-                  product_id,
-                  variant_id,
-                  quantity,
-                  unit_price,
-                  total_price,
-                  product:products(
-                    id,
-                    name,
-                    image_urls
-                  ),
-                  variant:product_variants(
-                    id,
-                    size_id,
-                    color_id
-                  )
-                )
-              `)
+              .select(`id, order_number, status, total_amount, created_at, payment_status, payment_method, customer_name, customer_phone, customer_email, customer_address, customer_city, customer_state, customer_pincode, tracking_number, shipped_at, delivered_at, items: reseller_order_items(id, product_id, variant_id, quantity, unit_price, total_price, product: products(id, name, image_urls), variant: product_variants(id, size_id, color_id))`)
               .eq('id', orderId)
               .eq('reseller_id', resellerProfile.id)
               .maybeSingle();
@@ -335,7 +378,10 @@ const OrderDetails = () => {
           tracking_number,
           shipped_at,
           delivered_at,
-          order_items (
+          is_reseller_order,
+          reseller_profit,
+          reseller_margin_amount,
+          order_items(
             id,
             product_id,
             product_name,
@@ -400,7 +446,7 @@ const OrderDetails = () => {
     setSelectedItem(item);
     setCurrentAction(action);
     setActionModalVisible(true);
-    
+
     // Reset form states
     setRating(0);
     setReviewTitle('');
@@ -435,7 +481,7 @@ const OrderDetails = () => {
 
     if (!result.canceled && result.assets[0]) {
       const imageUri = result.assets[0].uri;
-      
+
       // Add to appropriate image array based on current action
       if (currentAction === 'review') {
         if (reviewImages.length < 5) {
@@ -487,13 +533,13 @@ const OrderDetails = () => {
       if (orderId === '00000000-0000-0000-0000-000000000001') {
         // Simulate API delay
         await new Promise(resolve => setTimeout(resolve, 1000));
-        
+
         Toast.show({
           type: 'success',
           text1: 'Review Submitted',
           text2: 'Thank you for your feedback! (Mock Order)',
         });
-        
+
         closeActionModal();
         setSubmitting(false);
         return;
@@ -560,13 +606,13 @@ const OrderDetails = () => {
       if (orderId === '00000000-0000-0000-0000-000000000001') {
         // Simulate API delay
         await new Promise(resolve => setTimeout(resolve, 1000));
-        
+
         Toast.show({
           type: 'success',
           text1: `${currentAction === 'return' ? 'Return' : 'Replacement'} Request Submitted`,
           text2: 'We will process your request shortly (Mock Order)',
         });
-        
+
         closeActionModal();
         setSubmitting(false);
         return;
@@ -603,6 +649,68 @@ const OrderDetails = () => {
         type: 'error',
         text1: 'Error',
         text2: 'Failed to submit request',
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const submitCancelOrder = async () => {
+    if (!cancelReason) {
+      Toast.show({
+        type: 'error',
+        text1: 'Reason Required',
+        text2: 'Please select a reason for cancellation',
+      });
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      const userId = userData?.id || user?.id;
+
+      // Handle mock order
+      if (orderId === '00000000-0000-0000-0000-000000000001') {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        Toast.show({
+          type: 'success',
+          text1: 'Order Cancelled',
+          text2: 'Your order has been cancelled (Mock Order)',
+        });
+        setCancelModalVisible(false);
+        setSubmitting(false);
+        return;
+      }
+
+      // Update order status to cancelled
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          status: 'cancelled',
+          cancellation_reason: cancelReason,
+          cancellation_description: cancelDescription.trim() || null,
+          cancelled_at: new Date().toISOString(),
+        })
+        .eq('id', orderDetails?.id);
+
+      if (error) throw error;
+
+      Toast.show({
+        type: 'success',
+        text1: 'Order Cancelled',
+        text2: 'Your order has been cancelled successfully',
+      });
+
+      setCancelModalVisible(false);
+      setCancelReason('');
+      setCancelDescription('');
+      fetchOrderDetails(); // Refresh to show updated status
+    } catch (error) {
+      console.error('Error cancelling order:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to cancel order',
       });
     } finally {
       setSubmitting(false);
@@ -713,8 +821,101 @@ const OrderDetails = () => {
         return { color: '#FF5722', bg: '#FFEBEE', icon: 'hourglass' };
       case 'cancelled':
         return { color: '#F44336', bg: '#FFEBEE', icon: 'close-circle' };
+      case 'rejected':
+        return { color: '#F44336', bg: '#FFEBEE', icon: 'close-circle' };
       default:
         return { color: '#666', bg: '#F5F5F5', icon: 'information-circle' };
+    }
+  };
+
+  // Helper functions for cancelled/rejected orders
+  const isCancelledOrRejected = orderDetails?.status && ['cancelled', 'rejected'].includes(orderDetails.status.toLowerCase());
+
+  const getCancellationMessage = () => {
+    if (!orderDetails) return '';
+    const status = orderDetails.status.toLowerCase();
+    if (status === 'cancelled') {
+      const cancelDate = (orderDetails as any).cancelled_at || orderDetails.created_at;
+      return `As per your request on ${formatDate(cancelDate)}`;
+    }
+    return 'Order is rejected by seller';
+  };
+
+  const isCOD = orderDetails?.payment_method?.toLowerCase() === 'cod' ||
+    orderDetails?.payment_method?.toLowerCase() === 'cash on delivery';
+
+  const fetchAddresses = async () => {
+    try {
+      const userId = userData?.id || user?.id;
+      if (!userId) return;
+
+      const { data, error } = await supabase
+        .from('user_addresses')
+        .select('*')
+        .eq('user_id', userId)
+        .order('is_default', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching addresses:', error);
+        return;
+      }
+
+      if (data) {
+        setAddresses(data);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+    }
+  };
+
+  const handleUpdateAddress = async (address: Address) => {
+    try {
+      setSubmitting(true);
+
+      const updatedAddress = {
+        name: address.full_name,
+        phone: address.phone,
+        address_line1: address.street_line1,
+        address_line2: address.street_line2 || '',
+        landmark: address.landmark || '',
+        city: address.city,
+        state: address.state,
+        pincode: address.postal_code,
+        country: address.country || 'India',
+      };
+
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          shipping_address: updatedAddress
+        })
+        .eq('id', orderDetails?.id);
+
+      if (error) throw error;
+
+      Toast.show({
+        type: 'success',
+        text1: 'Address Updated',
+        text2: 'Shipping address has been updated successfully',
+      });
+
+      // Update local state immediately
+      setOrderDetails(prev => prev ? ({
+        ...prev,
+        shipping_address: updatedAddress
+      }) : null);
+
+      setAddressSheetVisible(false);
+      addressSheetRef.current?.close();
+    } catch (error) {
+      console.error('Error updating address:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Update Failed',
+        text2: 'Failed to update shipping address',
+      });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -773,116 +974,700 @@ const OrderDetails = () => {
         contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Order Header Card */}
-        <View style={styles.orderHeaderCard}>
-          <View style={styles.orderHeaderTop}>
-            <View style={styles.orderNumberContainer}>
-              <Ionicons name="bag-handle-outline" size={24} color="#F53F7A" />
-              <Text style={styles.orderNumber}>{orderDetails.order_number}</Text>
-            </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
-              <Ionicons name={statusStyle.icon as any} size={16} color={statusStyle.color} />
-              <Text style={[styles.statusText, { color: statusStyle.color }]}>{orderDetails.status}</Text>
-            </View>
-          </View>
-          <Text style={styles.orderDate}>Ordered on {formatDate(orderDetails.created_at)}</Text>
-          {orderDetails.delivered_at && (
-            <Text style={styles.orderDate}>Delivered on {formatDate(orderDetails.delivered_at)}</Text>
-          )}
-        </View>
+        {/* ===================== CANCELLED/REJECTED ORDER LAYOUT ===================== */}
+        {isCancelledOrRejected ? (
+          <>
+            {/* First Card: Order ID + Order Item */}
+            <View style={styles.orderHeaderCard}>
+              <View style={styles.orderNumberContainer}>
+                <Ionicons name="bag-handle-outline" size={24} color="#F53F7A" />
+                <Text style={styles.orderNumber}>Order #{orderDetails.order_number}</Text>
+              </View>
 
-        {/* Order Items */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Items in Your Order</Text>
-          {orderDetails.order_items.map((item) => (
-            <View key={item.id} style={styles.itemCard}>
-              <View style={styles.itemDetails}>
-                <Text style={styles.itemName}>{item.product_name}</Text>
-                <Text style={styles.itemMeta}>
-                  {item.size && `Size: ${item.size}`}
-                  {item.size && item.color && ' • '}
-                  {item.color && `Color: ${item.color}`}
+              {/* Order Item in same card */}
+              {orderDetails.order_items.length > 0 && (() => {
+                const item = itemId
+                  ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                  : orderDetails.order_items[0];
+                return (
+                  <TouchableOpacity
+                    style={styles.cancelledOrderItem}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      if (item.product_id) {
+                        (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                          productId: item.product_id,
+                          product: {
+                            id: item.product_id,
+                            name: item.product_name,
+                            price: item.unit_price,
+                            image: item.product_image,
+                          }
+                        });
+                      }
+                    }}
+                  >
+                    <View style={styles.itemImageContainer}>
+                      {item.product_image ? (
+                        <Image
+                          source={{ uri: item.product_image }}
+                          style={styles.itemImage}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+                          <Ionicons name="image-outline" size={32} color="#ccc" />
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.itemDetails}>
+                      <Text style={styles.itemName} numberOfLines={2}>{item.product_name}</Text>
+                      <Text style={styles.itemMeta}>
+                        {item.size && `${item.size}`}
+                        {item.size && item.color && ' • '}
+                        {item.color && item.color}
+                        {(item.size || item.color) && ' • '}
+                        {orderDetails.payment_method?.toUpperCase() || 'Cash'}
+                      </Text>
+                      <Text style={styles.itemPrice}>₹{item.total_price}</Text>
+                      <Text style={styles.itemMetaSmall}>All issue easy returns</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#999" />
+                  </TouchableOpacity>
+                );
+              })()}
+            </View>
+
+            {/* Second Card: Cancellation/Rejection Message */}
+            <View style={styles.cancellationCard}>
+              <View style={styles.cancellationIconContainer}>
+                <Ionicons
+                  name={orderDetails.status.toLowerCase() === 'cancelled' ? 'close-circle' : 'alert-circle'}
+                  size={32}
+                  color={statusStyle.color}
+                />
+              </View>
+              <View style={styles.cancellationTextContainer}>
+                <Text style={[styles.cancellationTitle, { color: statusStyle.color }]}>
+                  {orderDetails.status.toLowerCase() === 'cancelled' ? 'Cancelled' : 'Rejected'}
                 </Text>
-                <Text style={styles.itemMeta}>Qty: {item.quantity}</Text>
-                <Text style={styles.itemPrice}>₹{item.total_price}</Text>
-
-                {/* Action Buttons - Only show for delivered orders */}
-                {orderDetails.status.toLowerCase() === 'delivered' && (
-                  <View style={styles.itemActions}>
-                    <TouchableOpacity
-                      style={styles.actionButton}
-                      onPress={() => openActionModal(item, 'review')}
-                    >
-                      <Ionicons name="star-outline" size={16} color="#fff" />
-                      <Text style={styles.actionButtonText}>Review</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.actionButtonOutline}
-                      onPress={() => openActionModal(item, 'return')}
-                    >
-                      <Ionicons name="return-down-back-outline" size={16} color="#F53F7A" />
-                      <Text style={styles.actionButtonOutlineText}>Return</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.actionButtonOutline}
-                      onPress={() => openActionModal(item, 'replacement')}
-                    >
-                      <Ionicons name="swap-horizontal-outline" size={16} color="#F53F7A" />
-                      <Text style={styles.actionButtonOutlineText}>Replace</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
+                <Text style={styles.cancellationMessage}>
+                  {getCancellationMessage()}
+                </Text>
               </View>
             </View>
-          ))}
-        </View>
 
-        {/* Payment Information */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Payment Information</Text>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Payment Method</Text>
-            <Text style={styles.infoValue}>{orderDetails.payment_method?.toUpperCase() || 'N/A'}</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Payment Status</Text>
-            <Text style={[styles.infoValue, { color: orderDetails.payment_status === 'paid' ? '#4CAF50' : '#FF9800' }]}>
-              {orderDetails.payment_status}
-            </Text>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.infoRow}>
-            <Text style={styles.totalLabel}>Total Amount</Text>
-            <Text style={styles.totalValue}>₹{orderDetails.total_amount}</Text>
-          </View>
-        </View>
+            {/* Action Buttons: Buy Again & Continue Shopping */}
+            <View style={styles.actionButtonsContainer}>
+              <TouchableOpacity
+                style={styles.buyAgainButton}
+                onPress={() => {
+                  if (orderDetails.order_items.length > 0) {
+                    const item = itemId
+                      ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                      : orderDetails.order_items[0];
+                    if (item.product_id) {
+                      (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                        productId: item.product_id,
+                        product: {
+                          id: item.product_id,
+                          name: item.product_name,
+                          price: item.unit_price,
+                          image: item.product_image,
+                        }
+                      });
+                    }
+                  }
+                }}
+              >
+                <Text style={styles.buyAgainButtonText}>BUY AGAIN</Text>
+              </TouchableOpacity>
 
-        {/* Shipping Information */}
-        {orderDetails.shipping_address && (
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Shipping Address</Text>
-            <Text style={styles.addressText}>{JSON.stringify(orderDetails.shipping_address, null, 2)}</Text>
-          </View>
-        )}
-
-        {/* Tracking Information */}
-        {orderDetails.tracking_number && (
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Tracking Information</Text>
-            <View style={styles.trackingContainer}>
-              <Ionicons name="location-outline" size={20} color="#F53F7A" />
-              <Text style={styles.trackingNumber}>{orderDetails.tracking_number}</Text>
+              <TouchableOpacity
+                style={styles.continueShoppingButton}
+                onPress={() => {
+                  (navigation.navigate as (screen: string) => void)('TabNavigator');
+                }}
+              >
+                <Text style={styles.continueShoppingButtonText}>CONTINUE SHOPPING</Text>
+              </TouchableOpacity>
             </View>
-          </View>
+
+            {/* Tracking Progress Bar */}
+            <TrackingProgressBar
+              status={orderDetails.status}
+              dates={{
+                ordered: orderDetails.created_at,
+                shipped: orderDetails.shipped_at,
+                delivered: orderDetails.delivered_at,
+              }}
+            />
+
+            {/* Delivery Address Card */}
+            {orderDetails.shipping_address && (
+              <View style={styles.sectionCard}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <Ionicons name="location" size={20} color="#F53F7A" />
+                  <Text style={[styles.sectionTitle, { marginBottom: 0, marginLeft: 8 }]}>Delivery Address</Text>
+                </View>
+                {(() => {
+                  let address = orderDetails.shipping_address;
+                  if (typeof address === 'string') {
+                    try {
+                      address = JSON.parse(address);
+                    } catch {
+                      return <Text style={styles.addressText}>{address}</Text>;
+                    }
+                  }
+
+                  const name = address.name || address.full_name || '';
+                  const phone = address.phone || address.mobile || '';
+                  const line1 = address.address_line1 || address.street_address || address.street_line1 || address.line1 || '';
+                  const line2 = address.address_line2 || address.landmark || address.street_line2 || address.line2 || '';
+                  const city = address.city || '';
+                  const state = address.state || '';
+                  const pincode = address.pincode || address.postal_code || '';
+
+                  const addressParts = [line1, line2, city, state, pincode].filter(Boolean);
+                  const fullAddress = addressParts.join(', ');
+
+                  return (
+                    <View>
+                      {name && (
+                        <Text style={[styles.addressText, { fontWeight: '600', fontSize: 15, marginBottom: 4, color: '#1a1a1a' }]}>
+                          {name}
+                        </Text>
+                      )}
+                      {fullAddress && (
+                        <Text style={[styles.addressText, { color: '#444', lineHeight: 20, marginBottom: 4 }]}>
+                          {fullAddress}
+                        </Text>
+                      )}
+                      {phone && (
+                        <Text style={[styles.addressText, { color: '#444' }]}>
+                          {phone}
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })()}
+              </View>
+            )}
+
+            {/* Recently Viewed Section */}
+            {recentlyViewed.length > 0 && (
+              <View style={styles.recentlyViewedSection}>
+                <View style={styles.recentlyViewedHeader}>
+                  <Text style={styles.recentlyViewedTitle}>Recently Viewed</Text>
+                  <TouchableOpacity
+                    style={styles.scrollArrowButton}
+                    onPress={() => scrollRecentlyViewed('right')}
+                  >
+                    <Ionicons name="chevron-forward" size={24} color="#F53F7A" />
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  ref={recentlyViewedListRef}
+                  data={recentlyViewed}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.recentlyViewedList}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.recentProductCard}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                          productId: item.id,
+                          product: {
+                            id: item.id,
+                            name: item.name,
+                            price: item.price,
+                            image: item.image_url,
+                          }
+                        });
+                      }}
+                    >
+                      <View style={styles.recentProductImageContainer}>
+                        {item.image_url ? (
+                          <Image
+                            source={{ uri: item.image_url }}
+                            style={styles.recentProductImage}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View style={[styles.recentProductImage, styles.recentProductImagePlaceholder]}>
+                            <Ionicons name="image-outline" size={24} color="#ccc" />
+                          </View>
+                        )}
+                        {item.discount_percentage && item.discount_percentage > 0 && (
+                          <View style={styles.discountBadge}>
+                            <Text style={styles.discountText}>{item.discount_percentage}% OFF</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.recentProductName} numberOfLines={2}>{item.name}</Text>
+                      <View style={styles.recentProductPriceRow}>
+                        <Text style={styles.recentProductPrice}>₹{item.price}</Text>
+                        {item.mrp_price && item.mrp_price > item.price && (
+                          <Text style={styles.recentProductOriginalPrice}>₹{item.mrp_price}</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                />
+              </View>
+            )}
+
+
+
+            {/* Payment Information - Only for prepaid orders */}
+            {!isCOD && (
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>Payment Information</Text>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Payment Method</Text>
+                  <Text style={styles.infoValue}>{orderDetails.payment_method?.toUpperCase() || 'N/A'}</Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Payment Status</Text>
+                  <Text style={[styles.infoValue, { color: orderDetails.payment_status === 'paid' ? '#4CAF50' : '#FF9800' }]}>
+                    {orderDetails.payment_status}
+                  </Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Refund Status</Text>
+                  <Text style={[styles.infoValue, { color: '#FF9800' }]}>
+                    {(orderDetails as any).refund_status || 'Pending'}
+                  </Text>
+                </View>
+                <View style={styles.divider} />
+                <View style={styles.infoRow}>
+                  <Text style={styles.totalLabel}>Total Amount</Text>
+                  <Text style={styles.totalValue}>₹{(() => {
+                    const selectedItem = itemId
+                      ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                      : orderDetails.order_items[0];
+                    return selectedItem?.total_price || orderDetails.total_amount;
+                  })()}</Text>
+                </View>
+              </View>
+            )}
+          </>
+        ) : (
+          /* ===================== NORMAL ORDER LAYOUT ===================== */
+          <>
+            {/* Combined Order Header + Item Card - matching cancelled/rejected design */}
+            <View style={styles.orderHeaderCard}>
+              <View style={styles.orderHeaderTop}>
+                <View style={styles.orderNumberContainer}>
+                  <Ionicons name="bag-handle-outline" size={24} color="#F53F7A" />
+                  <Text style={styles.orderNumber} numberOfLines={1}>Order #{orderDetails.order_number}</Text>
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
+                  <Ionicons name={statusStyle.icon as any} size={16} color={statusStyle.color} />
+                  <Text style={[styles.statusText, { color: statusStyle.color }]}>{orderDetails.status}</Text>
+                </View>
+              </View>
+              <Text style={styles.orderDate}>Ordered on {formatDate(orderDetails.created_at)}</Text>
+              {orderDetails.delivered_at && (
+                <Text style={styles.orderDate}>Delivered on {formatDate(orderDetails.delivered_at)}</Text>
+              )}
+
+              {/* Order Item in same card */}
+              {orderDetails.order_items.length > 0 && (() => {
+                const item = itemId
+                  ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                  : orderDetails.order_items[0];
+                return (
+                  <TouchableOpacity
+                    style={styles.cancelledOrderItem}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      if (item.product_id) {
+                        (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                          productId: item.product_id,
+                          product: {
+                            id: item.product_id,
+                            name: item.product_name,
+                            price: item.unit_price,
+                            image: item.product_image,
+                          }
+                        });
+                      }
+                    }}
+                  >
+                    <View style={styles.itemImageContainer}>
+                      {item.product_image ? (
+                        <Image
+                          source={{ uri: item.product_image }}
+                          style={styles.itemImage}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+                          <Ionicons name="image-outline" size={32} color="#ccc" />
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.itemDetails}>
+                      <Text style={styles.itemName} numberOfLines={2}>{item.product_name}</Text>
+                      <Text style={styles.itemMeta}>
+                        {item.size && `${item.size}`}
+                        {item.size && item.color && ' • '}
+                        {item.color && item.color}
+                        {(item.size || item.color) && ' • '}
+                        {orderDetails.payment_method?.toUpperCase() || 'Cash'}
+                      </Text>
+                      <Text style={styles.itemPrice}>₹{item.total_price}</Text>
+                      <Text style={styles.itemMetaSmall}>All issue easy returns</Text>
+
+                      {/* Action Buttons - Only show for delivered orders */}
+                      {orderDetails.status.toLowerCase() === 'delivered' && (
+                        <View style={styles.itemActions}>
+                          <TouchableOpacity
+                            style={styles.actionButton}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              openActionModal(item, 'review');
+                            }}
+                          >
+                            <Ionicons name="star-outline" size={16} color="#fff" />
+                            <Text style={styles.actionButtonText}>Review</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.actionButtonOutline}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              openActionModal(item, 'replacement');
+                            }}
+                          >
+                            <Ionicons name="swap-horizontal-outline" size={16} color="#F53F7A" />
+                            <Text style={styles.actionButtonOutlineText}>Replace</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#999" />
+                  </TouchableOpacity>
+                );
+              })()}
+            </View>
+
+            {/* Payment Information */}
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Payment Information</Text>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Payment Method</Text>
+                <Text style={styles.infoValue}>{orderDetails.payment_method?.toUpperCase() || 'N/A'}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Payment Status</Text>
+                <Text style={[styles.infoValue, { color: orderDetails.payment_status === 'paid' ? '#4CAF50' : '#FF9800' }]}>
+                  {orderDetails.payment_status}
+                </Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.infoRow}>
+                <Text style={styles.totalLabel}>Total Amount</Text>
+                <Text style={styles.totalValue}>₹{(() => {
+                  const selectedItem = itemId
+                    ? orderDetails.order_items.find(i => i.id === itemId) || orderDetails.order_items[0]
+                    : orderDetails.order_items[0];
+                  return selectedItem?.total_price || orderDetails.total_amount;
+                })()}</Text>
+              </View>
+            </View>
+
+            {/* Reselling Details Section */}
+            {orderDetails.is_reseller_order && (
+              <View style={styles.sectionCard}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Reselling Details</Text>
+                </View>
+
+                {/* Per-item breakdown like YourEarnings */}
+                {orderDetails.order_items.map((item, index) => {
+                  // Calculate base and selling prices per item
+                  // unit_price is the SOLD price (what customer pays per unit)
+                  // basePrice = soldPrice - marginPerUnit
+                  const totalMargin = orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0;
+                  const totalItems = orderDetails.order_items.reduce((sum, i) => sum + i.quantity, 0);
+                  const marginPerUnit = totalItems > 0 ? totalMargin / totalItems : 0;
+                  const sellingPrice = item.unit_price; // This is what customer pays
+                  const basePrice = item.unit_price - marginPerUnit; // Base = Sold - Margin
+                  const itemProfit = marginPerUnit * item.quantity;
+
+                  return (
+                    <View
+                      key={item.id || index}
+                      style={{
+                        flexDirection: 'row',
+                        backgroundColor: '#FAFAFA',
+                        borderRadius: 12,
+                        padding: 12,
+                        marginBottom: index < orderDetails.order_items.length - 1 ? 10 : 0,
+                      }}
+                    >
+                      {/* Product Image */}
+                      <View style={{ width: 56, height: 56, borderRadius: 8, overflow: 'hidden', backgroundColor: '#f0f0f0' }}>
+                        {item.product_image ? (
+                          <Image
+                            source={{ uri: item.product_image }}
+                            style={{ width: 56, height: 56 }}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View style={{ width: 56, height: 56, justifyContent: 'center', alignItems: 'center' }}>
+                            <Ionicons name="image-outline" size={24} color="#ccc" />
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Product Info */}
+                      <View style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 2 }} numberOfLines={1}>
+                          {item.product_name}
+                        </Text>
+                        {item.size && (
+                          <Text style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+                            Size: {item.size} {item.quantity > 1 ? `• Qty: ${item.quantity}` : ''}
+                          </Text>
+                        )}
+                        {/* Pricing Row: Base → Sold */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Text style={{ fontSize: 12, color: '#888' }}>Base: </Text>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#666' }}>₹{basePrice.toFixed(0)}</Text>
+                          <Text style={{ fontSize: 12, color: '#F53F7A', marginHorizontal: 6 }}>→</Text>
+                          <Text style={{ fontSize: 12, color: '#888' }}>Sold: </Text>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#333' }}>₹{sellingPrice.toFixed(0)}</Text>
+                        </View>
+                      </View>
+
+                      {/* Profit Badge */}
+                      <View style={{ justifyContent: 'center', alignItems: 'flex-end' }}>
+                        <View style={{
+                          backgroundColor: '#E8F5E8',
+                          paddingHorizontal: 10,
+                          paddingVertical: 5,
+                          borderRadius: 16,
+                        }}>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#4CAF50' }}>
+                            +₹{itemProfit.toFixed(0)}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+
+                {/* Total Summary */}
+                <View style={{ marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#eee' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={{ fontSize: 14, color: '#666' }}>Customer Paid</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#333' }}>₹{orderDetails.total_amount}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 14, color: '#666' }}>Your Total Profit</Text>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#4CAF50' }}>
+                      +₹{orderDetails.reseller_margin_amount || orderDetails.reseller_profit || 0}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )
+            }
+
+            {/* Tracking Progress Bar */}
+            <TrackingProgressBar
+              status={orderDetails.status}
+              dates={{
+                ordered: orderDetails.created_at,
+                shipped: orderDetails.shipped_at,
+                delivered: orderDetails.delivered_at,
+              }}
+            />
+
+            {/* Shipping Information */}
+            {
+              orderDetails.shipping_address && (
+                <View style={styles.sectionCard}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Shipping Address</Text>
+                    {orderDetails.status.toLowerCase() === 'pending' && (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FFF0F5',
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 20,
+                          borderWidth: 1,
+                          borderColor: 'rgba(245, 63, 122, 0.2)',
+                        }}
+                        onPress={() => {
+                          fetchAddresses();
+                          setAddressSheetVisible(true);
+                          addressSheetRef.current?.expand();
+                        }}
+                      >
+                        <Text style={{ color: '#F53F7A', fontWeight: '600', fontSize: 13 }}>Change</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  {/* Handle both string and object address formats */}
+                  {(() => {
+                    // Parse address - handle both string (JSON) and object formats
+                    let address = orderDetails.shipping_address;
+                    if (typeof address === 'string') {
+                      try {
+                        address = JSON.parse(address);
+                      } catch {
+                        // If parsing fails, display as plain text
+                        return <Text style={styles.addressText}>{address}</Text>;
+                      }
+                    }
+
+                    // Extract address components with fallbacks
+                    const name = address.name || address.full_name || '';
+                    const phone = address.phone || address.mobile || '';
+                    const line1 = address.address_line1 || address.street_address || address.street_line1 || address.line1 || '';
+                    const line2 = address.address_line2 || address.landmark || address.street_line2 || address.line2 || '';
+                    const city = address.city || '';
+                    const state = address.state || '';
+                    const pincode = address.pincode || address.postal_code || '';
+
+                    // Build full address string
+                    const addressParts = [line1, line2, city, state, pincode].filter(Boolean);
+                    const fullAddress = addressParts.join(', ');
+
+                    return (
+                      <View>
+                        {/* Name */}
+                        {name && (
+                          <Text style={[styles.addressText, { fontWeight: '600', fontSize: 15, marginBottom: 6, color: '#1a1a1a' }]}>
+                            {name}
+                          </Text>
+                        )}
+
+                        {/* Phone */}
+                        {phone && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                            <Ionicons name="call-outline" size={14} color="#666" style={{ marginRight: 6 }} />
+                            <Text style={[styles.addressText, { color: '#444' }]}>
+                              {phone}
+                            </Text>
+                          </View>
+                        )}
+
+                        {/* Address */}
+                        {fullAddress && (
+                          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                            <Ionicons name="location-outline" size={14} color="#666" style={{ marginRight: 6, marginTop: 2 }} />
+                            <Text style={[styles.addressText, { flex: 1, color: '#444', lineHeight: 20 }]}>
+                              {fullAddress}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })()}
+                </View>
+              )
+            }
+
+
+            {/* Cancel Order Button - Only for pending orders */}
+            {
+              orderDetails.status.toLowerCase() === 'pending' && (
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#F53F7A',
+                    marginHorizontal: 16,
+                    marginBottom: 16,
+                    paddingVertical: 14,
+                    paddingHorizontal: 16,
+                    borderRadius: 12,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                  }}
+                  onPress={() => setCancelModalVisible(true)}
+                >
+                  <Ionicons name="close-circle-outline" size={20} color="#fff" />
+                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Cancel Order</Text>
+                </TouchableOpacity>
+              )
+            }
+
+            {/* Recently Viewed Section */}
+            {recentlyViewed.length > 0 && (
+              <View style={styles.recentlyViewedSection}>
+                <View style={styles.recentlyViewedHeader}>
+                  <Text style={styles.recentlyViewedTitle}>Recently Viewed</Text>
+                  <TouchableOpacity
+                    style={styles.scrollArrowButton}
+                    onPress={() => scrollRecentlyViewed('right')}
+                  >
+                    <Ionicons name="chevron-forward" size={24} color="#F53F7A" />
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  ref={recentlyViewedListRef}
+                  data={recentlyViewed}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.recentlyViewedList}
+                  renderItem={({ item }) => (
+                    <View style={styles.recentProductCard}>
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => {
+                          (navigation.navigate as (screen: string, params?: object) => void)('ProductDetails', {
+                            productId: item.id,
+                            product: {
+                              id: item.id,
+                              name: item.name,
+                              price: item.price,
+                              image: item.image_url,
+                            }
+                          });
+                        }}
+                      >
+                        <Image
+                          source={{ uri: item.image_url }}
+                          style={styles.recentProductImage}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.recentProductInfo}>
+                          <Text style={styles.recentProductName} numberOfLines={2}>{item.name}</Text>
+                          <View style={styles.recentProductPriceRow}>
+                            {item.mrp_price && item.mrp_price > item.price && (
+                              <Text style={styles.recentProductOriginalPrice}>₹{item.mrp_price}</Text>
+                            )}
+                            <Text style={styles.recentProductPrice}>₹{item.price}</Text>
+                            {item.discount_percentage && item.discount_percentage > 0 && (
+                              <Text style={styles.recentProductDiscountBadge}>{item.discount_percentage}% OFF</Text>
+                            )}
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                />
+              </View>
+            )}
+
+          </>
         )}
 
-      </ScrollView>
+      </ScrollView >
 
       {/* Action Modal */}
-      <Modal
+      < Modal
         visible={actionModalVisible}
         transparent
         animationType="slide"
@@ -911,9 +1696,9 @@ const OrderDetails = () => {
                 <View style={styles.modalProductInfo}>
                   <Text style={styles.modalProductName}>{selectedItem.product_name}</Text>
                   <Text style={styles.modalProductMeta}>
-                    {selectedItem.size && `Size: ${selectedItem.size}`}
+                    {selectedItem.size && `Size: ${selectedItem.size} `}
                     {selectedItem.size && selectedItem.color && ' • '}
-                    {selectedItem.color && `Color: ${selectedItem.color}`}
+                    {selectedItem.color && `Color: ${selectedItem.color} `}
                   </Text>
                 </View>
               )}
@@ -1051,8 +1836,196 @@ const OrderDetails = () => {
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
+      </Modal >
+      {/* Address Selection Bottom Sheet */}
+      {
+        addressSheetVisible && (
+          <BottomSheet
+            ref={addressSheetRef}
+            index={1}
+            snapPoints={['50%', '75%']}
+            enablePanDownToClose
+            onClose={() => setAddressSheetVisible(false)}
+            backgroundStyle={{ backgroundColor: '#fff', borderRadius: 24 }}
+          >
+            <View style={{ paddingHorizontal: 20, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#f0f0f0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#333' }}>Select Shipping Address</Text>
+              <TouchableOpacity onPress={() => {
+                setAddressSheetVisible(false);
+                addressSheetRef.current?.close();
+                navigation.navigate('AddAddress' as never);
+              }}>
+                <Text style={{ color: '#F53F7A', fontWeight: '600' }}>+ Add New</Text>
+              </TouchableOpacity>
+            </View>
+            <BottomSheetScrollView contentContainerStyle={{ padding: 20 }}>
+              {addresses.length === 0 ? (
+                <View style={{ alignItems: 'center', marginTop: 40 }}>
+                  <Ionicons name="location-outline" size={48} color="#999" />
+                  <Text style={{ marginTop: 12, fontSize: 16, color: '#666' }}>No addresses found</Text>
+                  <TouchableOpacity
+                    style={{ marginTop: 16, backgroundColor: '#F53F7A', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20 }}
+                    onPress={() => {
+                      setAddressSheetVisible(false);
+                      addressSheetRef.current?.close();
+                      navigation.navigate('AddAddress' as never);
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>Add Address</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                addresses.map((address) => (
+                  <View key={address.id} style={{ marginBottom: 12 }}>
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#fff',
+                        padding: 16,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: '#f0f0f0',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onPress={() => handleUpdateAddress(address)}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                          <Text style={{ fontSize: 16, fontWeight: '600', color: '#333' }}>{address.full_name}</Text>
+                          {address.is_default && (
+                            <View style={{ backgroundColor: '#E8F5E9', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, marginLeft: 8 }}>
+                              <Text style={{ fontSize: 10, color: '#4CAF50', fontWeight: '600' }}>Default</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={{ fontSize: 14, color: '#666', marginBottom: 2 }}>{address.street_line1}</Text>
+                        {address.street_line2 ? <Text style={{ fontSize: 14, color: '#666', marginBottom: 2 }}>{address.street_line2}</Text> : null}
+                        {address.landmark ? <Text style={{ fontSize: 14, color: '#666', marginBottom: 2 }}>{address.landmark}</Text> : null}
+                        <Text style={{ fontSize: 14, color: '#666' }}>{address.city}, {address.state} - {address.postal_code}</Text>
+                      </View>
+                      {(orderDetails?.shipping_address?.address_line1 === address.street_line1 &&
+                        orderDetails?.shipping_address?.pincode === address.postal_code) ? (
+                        <Ionicons name="checkmark-circle" size={24} color="#F53F7A" />
+                      ) : (
+                        <View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#ddd' }} />
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        position: 'absolute',
+                        top: 12,
+                        right: 12,
+                        padding: 8,
+                      }}
+                      onPress={() => {
+                        setAddressSheetVisible(false);
+                        addressSheetRef.current?.close();
+                        (navigation.navigate as (screen: string, params?: object) => void)('AddAddress', { addressToEdit: address });
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, color: '#F53F7A', fontWeight: '600' }}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+            </BottomSheetScrollView>
+          </BottomSheet>
+        )
+      }
+
+      {/* Cancel Order Modal */}
+      <Modal
+        visible={cancelModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setCancelModalVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>Cancel Order</Text>
+              <TouchableOpacity onPress={() => setCancelModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={{ fontSize: 14, color: '#666', marginBottom: 16 }}>Please select a reason for cancellation:</Text>
+
+            <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                {CANCELLATION_REASONS.map((reason) => (
+                  <TouchableOpacity
+                    key={reason}
+                    style={{
+                      paddingHorizontal: 14,
+                      paddingVertical: 8,
+                      borderRadius: 20,
+                      borderWidth: 1,
+                      borderColor: cancelReason === reason ? '#F53F7A' : '#ddd',
+                      backgroundColor: cancelReason === reason ? '#FFF0F5' : '#fff',
+                    }}
+                    onPress={() => setCancelReason(reason)}
+                  >
+                    <Text style={{
+                      fontSize: 13,
+                      color: cancelReason === reason ? '#F53F7A' : '#666',
+                      fontWeight: cancelReason === reason ? '600' : '400',
+                    }}>{reason}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <Text style={{ fontSize: 14, color: '#666', marginBottom: 8 }}>Additional details (optional):</Text>
+            <TextInput
+              style={{
+                borderWidth: 1,
+                borderColor: '#ddd',
+                borderRadius: 12,
+                padding: 12,
+                fontSize: 14,
+                height: 80,
+                textAlignVertical: 'top',
+                marginBottom: 20,
+              }}
+              value={cancelDescription}
+              onChangeText={setCancelDescription}
+              placeholder="Tell us more about why you're cancelling..."
+              placeholderTextColor="#999"
+              multiline
+            />
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#f5f5f5', alignItems: 'center' }}
+                onPress={() => setCancelModalVisible(false)}
+              >
+                <Text style={{ fontWeight: '600', color: '#666' }}>Keep Order</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  padding: 14,
+                  borderRadius: 12,
+                  backgroundColor: cancelReason ? '#F53F7A' : '#ccc',
+                  alignItems: 'center',
+                }}
+                onPress={submitCancelOrder}
+                disabled={submitting || !cancelReason}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={{ fontWeight: '600', color: '#fff' }}>Cancel Order</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
-    </View>
+
+    </View >
   );
 };
 
@@ -1136,12 +2109,15 @@ const styles = StyleSheet.create({
   orderNumberContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
   },
   orderNumber: {
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: '700',
     color: '#333',
     marginLeft: 8,
+    flex: 1,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -1150,6 +2126,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 16,
     gap: 4,
+    flexShrink: 0,
   },
   statusText: {
     fontSize: 13,
@@ -1315,6 +2292,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
   },
+  trackOrderButton: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  trackOrderButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    gap: 8,
+  },
+  trackOrderButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -1476,6 +2471,193 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // Cancelled/Rejected Order Styles
+  cancelledOrderItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  itemMetaSmall: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  cancellationCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 16,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  cancellationIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFEBEE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  cancellationTextContainer: {
+    flex: 1,
+  },
+  cancellationTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  cancellationMessage: {
+    fontSize: 14,
+    color: '#666',
+  },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    gap: 10,
+  },
+  buyAgainButton: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#F53F7A',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buyAgainButtonText: {
+    color: '#F53F7A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  continueShoppingButton: {
+    flex: 1,
+    backgroundColor: '#F53F7A',
+    borderWidth: 1,
+    borderColor: '#fff',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  continueShoppingButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Recently Viewed Section Styles
+  recentlyViewedSection: {
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  recentlyViewedHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  recentlyViewedTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  scrollArrowButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFF5F7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recentlyViewedList: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  recentProductCard: {
+    width: 160,
+    backgroundColor: '#fff',
+    borderRadius: 12, // More rounded
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    marginRight: 12,
+  },
+  recentProductImage: {
+    width: 160,
+    height: 180, // Taller image
+    backgroundColor: '#F9FAFB',
+    resizeMode: 'cover',
+  },
+  recentProductInfo: {
+    padding: 10,
+  },
+  recentProductImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recentProductDiscountBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#F53F7A',
+    backgroundColor: '#FFF0F5',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  recentProductName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  recentProductPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  recentProductPrice: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#F53F7A',
+  },
+  recentProductOriginalPrice: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
+  },
+  recentProductImageContainer: {
+    position: 'relative',
+  },
+  discountBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: '#FFF0F5',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+    zIndex: 1,
+  },
+  discountText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#F53F7A',
   },
 });
 

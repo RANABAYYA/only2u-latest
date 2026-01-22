@@ -476,7 +476,15 @@ const styles = StyleSheet.create({
   autocompleteItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
   autocompleteText: { color: '#374151', fontSize: 14 },
   // Full-screen form styles
-  fullFormContainer: { flex: 1, backgroundColor: '#fff' },
+  fullFormContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#fff',
+    zIndex: 999,
+  },
   fullFormHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#eee', backgroundColor: '#fff' },
   fullFormTitle: { fontSize: 18, fontWeight: '700', color: '#111' },
   headerBackBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
