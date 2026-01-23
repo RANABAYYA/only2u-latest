@@ -51,12 +51,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
   const [couponCode, setCouponCode] = useState('');
   const [couponAppliedCode, setCouponAppliedCode] = useState<string | null>(null);
   const [couponDiscountAmount, setCouponDiscountAmount] = useState(0);
-
   // Address management state
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [newAddress, setNewAddress] = useState('');
   const [savingAddress, setSavingAddress] = useState(false);
-
   // Phone number management state
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [newPhone, setNewPhone] = useState('');
@@ -542,7 +540,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
       .eq('user_id', userData.id)
       .eq('is_default', true)
       .single();
-
     if (!error && data) {
       setDefaultAddress(data);
     }
@@ -578,7 +575,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
 
     try {
       setSavingAddress(true);
-
       const { error } = await supabase
         .from('users')
         .update({ location: newAddress.trim() })
@@ -651,7 +647,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
 
     try {
       setSavingPhone(true);
-
       const { error } = await supabase
         .from('users')
         .update({ phone: `+91${cleanPhone}` })
@@ -1057,7 +1052,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
   }, [cartItems]);
 
   const productDiscount = subtotalMrp - subtotalRsp;
-
   const shippingAmount = 0;
   const totalSavings = couponDiscountAmount;
   const totalDiscount = productDiscount + totalSavings;
@@ -1281,7 +1275,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
               </Text>
             </TouchableOpacity>
           </View>
-
           {defaultAddress ? (
             <View style={styles.addressBox}>
               <Text style={styles.addressName}>{defaultAddress.full_name || 'Customer'}</Text>
@@ -1578,7 +1571,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                   <Ionicons name="close" size={24} color="#666" />
                 </TouchableOpacity>
               </View>
-
               <ScrollView style={styles.modalBody}>
                 <Text style={styles.inputLabel}>Full Address</Text>
                 <TextInput
@@ -1591,12 +1583,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                   numberOfLines={4}
                   textAlignVertical="top"
                 />
-
                 <Text style={styles.helperText}>
                   Include complete address with street, city, state, and pincode
                 </Text>
               </ScrollView>
-
               <View style={styles.modalFooter}>
                 <TouchableOpacity
                   style={styles.modalCancelBtn}
@@ -1605,7 +1595,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                 >
                   <Text style={styles.modalCancelText}>Cancel</Text>
                 </TouchableOpacity>
-
                 <TouchableOpacity
                   style={[styles.modalSaveBtn, savingAddress && styles.modalSaveBtnDisabled]}
                   onPress={handleSaveAddress}
@@ -1642,7 +1631,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                   <Ionicons name="close" size={24} color="#666" />
                 </TouchableOpacity>
               </View>
-
               <View style={styles.modalBody}>
                 <Text style={styles.inputLabel}>Mobile Number</Text>
                 <View style={styles.phoneInputRow}>
@@ -1664,12 +1652,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                     maxLength={10}
                   />
                 </View>
-
                 <Text style={styles.helperText}>
                   Enter your 10-digit mobile number for order updates
                 </Text>
               </View>
-
               <View style={styles.modalFooter}>
                 <TouchableOpacity
                   style={styles.modalCancelBtn}
@@ -1678,7 +1664,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                 >
                   <Text style={styles.modalCancelText}>Cancel</Text>
                 </TouchableOpacity>
-
                 <TouchableOpacity
                   style={[styles.modalSaveBtn, savingPhone && styles.modalSaveBtnDisabled]}
                   onPress={handleSavePhone}
@@ -1735,7 +1720,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
                   <Text style={styles.breakdownValueGreen}>+₹{totalResellerProfit.toFixed(2)}</Text>
                 </View>
               )}
-
               <View style={styles.breakdownItem}>
                 <Text style={styles.breakdownLabel}>Delivery Charges</Text>
                 {shippingAmount === 0 ? (
@@ -1800,12 +1784,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
           <View style={styles.alertContainer}>
             {/* Title */}
             <Text style={styles.alertTitle}>Contact Information Required</Text>
-
             {/* Message */}
             <Text style={styles.alertMessage}>
               Please provide your name and phone number for online payments.
             </Text>
-
             {/* Buttons */}
             <View style={styles.alertButtonsContainer}>
               <TouchableOpacity
@@ -1815,7 +1797,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
               >
                 <Text style={styles.alertButtonCancelText}>CANCEL</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.alertButtonSecondary}
                 onPress={() => {
@@ -1826,7 +1807,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
               >
                 <Text style={styles.alertButtonSecondaryText}>USE COD INSTEAD</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.alertButtonPrimary}
                 onPress={() => {
@@ -1853,12 +1833,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
           <View style={styles.alertContainer}>
             {/* Title */}
             <Text style={styles.alertTitle}>Order Failed</Text>
-
             {/* Message */}
             <Text style={styles.alertMessage}>
               {orderFailedMessage}
             </Text>
-
             {/* Button */}
             <TouchableOpacity
               style={styles.alertButtonPrimary}
@@ -1882,12 +1860,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
           <View style={styles.alertContainer}>
             {/* Title */}
             <Text style={styles.alertTitle}>Shipping Address Required</Text>
-
             {/* Message */}
             <Text style={styles.alertMessage}>
               Please add your shipping address before proceeding.
             </Text>
-
             {/* Buttons */}
             <View style={styles.alertButtonsContainer}>
               <TouchableOpacity
@@ -1897,7 +1873,6 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
               >
                 <Text style={styles.alertButtonCancelText}>CANCEL</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.alertButtonPrimary}
                 onPress={() => {
@@ -1924,12 +1899,10 @@ const Checkout: React.FC<CheckoutProps> = ({ embedded = false, showOrderItems = 
           <View style={styles.alertContainer}>
             {/* Title */}
             <Text style={styles.alertTitle}>Empty Cart</Text>
-
             {/* Message */}
             <Text style={styles.alertMessage}>
               Please add items to your cart before checking out.
             </Text>
-
             {/* Button */}
             <TouchableOpacity
               style={styles.alertButtonPrimary}

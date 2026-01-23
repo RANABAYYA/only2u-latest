@@ -37,7 +37,6 @@ const AllReviews = () => {
 
     const generateThumbnails = async () => {
       console.log('[AllReviews] Generating thumbnails for', allVideos.length, 'videos');
-
       for (const videoUrl of allVideos) {
         // Skip if already generated
         if (videoThumbnails[videoUrl]) {
@@ -52,7 +51,6 @@ const AllReviews = () => {
             quality: 0.8,
           });
           console.log('[AllReviews] Thumbnail generated:', uri);
-
           setVideoThumbnails(prev => ({
             ...prev,
             [videoUrl]: uri
@@ -90,7 +88,6 @@ const AllReviews = () => {
     const now = new Date();
     const diffTime = Math.abs(now.getTime() - date.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
     if (diffDays === 1) return 'Posted 1 day ago';
     if (diffDays < 7) return `Posted ${diffDays} days ago`;
     return `Posted on ${date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
@@ -101,7 +98,6 @@ const AllReviews = () => {
     try {
       const isCurrentlyHelpful = helpfulVotes[reviewId];
       const newHelpfulState = !isCurrentlyHelpful;
-
       // Update local state
       setHelpfulVotes(prev => ({
         ...prev,
@@ -125,7 +121,6 @@ const AllReviews = () => {
   const handleShareReview = async (review: any) => {
     try {
       const shareMessage = `Check out this review by ${review.reviewer_name || 'Only2U User'}:\n\n"${review.comment}"\n\nRating: ${review.rating}/5 stars`;
-
       await Share.share({
         message: shareMessage,
         title: 'Product Review',
@@ -174,13 +169,11 @@ const AllReviews = () => {
   // Render rating breakdown
   const renderRatingBreakdown = () => {
     const breakdown = calculateRatingBreakdown();
-
     return (
       <View style={styles.ratingBreakdownContainer}>
         {[5, 4, 3, 2, 1].map(rating => {
           const count = breakdown[rating as keyof typeof breakdown];
           const percentage = totalReviews > 0 ? (count / totalReviews) * 100 : 0;
-
           return (
             <View key={rating} style={styles.ratingBreakdownRow}>
               <Text style={styles.ratingBreakdownNumber}>{rating}</Text>
@@ -300,7 +293,6 @@ const AllReviews = () => {
                 ...(review.review_images || []).map((img: string) => ({ type: 'image' as const, url: img })),
                 ...(review.review_videos || []).map((vid: string) => ({ type: 'video' as const, url: vid }))
               ];
-
               return (
                 <TouchableOpacity
                   key={`review-img-${index}`}
@@ -319,7 +311,6 @@ const AllReviews = () => {
                 </TouchableOpacity>
               );
             })}
-
             {/* Display Videos */}
             {review.review_videos && review.review_videos.map((video: string, index: number) => {
               const reviewMedia = [
@@ -329,7 +320,6 @@ const AllReviews = () => {
               const videoIndex = (review.review_images?.length || 0) + index;
               // Use generated thumbnail, fallback to placeholder
               const thumbnailUri = videoThumbnails[video] || 'https://images.unsplash.com/photo-1520975922284-9d8ff95b6a88?q=80&w=400&auto=format&fit=crop';
-
               return (
                 <TouchableOpacity
                   key={`review-vid-${index}`}
@@ -446,7 +436,6 @@ const AllReviews = () => {
               </Text>
             </View>
           </View>
-
           {/* Rating Breakdown */}
           <View style={styles.ratingBreakdownSection}>
             <Text style={styles.ratingBreakdownTitle}>Rating Breakdown</Text>
@@ -559,12 +548,10 @@ const AllReviews = () => {
             <View style={styles.reportModalIconContainer}>
               <Ionicons name="flag" size={40} color="#F53F7A" />
             </View>
-
             <Text style={styles.reportModalTitle}>Report Review</Text>
             <Text style={styles.reportModalMessage}>
               Are you sure you want to report this review? This will help us improve our content quality.
             </Text>
-
             <View style={styles.reportModalButtons}>
               <TouchableOpacity
                 style={styles.reportModalCancelButton}
@@ -575,7 +562,6 @@ const AllReviews = () => {
               >
                 <Text style={styles.reportModalCancelText}>Cancel</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.reportModalConfirmButton}
                 onPress={confirmReportReview}

@@ -341,7 +341,6 @@ export default function ResellerEarnings() {
       let history = await ResellerService.getPayoutHistory(resellerId, 25);
       if (!history || history.length === 0) {
         history = [
-
         ] as ResellerEarning[];
       }
       setPayoutHistory(history || []);
@@ -353,7 +352,6 @@ export default function ResellerEarnings() {
   const fetchEarningsData = async () => {
     try {
       setLoading(true);
-
       if (!userData?.id) {
         setLoading(false);
         return;

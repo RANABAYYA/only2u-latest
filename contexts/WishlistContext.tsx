@@ -195,7 +195,6 @@ export const WishlistProvider: React.FC<{ children: ReactNode }> = ({ children }
     try {
       setWishlist([]);
       await AsyncStorage.removeItem(`wishlist_${userData.id}`);
-
       // Also clear unread count
       const unreadCountKey = getUnreadCountKey();
       if (unreadCountKey) {

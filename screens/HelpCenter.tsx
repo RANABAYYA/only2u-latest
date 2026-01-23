@@ -138,9 +138,9 @@ const HelpCenter = () => {
   const renderChatSupport = () => {
     return (
       <KeyboardAvoidingView
-        behavior="padding"
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.chatContainer}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 180 : 160}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 190}
       >
         <ScrollView
           ref={scrollViewRef}
