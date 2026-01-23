@@ -1544,32 +1544,46 @@ const OrderDetails = () => {
 
                     return (
                       <View>
-                        {/* Name */}
+                        {/* Name with icon */}
                         {name && (
-                          <Text style={[styles.addressText, { fontWeight: '600', fontSize: 15, marginBottom: 6, color: '#1a1a1a' }]}>
-                            {name}
-                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                            <Ionicons name="person-outline" size={16} color="#F53F7A" style={{ marginRight: 8 }} />
+                            <Text style={{ fontWeight: '700', fontSize: 16, color: '#1a1a1a' }}>
+                              {name}
+                            </Text>
+                          </View>
                         )}
 
-                        {/* Phone */}
+                        {/* Phone with icon */}
                         {phone && (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                            <Ionicons name="call-outline" size={14} color="#666" style={{ marginRight: 6 }} />
-                            <Text style={[styles.addressText, { color: '#444' }]}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                            <Ionicons name="call-outline" size={16} color="#F53F7A" style={{ marginRight: 8 }} />
+                            <Text style={{ fontSize: 14, color: '#333', fontWeight: '500' }}>
                               {phone}
                             </Text>
                           </View>
                         )}
 
-                        {/* Address */}
-                        {fullAddress && (
-                          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                            <Ionicons name="location-outline" size={14} color="#666" style={{ marginRight: 6, marginTop: 2 }} />
-                            <Text style={[styles.addressText, { flex: 1, color: '#444', lineHeight: 20 }]}>
-                              {fullAddress}
+                        {/* Address with icon - multi-line format */}
+                        <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                          <Ionicons name="location-outline" size={16} color="#F53F7A" style={{ marginRight: 8, marginTop: 2 }} />
+                          <View style={{ flex: 1 }}>
+                            {line1 && (
+                              <Text style={{ fontSize: 14, color: '#333', lineHeight: 20 }}>{line1}</Text>
+                            )}
+                            {line2 && (
+                              <Text style={{ fontSize: 14, color: '#666', lineHeight: 20 }}>{line2}</Text>
+                            )}
+                            <Text style={{ fontSize: 14, color: '#333', lineHeight: 20 }}>
+                              {[city, state].filter(Boolean).join(', ')}
                             </Text>
+                            {pincode && (
+                              <Text style={{ fontSize: 14, color: '#333', fontWeight: '600', lineHeight: 20 }}>
+                                PIN: {pincode}
+                              </Text>
+                            )}
                           </View>
-                        )}
+                        </View>
                       </View>
                     );
                   })()}
@@ -2662,4 +2676,3 @@ const styles = StyleSheet.create({
 });
 
 export default OrderDetails;
-

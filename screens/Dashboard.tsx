@@ -19,6 +19,7 @@ import {
   ViewStyle,
   BackHandler,
 } from 'react-native';
+import { BackHandler } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -67,6 +68,13 @@ interface FeatureSection {
   created_at?: string;
   updated_at?: string;
 }
+
+// Helper function to calculate average rating from reviews
+const calculateAverageRating = (reviews: any[]): number => {
+  if (!reviews || reviews.length === 0) return 0;
+  const sum = reviews.reduce((acc, review) => acc + (review.rating || 0), 0);
+  return sum / reviews.length;
+};
 
 const Dashboard = () => {
   const navigation = useNavigation<DashboardNavigationProp>();
@@ -320,20 +328,33 @@ const Dashboard = () => {
     checkFirstLaunch();
   }, []);
 
-  // Clear search on tab press (Home tab)
-  useEffect(() => {
-    const parentNav = navigation.getParent();
-    if (!parentNav) return;
 
-    const unsubscribe = parentNav.addListener('tabPress', (e) => {
-      // Clear search text when Home tab is pressed
-      setSearchText('');
-      // Optional: Scroll to top logic could go here if needed, 
-      // but clearing search usually resets the view enough for this requirement.
+
+  // Clear filters on back button press when filtering is active
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // If filters are active, clear them and prevent default back behavior
+      if (selectedFilterCategories.length > 0 ||
+        selectedBrands.length > 0 ||
+        selectedInfluencers.length > 0 ||
+        selectedSizes.length > 0 ||
+        filterMinPrice ||
+        filterMaxPrice ||
+        selectedRating !== null) {
+        setSelectedFilterCategories([]);
+        setSelectedBrands([]);
+        setSelectedInfluencers([]);
+        setSelectedSizes([]);
+        setFilterMinPrice('');
+        setFilterMaxPrice('');
+        setSelectedRating(null);
+        return true; // Prevent default back behavior
+      }
+      return false; // Allow default back behavior
     });
 
-    return unsubscribe;
-  }, [navigation]);
+    return () => backHandler.remove();
+  }, [selectedFilterCategories, selectedBrands, selectedInfluencers, selectedSizes, filterMinPrice, filterMaxPrice, selectedRating]);
 
   // Welcome animation sequence
   const startWelcomeAnimation = () => {
@@ -1260,7 +1281,7 @@ const Dashboard = () => {
       alias_vendor: product.alias_vendor || '',
       return_policy: product.return_policy || '',
     };
-    navigation.replace('ProductDetails', { product: productForDetails });
+    navigation.navigate('ProductDetails', { product: productForDetails });
   }, [navigation, userData?.size, productRatings]);
 
   // Fetch search suggestions from database
@@ -1448,8 +1469,11 @@ const Dashboard = () => {
       discount_percentage: product.discount_percentage || 0,
       image: product.image_urls?.[0] || '',
       vendor_name: product.vendor_name || '',
+      discount: product.discount_percentage || 0,
+      rating: 0,
+      reviews: 0,
     };
-    navigation.replace('ProductDetails', { product: productForDetails });
+    navigation.navigate('ProductDetails', { product: productForDetails });
   }, [navigation]);
 
   // Helper function to check if product matches search (by name, SKU, or variant SKU)
@@ -1563,6 +1587,36 @@ const Dashboard = () => {
   const filteredTrendingProducts = trendingProducts.filter(productMatchesSearch);
   const filteredBestSellerProducts = bestSellerProducts.filter(productMatchesSearch);
 
+  // Check if any filter is actively applied
+  const isFiltering = selectedFilterCategories.length > 0 ||
+    selectedBrands.length > 0 ||
+    selectedInfluencers.length > 0 ||
+    selectedSizes.length > 0 ||
+    !!filterMinPrice ||
+    !!filterMaxPrice ||
+    selectedRating !== null;
+
+  // Get all filtered products when filtering is active (not searching)
+  const getFilteredResults = (): Product[] => {
+    if (!isFiltering) return [];
+
+    const allProducts = [
+      ...trendingProducts,
+      ...bestSellerProducts,
+      ...Object.values(categoryProducts).flat(),
+    ];
+
+    // Remove duplicates by id
+    const uniqueProducts = Array.from(
+      new Map(allProducts.map(item => [item.id, item])).values()
+    );
+
+    return uniqueProducts.filter(productMatchesSearch);
+  };
+
+  const filteredResults = isFiltering ? getFilteredResults() : [];
+
+
   // Filtered category products
   const getFilteredCategoryProducts = (categoryId: string) => {
     const products = categoryProducts[categoryId] || [];
@@ -1597,6 +1651,11 @@ const Dashboard = () => {
 
   const renderCategorySection = (category: Category) => {
     const products = getFilteredCategoryProducts(category.id);
+
+    // Hide section completely when filtering produces no results
+    if (products.length === 0 && isFiltering) {
+      return null;
+    }
 
     return (
       <View key={category.id} style={styles.sectionContainer}>
@@ -1723,94 +1782,108 @@ const Dashboard = () => {
   );
 
   // Render Trending Section
-  const renderTrendingSection = () => (
-    <View style={styles.sectionContainer}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Trending Now</Text>
-        <TouchableOpacity
-          style={styles.seeMoreButton}
-          onPress={() => navigation.navigate('Products', {
-            category: {
-              id: 'trending',
-              name: 'Trending Products',
-              description: 'Trending products',
-              is_active: true,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            },
-            featuredType: 'trending'
-          })}
-        >
-          <Text style={styles.seeMoreText}>See More</Text>
-          <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
-        </TouchableOpacity>
-      </View>
-      {filteredTrendingProducts.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="trending-up-outline" size={48} color="#999" />
-          <Text style={styles.emptyText}>No trending products available.</Text>
+  const renderTrendingSection = () => {
+    // Hide section completely when filtering produces no results
+    if (filteredTrendingProducts.length === 0 && isFiltering) {
+      return null;
+    }
+
+    return (
+      <View style={styles.sectionContainer}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Trending Now</Text>
+          <TouchableOpacity
+            style={styles.seeMoreButton}
+            onPress={() => navigation.navigate('Products', {
+              category: {
+                id: 'trending',
+                name: 'Trending Products',
+                description: 'Trending products',
+                is_active: true,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              },
+              featuredType: 'trending'
+            })}
+          >
+            <Text style={styles.seeMoreText}>See More</Text>
+            <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
+          </TouchableOpacity>
         </View>
-      ) : (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.productScrollView}>
-          {filteredTrendingProducts.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              ratingData={productRatings[product.id]}
-              userSize={userData?.size}
-              onPress={handleProductPress}
-              shimmerAnimation={shimmerAnimation}
-            />
-          ))}
-        </ScrollView>
-      )}
-    </View>
-  );
+        {filteredTrendingProducts.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="trending-up-outline" size={48} color="#999" />
+            <Text style={styles.emptyText}>No trending products available.</Text>
+          </View>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.productScrollView}>
+            {filteredTrendingProducts.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                ratingData={productRatings[product.id]}
+                userSize={userData?.size}
+                onPress={handleProductPress}
+                shimmerAnimation={shimmerAnimation}
+              />
+            ))}
+          </ScrollView>
+        )}
+      </View>
+    );
+  };
 
   // Render Best Sellers Section
-  const renderBestSellersSection = () => (
-    <View style={styles.sectionContainer}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Best Sellers</Text>
-        <TouchableOpacity
-          style={styles.seeMoreButton}
-          onPress={() => navigation.navigate('Products', {
-            category: {
-              id: 'best_sellers',
-              name: 'Best Sellers',
-              description: 'Best selling products',
-              is_active: true,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            },
-            featuredType: 'best_seller'
-          })}
-        >
-          <Text style={styles.seeMoreText}>See More</Text>
-          <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
-        </TouchableOpacity>
-      </View>
-      {filteredBestSellerProducts.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="star-outline" size={48} color="#999" />
-          <Text style={styles.emptyText}>No best sellers available.</Text>
+  const renderBestSellersSection = () => {
+    // Hide section completely when filtering produces no results
+    if (filteredBestSellerProducts.length === 0 && isFiltering) {
+      return null;
+    }
+
+    return (
+      <View style={styles.sectionContainer}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Best Sellers</Text>
+          <TouchableOpacity
+            style={styles.seeMoreButton}
+            onPress={() => navigation.navigate('Products', {
+              category: {
+                id: 'best_sellers',
+                name: 'Best Sellers',
+                description: 'Best selling products',
+                is_active: true,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              },
+              featuredType: 'best_seller'
+            })}
+          >
+            <Text style={styles.seeMoreText}>See More</Text>
+            <Ionicons name="chevron-forward" size={16} color="#F53F7A" />
+          </TouchableOpacity>
         </View>
-      ) : (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.productScrollView}>
-          {filteredBestSellerProducts.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              ratingData={productRatings[product.id]}
-              userSize={userData?.size}
-              onPress={handleProductPress}
-              shimmerAnimation={shimmerAnimation}
-            />
-          ))}
-        </ScrollView>
-      )}
-    </View>
-  );
+        {filteredBestSellerProducts.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="star-outline" size={48} color="#999" />
+            <Text style={styles.emptyText}>No best sellers available.</Text>
+          </View>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.productScrollView}>
+            {filteredBestSellerProducts.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                ratingData={productRatings[product.id]}
+                userSize={userData?.size}
+                onPress={handleProductPress}
+                shimmerAnimation={shimmerAnimation}
+              />
+            ))}
+          </ScrollView>
+        )}
+      </View>
+    );
+  };
 
   // Render section based on type
   const renderSectionByType = (section: FeatureSection) => {

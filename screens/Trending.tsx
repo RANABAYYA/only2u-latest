@@ -356,6 +356,8 @@ const TrendingScreen = () => {
   const [sizeSelectionDraft, setSizeSelectionDraft] = useState<string | null>(null);
   const [sizeSelectionError, setSizeSelectionError] = useState('');
   const [selectedTryOnSize, setSelectedTryOnSize] = useState<string | null>(null);
+  const [showPreviewReadyModal, setShowPreviewReadyModal] = useState(false);
+  const [previewReadyProduct, setPreviewReadyProduct] = useState<any>(null);
   const selectedTryOnSizeName = useMemo(() => {
     if (!selectedTryOnSize || !tryOnProduct?.variants) return null;
     const variant = tryOnProduct.variants.find((v) => v.size_id === selectedTryOnSize);
@@ -2075,13 +2077,11 @@ const TrendingScreen = () => {
               originalProductId: productId,
             };
             addToPreview(personalizedProduct);
-          }
 
-          Toast.show({
-            type: 'success',
-            text1: 'Preview Ready!',
-            text2: 'Your personalized product has been added to Your Preview.',
-          });
+            // Show success modal instead of toast
+            setPreviewReadyProduct(personalizedProduct);
+            setShowPreviewReadyModal(true);
+          }
         } else if (status.status === 'failed') {
           clearRegisteredInterval(interval);
           Alert.alert('Error', status.error || 'Face swap failed. Please try again.');
@@ -3970,6 +3970,138 @@ const TrendingScreen = () => {
             </View>
           </TouchableOpacity>
         )}
+        {/* Preview Ready Modal */}
+        <Modal
+          visible={showPreviewReadyModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowPreviewReadyModal(false)}
+        >
+          <View style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 20,
+          }}>
+            <View style={{
+              backgroundColor: '#fff',
+              borderRadius: 24,
+              padding: 24,
+              width: '100%',
+              maxWidth: 320,
+              alignItems: 'center',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.25,
+              shadowRadius: 8,
+              elevation: 5,
+            }}>
+              {/* Header Icon */}
+              <View style={{
+                width: 64,
+                height: 64,
+                borderRadius: 32,
+                backgroundColor: '#FFF5F7',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginBottom: 16,
+              }}>
+                <Ionicons name="sparkles" size={32} color="#F53F7A" />
+              </View>
+
+              {/* Title */}
+              <Text style={{
+                fontSize: 22,
+                fontWeight: '700',
+                color: '#1a1a1a',
+                marginBottom: 8,
+                textAlign: 'center',
+              }}>
+                Preview Ready!
+              </Text>
+
+              {/* Message */}
+              <Text style={{
+                fontSize: 15,
+                color: '#666',
+                textAlign: 'center',
+                marginBottom: 20,
+                lineHeight: 22,
+              }}>
+                Your personalized product is ready. Check out how stunning it looks on you!
+              </Text>
+
+              {/* Product Preview Image */}
+              {previewReadyProduct && (previewReadyProduct.image_url || previewReadyProduct.image) && (
+                <View style={{
+                  width: 140,
+                  height: 180,
+                  marginBottom: 24,
+                  borderRadius: 12,
+                  overflow: 'hidden',
+                  backgroundColor: '#f5f5f5',
+                  borderWidth: 1,
+                  borderColor: '#eee',
+                }}>
+                  <Image
+                    source={{ uri: previewReadyProduct.image_url || previewReadyProduct.image }}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="cover"
+                  />
+                </View>
+              )}
+
+              {/* Buttons */}
+              <TouchableOpacity
+                style={{
+                  width: '100%',
+                  backgroundColor: '#F53F7A',
+                  paddingVertical: 14,
+                  borderRadius: 30,
+                  alignItems: 'center',
+                  marginBottom: 12,
+                  shadowColor: '#F53F7A',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                  elevation: 4,
+                }}
+                onPress={() => {
+                  setShowPreviewReadyModal(false);
+                  // Navigate to Wishlist with preview param to switch to Preview tab
+                  // Wishlist is inside HomeStack, so we need to validly navigate to it
+                  navigation.navigate('Home', { screen: 'Wishlist', params: { preview: true } } as any);
+                }}
+              >
+                <Text style={{
+                  color: '#fff',
+                  fontSize: 16,
+                  fontWeight: '700',
+                }}>
+                  View Preview
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 20,
+                }}
+                onPress={() => setShowPreviewReadyModal(false)}
+              >
+                <Text style={{
+                  color: '#888',
+                  fontSize: 16,
+                  fontWeight: '500',
+                }}>
+                  Close
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
       </View>
     </BottomSheetModalProvider >
   );

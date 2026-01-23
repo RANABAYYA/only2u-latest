@@ -22,7 +22,7 @@ interface TrackingProgressBarProps {
     };
 }
 
-const STAGES = [
+const STAGES_DEFAULT = [
     { label: 'Ordered', key: 'ordered' },
     { label: 'Shipped', key: 'shipped' },
     { label: 'Out for Delivery', key: 'out_for_delivery' },
@@ -77,7 +77,24 @@ const truckStyles = StyleSheet.create({
 const TrackingProgressBar: React.FC<TrackingProgressBarProps> = ({ status, dates }) => {
 
     const normalizeStatus = (s: string) => s?.toLowerCase() || '';
-    const isCancelledOrRejected = ['cancelled', 'rejected'].includes(normalizeStatus(status));
+    const currentStatus = normalizeStatus(status);
+    const isCancelled = currentStatus === 'cancelled';
+    const isRejected = currentStatus === 'rejected';
+    const isCancelledOrRejected = isCancelled || isRejected;
+
+    // Determine stages based on status
+    const stages = React.useMemo(() => {
+        // We always keep 4 stages now, but replace the 2nd one (index 1)
+        const newStages = [...STAGES_DEFAULT];
+
+        if (isCancelled) {
+            newStages[1] = { label: 'Cancelled', key: 'cancelled' };
+        } else if (isRejected) {
+            newStages[1] = { label: 'Rejected', key: 'rejected' };
+        }
+
+        return newStages;
+    }, [isCancelled, isRejected]);
 
     const getTargetIndex = () => {
         const s = normalizeStatus(status);
@@ -110,7 +127,10 @@ const TrackingProgressBar: React.FC<TrackingProgressBarProps> = ({ status, dates
     const FIRST_NODE_OFFSET = NODE_SIZE / 2;
     const LAST_NODE_OFFSET = NODE_SIZE / 2;
     const LINE_WIDTH = CARD_WIDTH - FIRST_NODE_OFFSET - LAST_NODE_OFFSET;
-    const SEGMENT_WIDTH = LINE_WIDTH / (STAGES.length - 1);
+
+    // Always 4 stages per requirement -> 3 segments
+    const segmentsCount = 3;
+    const SEGMENT_WIDTH = LINE_WIDTH / segmentsCount;
 
     const animatedTruckStyle = useAnimatedStyle(() => {
         const translateX = interpolate(progress.value, [0, 3], [0, LINE_WIDTH]);
@@ -129,13 +149,13 @@ const TrackingProgressBar: React.FC<TrackingProgressBarProps> = ({ status, dates
     };
 
     const getCompletedIndex = () => {
-        const s = normalizeStatus(status);
-        if (s === 'cancelled' || s === 'rejected') return 0;
-        if (s === 'placed' || s === 'pending') return 0;
-        if (s === 'confirmed' || s === 'processing') return 0;
-        if (s === 'shipped') return 1;
-        if (s === 'out_for_delivery') return 2;
-        if (s === 'delivered') return 3;
+        if (isCancelledOrRejected) return 1;
+
+        if (currentStatus === 'placed' || currentStatus === 'pending') return 0;
+        if (currentStatus === 'confirmed' || currentStatus === 'processing') return 0;
+        if (currentStatus === 'shipped') return 1;
+        if (currentStatus === 'out_for_delivery') return 2;
+        if (currentStatus === 'delivered') return 3;
         return 0;
     };
 
@@ -202,10 +222,16 @@ const TrackingProgressBar: React.FC<TrackingProgressBarProps> = ({ status, dates
             <View style={styles.labelsContainer}>
                 {STAGES.map((stage, index) => {
                     let dateStr: string | undefined = '';
-                    if (index === 0) dateStr = dates?.ordered;
-                    else if (index === 1) dateStr = dates?.shipped;
-                    else if (index === 2) dateStr = dates?.outForDelivery;
-                    else if (index === 3) dateStr = dates?.delivered;
+
+                    if (isCancelledOrRejected) {
+                        // Only show Ordered date for now as we don't have cancelled date in props easily
+                        if (index === 0) dateStr = dates?.ordered;
+                    } else {
+                        if (index === 0) dateStr = dates?.ordered;
+                        else if (index === 1) dateStr = dates?.shipped;
+                        else if (index === 2) dateStr = dates?.outForDelivery;
+                        else if (index === 3) dateStr = dates?.delivered;
+                    }
 
                     const formattedDate = formatDate(dateStr);
                     const nodeLeft = index * SEGMENT_WIDTH;
