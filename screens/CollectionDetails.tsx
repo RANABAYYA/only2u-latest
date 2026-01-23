@@ -295,7 +295,7 @@ const CollectionDetails = () => {
       // Show success message
       setTimeout(() => {
         Toast.show({
-          type: 'collectionDeleted',
+          type: 'success',
           text1: 'Collection Deleted',
           text2: 'Collection and its items have been removed',
           position: 'top',

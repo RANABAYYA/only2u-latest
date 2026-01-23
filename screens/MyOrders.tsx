@@ -14,9 +14,10 @@ import {
   Platform,
   Image,
   Dimensions,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '~/types/navigation';
 import { useUser } from '~/contexts/UserContext';
@@ -139,6 +140,19 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const MyOrders = () => {
   const navigation = useNavigation<NavigationProp>();
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const onBackPress = () => {
+        navigation.goBack();
+        return true;
+      };
+
+      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+
+      return () => subscription.remove();
+    }, [navigation])
+  );
   const { userData } = useUser();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -859,21 +873,49 @@ const MyOrders = () => {
         case 'delivered':
           return 'Delivered';
         case 'shipped':
-          return 'Order Shipped';
+          return 'Shipped';
         case 'processing':
-          return 'Order Processing';
+          return 'Processing';
         case 'confirmed':
-          return 'Order Confirmed';
+          return 'Confirmed';
         case 'pending':
           return 'Order Placed';
         case 'cancelled':
-          return 'Order Cancelled';
+          return 'Cancelled';
         case 'rejected':
-          return 'Order Rejected';
+          return 'Rejected';
         default:
           return 'Order Placed';
       }
     };
+
+    const getStatusBadgeStyle = (status: string) => {
+      switch (status.toLowerCase()) {
+        case 'delivered':
+          return { backgroundColor: '#ECFDF5', color: '#059669' };
+        case 'shipped':
+          return { backgroundColor: '#EFF6FF', color: '#2563EB' };
+        case 'processing':
+          return { backgroundColor: '#FEF3C7', color: '#D97706' };
+        case 'confirmed':
+          return { backgroundColor: '#F0FDF4', color: '#16A34A' };
+        case 'pending':
+          return { backgroundColor: '#FFF7ED', color: '#EA580C' };
+        case 'cancelled':
+          return { backgroundColor: '#FEF2F2', color: '#DC2626' };
+        case 'rejected':
+          return { backgroundColor: '#FEF2F2', color: '#DC2626' };
+        default:
+          return { backgroundColor: '#F3F4F6', color: '#6B7280' };
+      }
+    };
+
+    const statusStyle = getStatusBadgeStyle(item.status);
+    const formattedPrice = item.totalPrice
+      ? `₹${item.totalPrice.toLocaleString('en-IN')}`
+      : item.unitPrice
+        ? `₹${(item.unitPrice * (item.quantity || 1)).toLocaleString('en-IN')}`
+        : '';
 
     return (
       <TouchableOpacity
@@ -882,89 +924,119 @@ const MyOrders = () => {
         activeOpacity={0.7}
         onPress={() => navigation.navigate('OrderDetails', { orderId: item.orderId, itemId: item.itemId })}
       >
-        {/* Product Image */}
-        <View style={styles.productImageSection}>
-          {item.image ? (
-            <Image
-              source={{ uri: item.image }}
-              style={styles.productImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={[styles.productImage, styles.productImagePlaceholder]}>
-              <Ionicons name="image-outline" size={28} color="#C7C7CC" />
-            </View>
-          )}
-          {/* Reseller Badge */}
-          {item.isResellerOrder && (
-            <View style={styles.resellerBadge}>
-              <Ionicons name="storefront" size={10} color="#fff" />
-              <Text style={styles.resellerBadgeText}>Reselling</Text>
-            </View>
-          )}
+        {/* Order Header with Order Number and Price */}
+        <View style={styles.orderCardHeader}>
+          <View style={styles.orderNumberContainer}>
+            <Ionicons name="receipt-outline" size={14} color="#6B7280" />
+            <Text style={styles.orderNumberText}>#{item.orderNumber || item.orderId?.slice(0, 8)}</Text>
+          </View>
+          {formattedPrice ? (
+            <Text style={styles.orderCardPrice}>{formattedPrice}</Text>
+          ) : null}
         </View>
 
-        {/* Order Content */}
-        <View style={styles.orderContent}>
-          {/* Status Text */}
-          <Text style={[styles.statusTextMain, { color: item.statusColor }]}>
-            {getStatusDisplayText(item.status)}
-          </Text>
+        {/* Order Date */}
+        <Text style={styles.orderDateText}>
+          Placed on {item.date}
+        </Text>
 
-          {/* Delivery Message */}
-          <Text style={styles.deliveryMessage}>
-            {item.deliveryMessage || `Ordered on ${item.date}`}
-          </Text>
+        {/* Divider */}
+        <View style={styles.orderCardDivider} />
 
-          {/* Product Name */}
-          <Text style={styles.productName} numberOfLines={1}>
-            {item.name}
-          </Text>
-
-          {/* Size & Qty */}
-          <Text style={styles.sizeQtyText}>
-            {item.size && `Size: ${item.size}`}
-            {item.size && item.quantity && ' • '}
-            {item.quantity && `Qty: ${item.quantity}`}
-          </Text>
-
-          {/* Star Rating and Review Promo for Delivered Items */}
-          {item.status === 'delivered' && (
-            <View style={styles.reviewPromoContainer}>
-              <View style={styles.ratingRow}>
-                <View style={styles.starsRow}>
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <TouchableOpacity
-                      key={star}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleQuickRating(item, star);
-                      }}
-                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-                    >
-                      <Ionicons
-                        name="star-outline"
-                        size={20}
-                        color="#E0E0E0"
-                        style={styles.starIcon}
-                      />
-                    </TouchableOpacity>
-                  ))}
-                </View>
+        {/* Product Info Section */}
+        <View style={styles.orderProductSection}>
+          {/* Product Image */}
+          <View style={styles.orderImageContainer}>
+            {item.image ? (
+              <Image
+                source={{ uri: item.image }}
+                style={styles.orderProductImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={[styles.orderProductImage, styles.orderImagePlaceholder]}>
+                <Ionicons name="image-outline" size={24} color="#C7C7CC" />
               </View>
+            )}
+            {/* Reseller Badge */}
+            {item.isResellerOrder && (
+              <View style={styles.orderResellerBadge}>
+                <Ionicons name="storefront" size={9} color="#fff" />
+              </View>
+            )}
+          </View>
 
-              {/* Coins Promotion */}
-              <Text style={styles.reviewPromoText}>
-                Rate & Review to <Text style={styles.coinsHighlight}>earn 50 coins!</Text>
+          {/* Product Details */}
+          <View style={styles.orderProductDetails}>
+            <Text style={styles.orderProductName} numberOfLines={2}>
+              {item.name}
+            </Text>
+
+            {/* Size & Qty */}
+            <View style={styles.orderProductMeta}>
+              {item.size && (
+                <View style={styles.orderMetaBadge}>
+                  <Text style={styles.orderMetaText}>Size: {item.size}</Text>
+                </View>
+              )}
+              {item.quantity && (
+                <View style={styles.orderMetaBadge}>
+                  <Text style={styles.orderMetaText}>Qty: {item.quantity}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Status Badge */}
+            <View
+              style={[
+                styles.orderStatusBadge,
+                { backgroundColor: statusStyle.backgroundColor }
+              ]}
+            >
+              <View style={[styles.orderStatusDot, { backgroundColor: statusStyle.color }]} />
+              <Text style={[styles.orderStatusText, { color: statusStyle.color }]}>
+                {getStatusDisplayText(item.status)}
               </Text>
             </View>
-          )}
+          </View>
+
+          {/* Chevron */}
+          <View style={styles.orderChevron}>
+            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+          </View>
         </View>
 
-        {/* Chevron Arrow */}
-        <View style={styles.chevronContainer}>
-          <Ionicons name="chevron-forward" size={22} color="#C7C7CC" />
-        </View>
+        {/* Star Rating for Delivered Items */}
+        {item.status === 'delivered' && (
+          <View style={styles.orderReviewSection}>
+            <View style={styles.orderReviewDivider} />
+            <View style={styles.orderReviewContent}>
+              <Text style={styles.orderReviewLabel}>Rate this product</Text>
+              <View style={styles.orderStarsRow}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <TouchableOpacity
+                    key={star}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleQuickRating(item, star);
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                  >
+                    <Ionicons
+                      name="star-outline"
+                      size={22}
+                      color="#FFB800"
+                      style={styles.orderStarIcon}
+                    />
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.orderCoinsPromo}>
+                Earn <Text style={styles.orderCoinsHighlight}>50 coins</Text>
+              </Text>
+            </View>
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -1771,21 +1843,164 @@ const styles = StyleSheet.create({
   },
   // Enhanced Order Card - Image Left, Content Right
   orderCard: {
-    flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
-    marginBottom: 10,
-    borderRadius: 14,
-    padding: 12,
-    shadowColor: '#000000',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
+    marginBottom: 12,
+    borderRadius: 12,
+    padding: 16,
     borderWidth: 1,
-    borderColor: '#F0F0F3',
+    borderColor: '#E5E7EB',
   },
-  // Product Image Section - Left Side
+  // Order Header - Order Number and Price
+  orderCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  orderNumberContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  orderNumberText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+    letterSpacing: -0.3,
+  },
+  orderCardPrice: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#F53F7A',
+  },
+  orderDateText: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginBottom: 12,
+  },
+  orderCardDivider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginBottom: 12,
+  },
+  // Product Section
+  orderProductSection: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  orderImageContainer: {
+    position: 'relative',
+    marginRight: 12,
+  },
+  orderProductImage: {
+    width: 72,
+    height: 72,
+    borderRadius: 10,
+    backgroundColor: '#F8F8F8',
+  },
+  orderImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+  },
+  orderResellerBadge: {
+    position: 'absolute',
+    top: -4,
+    left: -4,
+    backgroundColor: '#E91E8C',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  orderProductDetails: {
+    flex: 1,
+    justifyContent: 'flex-start',
+  },
+  orderProductName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  orderProductMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 8,
+  },
+  orderMetaBadge: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  orderMetaText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#6B7280',
+  },
+  orderStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    gap: 6,
+  },
+  orderStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  orderStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  orderChevron: {
+    justifyContent: 'center',
+    paddingLeft: 8,
+  },
+  // Review Section for Delivered Items
+  orderReviewSection: {
+    marginTop: 12,
+  },
+  orderReviewDivider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginBottom: 12,
+  },
+  orderReviewContent: {
+    alignItems: 'center',
+  },
+  orderReviewLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  orderStarsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 6,
+  },
+  orderStarIcon: {
+    marginHorizontal: 2,
+  },
+  orderCoinsPromo: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  orderCoinsHighlight: {
+    color: '#F59E0B',
+    fontWeight: '600',
+  },
+  // Legacy styles - kept for backward compatibility
   productImageSection: {
     position: 'relative',
     marginRight: 14,
@@ -1864,7 +2079,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
-  orderNumberContainer: {
+  legacyOrderNumberContainer: {
     flex: 1,
     marginRight: 10,
   },

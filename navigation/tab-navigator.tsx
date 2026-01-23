@@ -738,8 +738,11 @@ export default function TabLayout() {
             tabPress: (e) => {
               // Prevent default behavior
               e.preventDefault();
-              // Navigate to Home tab and reset the stack to show Dashboard
-              navigation.navigate('Home', { screen: 'Home' });
+              // Reset the Home stack to just the Dashboard (clears all screens on top)
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Home', state: { routes: [{ name: 'Home' }] } }],
+              });
             },
           })}
         />

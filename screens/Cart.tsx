@@ -656,16 +656,6 @@ const Cart = () => {
     itemsToProcess?: any[]
   ) => {
     const orderItems = itemsToProcess || cartItems;
-    const resellerOrderItems: Array<{
-      productId: string | null;
-      variantId?: string | null;
-      quantity: number;
-      baseUnitPrice: number;
-      resellerUnitPrice: number;
-      baseTotal: number;
-      resellerTotal: number;
-      marginAmount: number;
-    }> = [];
 
     let userId: string | null = null;
 
@@ -686,73 +676,30 @@ const Cart = () => {
       }
     }
 
-    const orderItemSubtotal = orderItems.reduce((sum, item) => {
-      if (item.isReseller && item.resellerPrice) {
-        return sum + (item.resellerPrice * (item.quantity || 1)); // Treat as Unit Price
-      }
-      const { rsp } = getItemPricing(item);
-      return sum + (rsp * (item.quantity || 1));
-    }, 0);
-
-    const finalAmount = Math.max(0, orderItemSubtotal - couponDiscountAmount - coinDiscountAmount);
-    const status = paymentStatus === 'paid' ? 'confirmed' : 'pending';
-
-    const originalTotal = orderItems.reduce((sum, item) => {
-      const { rsp } = getItemPricing(item);
-      return sum + (rsp * (item.quantity || 1));
-    }, 0);
-    const resellerTotal = orderItems.reduce((sum, item) => {
-      if (item.isReseller && item.resellerPrice) {
-        return sum + (item.resellerPrice * (item.quantity || 1)); // Treat as Unit Price
-      }
-      const { rsp } = getItemPricing(item);
-      return sum + (rsp * (item.quantity || 1));
-    }, 0);
-    const totalProfit = resellerTotal - originalTotal;
-    const hasResellerInOrder = orderItems.some(item => item.isReseller);
-
     const shippingAddressString = defaultAddress
       ? `${defaultAddress.street_line1 || defaultAddress.address_line1 || ''}, ${defaultAddress.city || ''}, ${defaultAddress.state || ''} - ${defaultAddress.postal_code || defaultAddress.pincode || ''}`.trim()
       : userData?.location || 'Not provided';
 
-    const { data: orderData, error: orderError } = await supabase
-      .from('orders')
-      .insert([
-        {
-          user_id: userId,
-          status,
-          payment_method: paymentMethod,
-          payment_status: paymentStatus,
-          payment_id: paymentId || null,
-          total_amount: finalAmount,
-          subtotal: originalTotal,
-          shipping_amount: 0,
-          tax_amount: 0,
-          discount_amount: couponDiscountAmount + coinDiscountAmount,
-          shipping_address: shippingAddressString,
-          customer_name: defaultAddress?.full_name || userData?.name || 'Guest',
-          customer_email: userData?.email || null,
-          customer_phone: defaultAddress?.phone || userData?.phone || null,
-          is_reseller_order: hasResellerInOrder,
-          reseller_margin_percentage: hasResellerInOrder && originalTotal > 0 ? ((totalProfit / originalTotal) * 100) : null,
-          reseller_margin_amount: hasResellerInOrder ? totalProfit : null,
-          original_total: hasResellerInOrder ? (originalTotal - couponDiscountAmount) : null,
-          reseller_profit: hasResellerInOrder ? totalProfit : null,
-        },
-      ])
-      .select('id, order_number')
-      .single();
+    // Calculate total for all items to determine discount distribution
+    const totalOrderSubtotal = orderItems.reduce((sum, item) => {
+      if (item.isReseller && item.resellerPrice) {
+        return sum + (item.resellerPrice * (item.quantity || 1));
+      }
+      const { rsp } = getItemPricing(item);
+      return sum + (rsp * (item.quantity || 1));
+    }, 0);
 
-    if (orderError) {
-      console.error('Order creation error:', orderError);
-      throw new Error(orderError.message || 'Failed to create order');
-    }
+    const totalDiscountAmount = couponDiscountAmount + coinDiscountAmount;
 
-    if (!orderData) {
-      throw new Error('Order created but no data returned');
-    }
+    // Generate a base order number prefix for this checkout session
+    const baseOrderPrefix = `ORD${Date.now()}`;
 
-    const orderItemsPayload = orderItems.map((item: any) => {
+    const createdOrders: Array<{ id: string; order_number: string }> = [];
+    const status = paymentStatus === 'paid' ? 'confirmed' : 'pending';
+
+    // Create a separate order for each item
+    for (let itemIndex = 0; itemIndex < orderItems.length; itemIndex++) {
+      const item = orderItems[itemIndex];
       const quantity = item.quantity || 1;
       const { rsp } = getItemPricing(item);
       const baseUnitPrice = rsp || 0;
@@ -761,8 +708,22 @@ const Cart = () => {
       const resellerUnitPrice = item.isReseller && item.resellerPrice ? item.resellerPrice : null;
       const resellerTotalOverride = resellerUnitPrice ? resellerUnitPrice * quantity : null;
 
-      const totalPrice = resellerTotalOverride ?? baseTotal;
+      const itemSubtotal = resellerTotalOverride ?? baseTotal;
+
+      // Distribute discount proportionally based on item's share of total
+      const itemDiscountProportion = totalOrderSubtotal > 0 ? itemSubtotal / totalOrderSubtotal : 0;
+      const itemDiscountAmount = Math.round(totalDiscountAmount * itemDiscountProportion * 100) / 100;
+
+      const finalItemAmount = Math.max(0, itemSubtotal - itemDiscountAmount);
       const unitPrice = resellerUnitPrice ?? baseUnitPrice;
+
+      const isResellerItem = !!item.isReseller;
+      const itemProfit = isResellerItem && resellerTotalOverride ? resellerTotalOverride - baseTotal : 0;
+
+      // Generate indexed order number
+      const orderNumber = orderItems.length > 1
+        ? `${baseOrderPrefix}-${itemIndex + 1}`
+        : baseOrderPrefix;
 
       let productId: string | null = null;
       if (isValidUUID(item.productId)) {
@@ -785,132 +746,149 @@ const Cart = () => {
         variantId = item.variant.id;
       }
 
-      if (item.isReseller && productId) {
-        const resellerTotalLine = resellerTotalOverride ?? baseTotal; // This is now correct (Unit * Qty)
-        const resellerUnitPriceVal = resellerUnitPrice ?? baseUnitPrice;
-        const marginAmount = resellerTotalLine - baseTotal;
-        resellerOrderItems.push({
-          productId,
-          variantId,
-          quantity,
-          baseUnitPrice,
-          resellerUnitPrice: resellerUnitPriceVal,
-          baseTotal,
-          resellerTotal: resellerTotalLine,
-          marginAmount,
-        });
+      // Create order for this item
+      const { data: orderData, error: orderError } = await supabase
+        .from('orders')
+        .insert([
+          {
+            user_id: userId,
+            order_number: orderNumber,
+            status,
+            payment_method: paymentMethod,
+            payment_status: paymentStatus,
+            payment_id: paymentId || null,
+            total_amount: finalItemAmount,
+            subtotal: baseTotal,
+            shipping_amount: 0,
+            tax_amount: 0,
+            discount_amount: itemDiscountAmount,
+            shipping_address: shippingAddressString,
+            customer_name: defaultAddress?.full_name || userData?.name || 'Guest',
+            customer_email: userData?.email || null,
+            customer_phone: defaultAddress?.phone || userData?.phone || null,
+            is_reseller_order: isResellerItem,
+            reseller_margin_percentage: isResellerItem && baseTotal > 0 ? ((itemProfit / baseTotal) * 100) : null,
+            reseller_margin_amount: isResellerItem ? itemProfit : null,
+            original_total: isResellerItem ? baseTotal : null,
+            reseller_profit: isResellerItem ? itemProfit : null,
+          },
+        ])
+        .select('id, order_number')
+        .single();
+
+      if (orderError) {
+        console.error('Order creation error for item:', item.name, orderError);
+        throw new Error(orderError.message || 'Failed to create order');
       }
 
-      return {
+      if (!orderData) {
+        throw new Error('Order created but no data returned');
+      }
+
+      createdOrders.push(orderData);
+
+      // Create order item for this order
+      const orderItemPayload = {
         order_id: orderData.id,
         product_id: productId,
         product_name: item.name || 'Unknown Product',
         product_image: item.image || null,
         quantity,
         unit_price: unitPrice,
-        total_price: totalPrice,
+        total_price: itemSubtotal,
         size: item.size || null,
         color: item.color || null,
       };
-    });
 
-    const { error: itemsError } = await supabase
-      .from('order_items')
-      .insert(orderItemsPayload);
+      const { error: itemsError } = await supabase
+        .from('order_items')
+        .insert([orderItemPayload]);
 
-    if (itemsError) {
-      console.error('Order items creation error:', itemsError);
-      await supabase.from('orders').delete().eq('id', orderData.id);
-      throw new Error(itemsError.message || 'Failed to create order items');
-    }
+      if (itemsError) {
+        console.error('Order items creation error:', itemsError);
+        await supabase.from('orders').delete().eq('id', orderData.id);
+        throw new Error(itemsError.message || 'Failed to create order items');
+      }
 
-    if (hasResellerInOrder && userId && resellerOrderItems.length > 0) {
-      try {
-        const addressString = formatAddressForReseller(defaultAddress);
-        await ResellerService.logResellerOrderFromCheckout({
-          userId,
-          orderId: orderData.id,
-          orderNumber: orderData.order_number,
-          paymentMethod,
-          paymentStatus,
-          totals: { originalTotal, resellerTotal, totalProfit },
-          items: resellerOrderItems,
-          customer: {
-            name: defaultAddress?.full_name || defaultAddress?.name || userData?.name || 'Customer',
-            phone: defaultAddress?.phone || userData?.phone || null,
-            email: userData?.email || null,
-            address: addressString || userData?.location || null,
-            city: defaultAddress?.city || null,
-            state: defaultAddress?.state || null,
-            pincode: defaultAddress?.postal_code || defaultAddress?.pincode || null,
-          },
-        });
-      } catch (error) {
-        console.error('Failed to sync reseller order data:', error);
+      // Log reseller order if applicable
+      if (isResellerItem && userId && productId) {
+        try {
+          const addressString = formatAddressForReseller(defaultAddress);
+          await ResellerService.logResellerOrderFromCheckout({
+            userId,
+            orderId: orderData.id,
+            orderNumber: orderData.order_number,
+            paymentMethod,
+            paymentStatus,
+            totals: { originalTotal: baseTotal, resellerTotal: itemSubtotal, totalProfit: itemProfit },
+            items: [{
+              productId,
+              variantId,
+              quantity,
+              baseUnitPrice,
+              resellerUnitPrice: resellerUnitPrice ?? baseUnitPrice,
+              baseTotal,
+              resellerTotal: itemSubtotal,
+              marginAmount: itemProfit,
+            }],
+            customer: {
+              name: defaultAddress?.full_name || defaultAddress?.name || userData?.name || 'Customer',
+              phone: defaultAddress?.phone || userData?.phone || null,
+              email: userData?.email || null,
+              address: addressString || userData?.location || null,
+              city: defaultAddress?.city || null,
+              state: defaultAddress?.state || null,
+              pincode: defaultAddress?.postal_code || defaultAddress?.pincode || null,
+            },
+          });
+        } catch (error) {
+          console.error('Failed to sync reseller order data:', error);
+        }
       }
     }
 
-    if (couponAppliedCode && orderData?.id && userId) {
+    // Log coupon usage once for the first order (to avoid duplicate usage logs)
+    if (couponAppliedCode && createdOrders.length > 0 && userId) {
       try {
-        // Find the coupon that was used
         const { data: coupon, error: couponError } = await supabase
           .from('coupons')
           .select('id, code, created_by')
           .eq('code', couponAppliedCode)
           .single();
 
-        if (couponError || !coupon) {
-          console.error('Failed to find coupon:', couponError);
-          return orderData;
-        }
+        if (!couponError && coupon) {
+          const { error: usageError } = await supabase
+            .from('coupon_usage')
+            .insert({
+              coupon_id: coupon.id,
+              user_id: userId,
+              order_id: createdOrders[0].id,
+              discount_amount: couponDiscountAmount,
+            });
 
-        // Log usage for the coupon that was used
-        const { error: usageError } = await supabase
-          .from('coupon_usage')
-          .insert({
-            coupon_id: coupon.id,
-            user_id: userId,
-            order_id: orderData.id,
-            discount_amount: couponDiscountAmount,
-          });
+          if (usageError) {
+            console.error('Failed to log coupon usage:', usageError);
+          }
 
-        if (usageError) {
-          console.error('Failed to log coupon usage:', usageError);
-        }
+          // Log referrer coupon usage
+          const { data: referrerCoupons } = await supabase
+            .from('coupons')
+            .select('id, created_by')
+            .eq('code', couponAppliedCode)
+            .neq('created_by', userId)
+            .not('created_by', 'is', null);
 
-        // If this is a referral coupon code, also log usage on the referrer's referral coupon
-        // The referrer has a coupon with the same code (created when they accessed referral feature)
-        // Find all coupons with this code that were created by other users (referrers)
-        const { data: referrerCoupons, error: referrerCouponsError } = await supabase
-          .from('coupons')
-          .select('id, created_by')
-          .eq('code', couponAppliedCode)
-          .neq('created_by', userId)
-          .not('created_by', 'is', null);
-
-        if (!referrerCouponsError && referrerCoupons && referrerCoupons.length > 0) {
-          // Log usage on the referrer's coupon(s) for their analytics
-          // Typically there should be only one referrer coupon per code
-          for (const refCoupon of referrerCoupons) {
-            if (refCoupon.created_by && refCoupon.id !== coupon.id) {
-              const { error: refUsageError } = await supabase
-                .from('coupon_usage')
-                .insert({
-                  coupon_id: refCoupon.id,
-                  user_id: userId, // The user who used the coupon (the referred user)
-                  order_id: orderData.id,
-                  discount_amount: couponDiscountAmount,
-                });
-
-              if (!refUsageError) {
-                console.log('📊 Referral coupon usage logged for referrer analytics:', {
-                  referrerId: refCoupon.created_by,
-                  referredUserId: userId,
-                  couponCode: couponAppliedCode,
-                  referrerCouponId: refCoupon.id,
-                });
-              } else {
-                console.error('Failed to log referrer coupon usage:', refUsageError);
+          if (referrerCoupons && referrerCoupons.length > 0) {
+            for (const refCoupon of referrerCoupons) {
+              if (refCoupon.created_by && refCoupon.id !== coupon.id) {
+                await supabase
+                  .from('coupon_usage')
+                  .insert({
+                    coupon_id: refCoupon.id,
+                    user_id: userId,
+                    order_id: createdOrders[0].id,
+                    discount_amount: couponDiscountAmount,
+                  });
               }
             }
           }
@@ -920,7 +898,16 @@ const Cart = () => {
       }
     }
 
-    return orderData;
+    // Return the first order's data (for backwards compatibility) but include all order numbers
+    const primaryOrder = createdOrders[0];
+    return {
+      ...primaryOrder,
+      order_number: createdOrders.length > 1
+        ? `${baseOrderPrefix} (${createdOrders.length} items)`
+        : primaryOrder.order_number,
+      all_order_numbers: createdOrders.map(o => o.order_number),
+      all_order_ids: createdOrders.map(o => o.id),
+    };
   };
 
   const processRazorpayOrder = async (itemsToProcess: any[]) => {
@@ -2960,70 +2947,7 @@ const Cart = () => {
               )}
             </View>
 
-            {/* Recently Viewed Section */}
-            {recentlyViewed.length > 0 && (
-              <View style={styles.recentlyViewedSection}>
-                <View style={styles.recentlyViewedHeader}>
-                  <Text style={styles.recentlyViewedTitle}>Recently Viewed</Text>
-                  <TouchableOpacity
-                    style={styles.scrollArrowButton}
-                    onPress={() => {
-                      if (recentlyViewedListRef.current) {
-                        recentlyViewedListRef.current.scrollToOffset({ offset: CARD_WIDTH * 2, animated: true });
-                      }
-                    }}
-                  >
-                    <Ionicons name="chevron-forward" size={24} color="#F53F7A" />
-                  </TouchableOpacity>
-                </View>
-                <FlatList
-                  ref={recentlyViewedListRef}
-                  data={recentlyViewed}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  keyExtractor={(item) => item.id}
-                  contentContainerStyle={styles.recentlyViewedList}
-                  renderItem={({ item }) => (
-                    <View style={styles.recentProductCard}>
-                      <TouchableOpacity
-                        activeOpacity={0.9}
-                        onPress={() => {
-                          (navigation as any).navigate('ProductDetails', {
-                            productId: item.id,
-                            product: {
-                              id: item.id,
-                              name: item.name,
-                              price: item.price,
-                              image: item.image_url,
-                            }
-                          });
-                        }}
-                      >
-                        <Image
-                          source={{ uri: item.image_url }}
-                          style={styles.recentProductImage}
-                          resizeMode="cover"
-                        />
-                        <View style={styles.recentProductInfo}>
-                          <Text style={styles.recentProductName} numberOfLines={2}>{item.name}</Text>
-                          <View style={styles.recentProductPriceRow}>
-                            {item.mrp_price && item.mrp_price > item.price && (
-                              <Text style={styles.recentProductOriginalPrice}>₹{item.mrp_price}</Text>
-                            )}
-                            <Text style={styles.recentProductPrice}>₹{item.price}</Text>
-                            {item.discount_percentage && item.discount_percentage > 0 && (
-                              <Text style={styles.recentProductDiscountBadge}>{item.discount_percentage}% OFF</Text>
-                            )}
-                          </View>
-                        </View>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                />
-              </View>
-            )}
-
-            {/* Inline Checkout Footer */}
+            {/* Inline Checkout Footer - Moved above Recently Viewed */}
             <View style={[
               styles.checkoutFooter,
               {
@@ -3087,6 +3011,69 @@ const Cart = () => {
                 </TouchableOpacity>
               </View>
             </View>
+
+            {/* Recently Viewed Section - Now below checkout */}
+            {recentlyViewed.length > 0 && (
+              <View style={styles.recentlyViewedSection}>
+                <View style={styles.recentlyViewedHeader}>
+                  <Text style={styles.recentlyViewedTitle}>Recently Viewed</Text>
+                  <TouchableOpacity
+                    style={styles.scrollArrowButton}
+                    onPress={() => {
+                      if (recentlyViewedListRef.current) {
+                        recentlyViewedListRef.current.scrollToOffset({ offset: CARD_WIDTH * 2, animated: true });
+                      }
+                    }}
+                  >
+                    <Ionicons name="chevron-forward" size={24} color="#F53F7A" />
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  ref={recentlyViewedListRef}
+                  data={recentlyViewed}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.recentlyViewedList}
+                  renderItem={({ item }) => (
+                    <View style={styles.recentProductCard}>
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => {
+                          (navigation as any).navigate('ProductDetails', {
+                            productId: item.id,
+                            product: {
+                              id: item.id,
+                              name: item.name,
+                              price: item.price,
+                              image: item.image_url,
+                            }
+                          });
+                        }}
+                      >
+                        <Image
+                          source={{ uri: item.image_url }}
+                          style={styles.recentProductImage}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.recentProductInfo}>
+                          <Text style={styles.recentProductName} numberOfLines={2}>{item.name}</Text>
+                          <View style={styles.recentProductPriceRow}>
+                            {item.mrp_price && item.mrp_price > item.price && (
+                              <Text style={styles.recentProductOriginalPrice}>₹{item.mrp_price}</Text>
+                            )}
+                            <Text style={styles.recentProductPrice}>₹{item.price}</Text>
+                            {item.discount_percentage && item.discount_percentage > 0 && (
+                              <Text style={styles.recentProductDiscountBadge}>{item.discount_percentage}% OFF</Text>
+                            )}
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                />
+              </View>
+            )}
           </ScrollView>
 
         </KeyboardAvoidingView>
@@ -5748,7 +5735,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 8,
   },
-  priceRow: {
+  cartItemPriceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,

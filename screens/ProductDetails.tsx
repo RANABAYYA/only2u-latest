@@ -21,6 +21,7 @@ import {
   ActivityIndicator,
   StatusBar,
   Vibration,
+  BackHandler,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons, AntDesign } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
@@ -78,9 +79,27 @@ const ProductDetails = () => {
   const isFocused = useIsFocused();
 
   const handleBackPress = useCallback(() => {
+    // If scrolled down significantly (> 500px), scroll to top first
+    if (scrollYRef.current > 500 && scrollViewRef.current) {
+      scrollViewRef.current.scrollTo({ y: 0, animated: true });
+      return true; // Use true for BackHandler
+    }
+
     // Always navigate to home screen instead of goBack to prevent exiting app
-    (navigation as any).replace('TabNavigator');
+    // Use popToTop to ensure we go back to the root (Dashboard) and clear any intermediate product screens
+    if (navigation.canGoBack()) {
+      navigation.popToTop();
+    } else {
+      (navigation as any).navigate('Home');
+    }
+    return true;
   }, [navigation]);
+
+  // Handle hardware back button
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+    return () => subscription.remove();
+  }, [handleBackPress]);
 
   // State for fetched product (when only productId is provided)
   const [fetchedProduct, setFetchedProduct] = useState<any>(null);
@@ -139,6 +158,9 @@ const ProductDetails = () => {
     url: string;
     thumbnail?: string;
   }
+
+
+
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const VIDEO_THUMB_PLACEHOLDER = 'https://placehold.co/400x400?text=Video';
   const [showCollectionSheet, setShowCollectionSheet] = useState(false);
@@ -163,6 +185,8 @@ const ProductDetails = () => {
   const [showTryOnTutorialModal, setShowTryOnTutorialModal] = useState(false);
   const [tryOnTutorialDontShowAgain, setTryOnTutorialDontShowAgain] = useState(false);
   const [hasSeenTryOnTutorial, setHasSeenTryOnTutorial] = useState(false);
+  const [tryOnTutorialVideoPlaying, setTryOnTutorialVideoPlaying] = useState(true);
+  const tryOnTutorialVideoRef = useRef<Video>(null);
 
   const promptLoginForTryOn = useCallback(() => {
     Toast.show({
@@ -202,6 +226,7 @@ const ProductDetails = () => {
   const lastScale = useRef(1);
   const lastTranslateX = useRef(0);
   const lastTranslateY = useRef(0);
+
 
   // Review media viewer state
   const [showReviewMediaViewer, setShowReviewMediaViewer] = useState(false);
@@ -775,6 +800,8 @@ const ProductDetails = () => {
   const [showResellTutorialModal, setShowResellTutorialModal] = useState(false);
   const [resellTutorialDontShowAgain, setResellTutorialDontShowAgain] = useState(false);
   const [hasSeenResellTutorial, setHasSeenResellTutorial] = useState(false);
+  const [resellTutorialVideoPlaying, setResellTutorialVideoPlaying] = useState(true);
+  const resellTutorialVideoRef = useRef<Video>(null);
   const [selectedMargin, setSelectedMargin] = useState(15); // Default 15% margin
   const [customPrice, setCustomPrice] = useState<string>('');
   const [customPriceError, setCustomPriceError] = useState<string | null>(null);
@@ -2134,43 +2161,8 @@ const ProductDetails = () => {
 
       setShowTryOnModal(false);
 
-      // Update coin balance (deduct 50 coins for face swap)
-      setCoinBalance((prev) => prev - 50);
-
-      // Also update user context
-      if (userData) {
-        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 50 });
-      }
-
-      // Deduct coins from database
-      const { error: coinUpdateError } = await supabase
-        .from('users')
-        .update({ coin_balance: (userData?.coin_balance || 0) - 50 })
-        .eq('id', userData?.id);
-
-      if (coinUpdateError) {
-        console.error('Error updating coin balance:', coinUpdateError);
-        // Refund coins on database error
-        setCoinBalance((prev) => prev + 50);
-        if (userData) {
-          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
-        }
-        Alert.alert('Error', 'Failed to update coin balance. Please try again.');
-        return;
-      }
-
       // Check if piAPIVirtualTryOnService is available
       if (!piAPIVirtualTryOnService || typeof piAPIVirtualTryOnService.initiateVirtualTryOn !== 'function') {
-        // Refund coins on service error
-        setCoinBalance((prev) => prev + 50);
-        if (userData) {
-          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
-        }
-        await supabase
-          .from('users')
-          .update({ coin_balance: (userData?.coin_balance || 0) + 50 })
-          .eq('id', userData?.id);
-
         Alert.alert('Service Unavailable', 'Face Swap service is currently unavailable. Please try again later.');
         return;
       }
@@ -2193,37 +2185,11 @@ const ProductDetails = () => {
           text2: 'Your face swap is being processed. This may take a few minutes.',
         });
       } else {
-        // Refund coins on failure
-        setCoinBalance((prev) => prev + 50);
-        if (userData) {
-          setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
-        }
-        await supabase
-          .from('users')
-          .update({ coin_balance: (userData?.coin_balance || 0) + 50 })
-          .eq('id', userData?.id);
-
-        Alert.alert('Face Swap Failed', response?.error || 'Failed to start face swap. Your coins have been refunded.');
+        Alert.alert('Face Swap Failed', response?.error || 'Failed to start face swap.');
       }
     } catch (error) {
       console.error('Error starting face swap:', error);
-
-      // Refund coins on any error
-      setCoinBalance((prev) => prev + 50);
-      if (userData) {
-        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) + 50 });
-      }
-
-      try {
-        await supabase
-          .from('users')
-          .update({ coin_balance: (userData?.coin_balance || 0) + 50 })
-          .eq('id', userData?.id);
-      } catch (refundError) {
-        console.error('Error refunding coins:', refundError);
-      }
-
-      Alert.alert('Error', 'An unexpected error occurred. Your coins have been refunded. Please try again.');
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
     }
   };
 
@@ -2261,14 +2227,6 @@ const ProductDetails = () => {
     setShowTryOnModal(false);
 
     try {
-      // Update coin balance (deduct 50 coins for video face swap)
-      setCoinBalance((prev) => prev - 50);
-
-      // Also update user context
-      if (userData) {
-        setUserData({ ...userData, coin_balance: (userData.coin_balance || 0) - 50 });
-      }
-
       // Initiate video face swap with PiAPI
       const response = await akoolService.initiateVideoFaceSwap({
         userImageUrl: userData.profilePhoto,
@@ -2327,6 +2285,34 @@ const ProductDetails = () => {
           // if (userData?.id) {
           //   await akoolService.saveFaceSwapResults(userData.id, productId, status.resultImages);
           // }
+
+          // Deduct 50 coins upon successful completion
+          if (userData?.id) {
+            try {
+              // 1. Fetch latest user data to get current balance
+              const { data: currentUser, error: fetchError } = await supabase
+                .from('users')
+                .select('coin_balance')
+                .eq('id', userData.id)
+                .single();
+
+              if (currentUser && !fetchError) {
+                const newBalance = Math.max(0, (currentUser.coin_balance || 0) - 50);
+
+                // 2. Deduct coins in DB
+                await supabase
+                  .from('users')
+                  .update({ coin_balance: newBalance })
+                  .eq('id', userData.id);
+
+                // 3. Update local state
+                setCoinBalance(newBalance);
+                setUserData({ ...userData, coin_balance: newBalance });
+              }
+            } catch (deductError) {
+              console.error('Error deducting coins after face swap:', deductError);
+            }
+          }
 
           // Add product to preview
           // Prefer API-rendered image first
@@ -2437,6 +2423,32 @@ const ProductDetails = () => {
           // Save results permanently (store video URL in result_images array)
           if (userData?.id) {
             await akoolService.saveFaceSwapResults(userData.id, productId, [status.resultVideo]);
+
+            // Deduct 50 coins upon successful completion
+            try {
+              // 1. Fetch latest user data to get current balance
+              const { data: currentUser, error: fetchError } = await supabase
+                .from('users')
+                .select('coin_balance')
+                .eq('id', userData.id)
+                .single();
+
+              if (currentUser && !fetchError) {
+                const newBalance = Math.max(0, (currentUser.coin_balance || 0) - 50);
+
+                // 2. Deduct coins in DB
+                await supabase
+                  .from('users')
+                  .update({ coin_balance: newBalance })
+                  .eq('id', userData.id);
+
+                // 3. Update local state
+                setCoinBalance(newBalance);
+                setUserData({ ...userData, coin_balance: newBalance });
+              }
+            } catch (deductError) {
+              console.error('Error deducting coins after video face swap:', deductError);
+            }
           }
 
           // Add video product to preview
@@ -3867,6 +3879,8 @@ const ProductDetails = () => {
                       </TouchableOpacity>
                     </View>
 
+
+
                     <TouchableOpacity
                       style={styles.personalizedBadgeButtonPro}
                       onPress={() => {
@@ -4621,16 +4635,43 @@ const ProductDetails = () => {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.resellTutorialVideoWrapper}>
+            <TouchableOpacity
+              style={styles.resellTutorialVideoWrapper}
+              activeOpacity={0.9}
+              onPress={() => setTryOnTutorialVideoPlaying(!tryOnTutorialVideoPlaying)}
+            >
               <Video
+                ref={tryOnTutorialVideoRef}
                 source={{ uri: TRYON_TUTORIAL_VIDEO_URL }}
                 style={styles.resellTutorialVideo}
                 resizeMode={ResizeMode.COVER}
-                shouldPlay
-                useNativeControls
+                shouldPlay={tryOnTutorialVideoPlaying}
                 isLooping
               />
-            </View>
+              {!tryOnTutorialVideoPlaying && (
+                <View style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(0,0,0,0.3)',
+                }}>
+                  <View style={{
+                    width: 60,
+                    height: 60,
+                    borderRadius: 30,
+                    backgroundColor: 'rgba(255,255,255,0.9)',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}>
+                    <Ionicons name="play" size={32} color="#F53F7A" style={{ marginLeft: 4 }} />
+                  </View>
+                </View>
+              )}
+            </TouchableOpacity>
 
             <Text style={styles.resellTutorialDescription}>
               Upload a clear photo, pick your size, and instantly preview outfits. Share your looks
@@ -5102,16 +5143,43 @@ const ProductDetails = () => {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.resellTutorialVideoWrapper}>
+            <TouchableOpacity
+              style={styles.resellTutorialVideoWrapper}
+              activeOpacity={0.9}
+              onPress={() => setResellTutorialVideoPlaying(!resellTutorialVideoPlaying)}
+            >
               <Video
+                ref={resellTutorialVideoRef}
                 source={{ uri: RESELL_TUTORIAL_VIDEO_URL }}
                 style={styles.resellTutorialVideo}
                 resizeMode={ResizeMode.CONTAIN}
-                shouldPlay
-                useNativeControls
+                shouldPlay={resellTutorialVideoPlaying}
                 isMuted={false}
               />
-            </View>
+              {!resellTutorialVideoPlaying && (
+                <View style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(0,0,0,0.3)',
+                }}>
+                  <View style={{
+                    width: 60,
+                    height: 60,
+                    borderRadius: 30,
+                    backgroundColor: 'rgba(255,255,255,0.9)',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}>
+                    <Ionicons name="play" size={32} color="#F53F7A" style={{ marginLeft: 4 }} />
+                  </View>
+                </View>
+              )}
+            </TouchableOpacity>
 
             <Text style={styles.resellTutorialDescription}>
               Set your margin, share links on WhatsApp. We handle logistics, you enjoy the profit!
@@ -7078,9 +7146,10 @@ const styles = StyleSheet.create({
   },
   resellTutorialCard: {
     width: '100%',
+    maxHeight: '85%',
     backgroundColor: '#fff',
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 20,
+    padding: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.15,
@@ -7113,11 +7182,13 @@ const styles = StyleSheet.create({
   },
   resellTutorialVideoWrapper: {
     width: '100%',
-    aspectRatio: 9 / 16,
-    borderRadius: 24,
+    aspectRatio: 9 / 14,
+    maxHeight: 280,
+    borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#000',
-    marginBottom: 12,
+    marginBottom: 10,
+    alignSelf: 'center',
   },
   resellTutorialVideo: {
     width: '100%',

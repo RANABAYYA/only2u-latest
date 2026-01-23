@@ -1943,31 +1943,20 @@ const ProductCardSwipe = React.memo(({
                 <Ionicons name="close" size={20} color="#9CA3AF" />
               </TouchableOpacity>
             </View>
-            <View style={styles.resellTutorialVideoWrapper}>
-              <TouchableOpacity
-                style={{ flex: 1 }}
-                activeOpacity={0.9}
-                onPress={() => {
-                  if (tutorialVideoRef.current) {
-                    if (isTutorialVideoPlaying) {
-                      tutorialVideoRef.current.pauseAsync();
-                    } else {
-                      tutorialVideoRef.current.playAsync();
-                    }
-                    setIsTutorialVideoPlaying(!isTutorialVideoPlaying);
-                  }
-                }}
-              >
-                <Video
-                  ref={tutorialVideoRef}
-                  source={{ uri: TRYON_TUTORIAL_VIDEO_URL }}
-                  style={styles.resellTutorialVideo}
-                  resizeMode={ResizeMode.COVER}
-                  shouldPlay={isTutorialVideoPlaying}
-                  isLooping
-                  isMuted
-                />
-                {/* Play/Pause Overlay Button */}
+            <TouchableOpacity
+              style={styles.resellTutorialVideoWrapper}
+              activeOpacity={0.9}
+              onPress={() => setIsTutorialVideoPlaying(!isTutorialVideoPlaying)}
+            >
+              <Video
+                ref={tutorialVideoRef}
+                source={{ uri: TRYON_TUTORIAL_VIDEO_URL }}
+                style={styles.resellTutorialVideo}
+                resizeMode={ResizeMode.COVER}
+                shouldPlay={isTutorialVideoPlaying}
+                isLooping
+              />
+              {!isTutorialVideoPlaying && (
                 <View style={{
                   position: 'absolute',
                   top: 0,
@@ -1976,24 +1965,21 @@ const ProductCardSwipe = React.memo(({
                   bottom: 0,
                   justifyContent: 'center',
                   alignItems: 'center',
+                  backgroundColor: 'rgba(0,0,0,0.3)',
                 }}>
                   <View style={{
-                    width: 50,
-                    height: 50,
-                    borderRadius: 25,
-                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    width: 60,
+                    height: 60,
+                    borderRadius: 30,
+                    backgroundColor: 'rgba(255,255,255,0.9)',
                     justifyContent: 'center',
                     alignItems: 'center',
                   }}>
-                    <Ionicons
-                      name={isTutorialVideoPlaying ? 'pause' : 'play'}
-                      size={24}
-                      color="#fff"
-                    />
+                    <Ionicons name="play" size={32} color="#F53F7A" style={{ marginLeft: 4 }} />
                   </View>
                 </View>
-              </TouchableOpacity>
-            </View>
+              )}
+            </TouchableOpacity>
             <Text style={styles.resellTutorialDescription}>
               Upload a clear photo, pick your size, and instantly preview outfits. Share your looks
               with friends or save them for later!
@@ -2080,7 +2066,6 @@ const ProductCardSwipe = React.memo(({
                 resizeMode={ResizeMode.COVER}
                 shouldPlay
                 isLooping
-                isMuted
               />
             </View>
 
@@ -5940,44 +5925,44 @@ const Products = () => {
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.productsViewTutorialVideoWrapper}>
-                <TouchableOpacity
-                  activeOpacity={1}
-                  onPress={async () => {
-                    if (productsViewTutorialVideoRef.current) {
-                      if (isProductsViewTutorialVideoPlaying) {
-                        await productsViewTutorialVideoRef.current.pauseAsync();
-                        setIsProductsViewTutorialVideoPlaying(false);
-                      } else {
-                        await productsViewTutorialVideoRef.current.playAsync();
-                        setIsProductsViewTutorialVideoPlaying(true);
-                      }
-                    }
-                  }}
-                  style={{ width: '100%', height: '100%' }}
-                >
-                  <Video
-                    ref={productsViewTutorialVideoRef}
-                    source={{ uri: PRODUCTS_VIEW_TUTORIAL_VIDEO_URL }}
-                    style={styles.productsViewTutorialVideo}
-                    resizeMode={ResizeMode.COVER}
-                    shouldPlay
-                    isLooping
-                    isMuted={false}
-                    useNativeControls={true}
-                  />
-                  {!isProductsViewTutorialVideoPlaying && (
+              <TouchableOpacity
+                style={styles.productsViewTutorialVideoWrapper}
+                activeOpacity={0.9}
+                onPress={() => setIsProductsViewTutorialVideoPlaying(!isProductsViewTutorialVideoPlaying)}
+              >
+                <Video
+                  ref={productsViewTutorialVideoRef}
+                  source={{ uri: PRODUCTS_VIEW_TUTORIAL_VIDEO_URL }}
+                  style={styles.productsViewTutorialVideo}
+                  resizeMode={ResizeMode.COVER}
+                  shouldPlay={isProductsViewTutorialVideoPlaying}
+                  isLooping
+                  isMuted={false}
+                />
+                {!isProductsViewTutorialVideoPlaying && (
+                  <View style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    backgroundColor: 'rgba(0,0,0,0.3)',
+                  }}>
                     <View style={{
-                      ...StyleSheet.absoluteFillObject,
+                      width: 60,
+                      height: 60,
+                      borderRadius: 30,
+                      backgroundColor: 'rgba(255,255,255,0.9)',
                       justifyContent: 'center',
                       alignItems: 'center',
-                      backgroundColor: 'rgba(0,0,0,0.3)'
                     }}>
-                      <Ionicons name="play" size={50} color="rgba(255,255,255,0.9)" />
+                      <Ionicons name="play" size={32} color="#F53F7A" style={{ marginLeft: 4 }} />
                     </View>
-                  )}
-                </TouchableOpacity>
-              </View>
+                  </View>
+                )}
+              </TouchableOpacity>
 
               {/* View Selection Buttons */}
               <View style={styles.productsViewTutorialButtonsContainer}>
@@ -8994,10 +8979,10 @@ const styles = StyleSheet.create({
   resellTutorialCard: {
     backgroundColor: '#fff',
     borderRadius: 20,
-    padding: 20,
+    padding: 16,
     width: '100%',
     maxWidth: 480,
-    maxHeight: '90%',
+    maxHeight: '85%',
   },
   resellTutorialHeader: {
     flexDirection: 'row',
@@ -9025,13 +9010,13 @@ const styles = StyleSheet.create({
   },
   resellTutorialVideoWrapper: {
     width: '100%',
-    maxWidth: 240,
-    height: 400,
-    alignSelf: 'center',
-    borderRadius: 12,
+    aspectRatio: 9 / 14,
+    maxHeight: 280,
+    borderRadius: 16,
     overflow: 'hidden',
-    marginBottom: 16,
     backgroundColor: '#000',
+    marginBottom: 10,
+    alignSelf: 'center',
   },
   resellTutorialVideo: {
     width: '100%',
@@ -9708,6 +9693,7 @@ const styles = StyleSheet.create({
   productsViewTutorialCard: {
     width: '100%',
     maxWidth: 480,
+    maxHeight: '85%',
     backgroundColor: '#fff',
     borderRadius: 20,
     padding: 16,
@@ -9743,14 +9729,13 @@ const styles = StyleSheet.create({
   },
   productsViewTutorialVideoWrapper: {
     width: '100%',
-    aspectRatio: 9 / 16,
-    maxHeight: 300,
-    maxWidth: 200,
-    alignSelf: 'center',
-    borderRadius: 12,
+    aspectRatio: 9 / 14,
+    maxHeight: 280,
+    borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#000',
-    marginBottom: 12,
+    marginBottom: 10,
+    alignSelf: 'center',
   },
   productsViewTutorialVideo: {
     width: '100%',

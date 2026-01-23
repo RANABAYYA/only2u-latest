@@ -562,6 +562,11 @@ export default function ResellerEarnings() {
 
   const renderOrderItem = ({ item }: { item: FlattenedEarningItem }) => {
     const statusTheme = getStatusTheme(item.orderStatus || item.paymentStatus);
+    const orderDate = new Date(item.createdAt).toLocaleDateString('en-US', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
 
     return (
       <TouchableOpacity
@@ -571,60 +576,88 @@ export default function ResellerEarnings() {
           navigation.navigate('OrderDetails', { orderId: item.orderId });
         }}
       >
-        {/* Compact Row: Image + Product Info + Pricing */}
-        <View style={styles.earningsItemTopRow}>
-          {/* Product Image - Smaller */}
-          <View style={styles.earningsItemImageContainer}>
+        {/* Order Header with Order Number and Profit */}
+        <View style={styles.earningsCardHeader}>
+          <View style={styles.earningsOrderNumberContainer}>
+            <Ionicons name="receipt-outline" size={14} color="#6B7280" />
+            <Text style={styles.earningsOrderNumberText}>#{item.orderNumber}</Text>
+          </View>
+          <View style={styles.earningsProfitBadge}>
+            <Text style={styles.earningsProfitText}>+{formatCurrency(item.itemProfit)}</Text>
+          </View>
+        </View>
+
+        {/* Order Date */}
+        <Text style={styles.earningsDateText}>
+          Placed on {orderDate}
+        </Text>
+
+        {/* Divider */}
+        <View style={styles.earningsCardDivider} />
+
+        {/* Product Info Section */}
+        <View style={styles.earningsProductSection}>
+          {/* Product Image */}
+          <View style={styles.earningsImageContainer}>
             {item.productImage ? (
               <Image
                 source={{ uri: item.productImage }}
-                style={styles.earningsItemImage}
+                style={styles.earningsProductImage}
                 resizeMode="cover"
               />
             ) : (
-              <View style={[styles.earningsItemImage, styles.earningsItemImagePlaceholder]}>
+              <View style={[styles.earningsProductImage, styles.earningsImagePlaceholder]}>
                 <Ionicons name="image-outline" size={24} color="#C7C7CC" />
               </View>
             )}
           </View>
 
-          {/* Product Details - Compact */}
-          <View style={styles.earningsItemInfo}>
-            {/* Product Name */}
-            <Text style={styles.earningsItemName} numberOfLines={1}>
+          {/* Product Details */}
+          <View style={styles.earningsProductDetails}>
+            <Text style={styles.earningsProductName} numberOfLines={2}>
               {item.productName}
             </Text>
 
-            {/* Size only */}
-            {item.size && (
-              <Text style={styles.earningsItemMeta} numberOfLines={1}>
-                Size: {item.size}
-              </Text>
-            )}
-
-            {/* Pricing Row - Inline */}
-            <View style={styles.earningsItemPricingInline}>
-              <Text style={styles.pricingLabelSmall}>Base: </Text>
-              <Text style={styles.pricingValueSmall}>{formatCurrency(item.itemBasePrice)}</Text>
-              <Text style={styles.pricingArrow}> → </Text>
-              <Text style={styles.pricingLabelSmall}>Sold: </Text>
-              <Text style={styles.pricingValueSmallBold}>{formatCurrency(item.itemSellingPrice)}</Text>
-            </View>
-          </View>
-
-          {/* Right Side: Profit + Status */}
-          <View style={styles.earningsItemRight}>
-            {/* Profit */}
-            <View style={styles.profitBadgeCompact}>
-              <Text style={styles.profitBadgeTextCompact}>+{formatCurrency(item.itemProfit)}</Text>
+            {/* Size & Qty */}
+            <View style={styles.earningsProductMeta}>
+              {item.size && (
+                <View style={styles.earningsMetaBadge}>
+                  <Text style={styles.earningsMetaText}>Size: {item.size}</Text>
+                </View>
+              )}
+              {item.quantity && (
+                <View style={styles.earningsMetaBadge}>
+                  <Text style={styles.earningsMetaText}>Qty: {item.quantity}</Text>
+                </View>
+              )}
             </View>
 
-            {/* Status Pill */}
-            <View style={[styles.statusPillSmall, { backgroundColor: statusTheme.bg }]}>
-              <Text style={[styles.statusPillTextSmall, { color: statusTheme.color }]}>
+            {/* Pricing Row */}
+            <View style={styles.earningsPricingRow}>
+              <Text style={styles.earningsPricingLabel}>Base:</Text>
+              <Text style={styles.earningsPricingValue}>{formatCurrency(item.itemBasePrice)}</Text>
+              <Text style={styles.earningsPricingArrow}>→</Text>
+              <Text style={styles.earningsPricingLabel}>Sold:</Text>
+              <Text style={styles.earningsPricingSoldValue}>{formatCurrency(item.itemSellingPrice)}</Text>
+            </View>
+
+            {/* Status Badge */}
+            <View
+              style={[
+                styles.earningsStatusBadge,
+                { backgroundColor: statusTheme.bg }
+              ]}
+            >
+              <View style={[styles.earningsStatusDot, { backgroundColor: statusTheme.color }]} />
+              <Text style={[styles.earningsStatusText, { color: statusTheme.color }]}>
                 {statusTheme.label}
               </Text>
             </View>
+          </View>
+
+          {/* Chevron */}
+          <View style={styles.earningsChevron}>
+            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
           </View>
         </View>
       </TouchableOpacity>
@@ -1911,16 +1944,149 @@ const styles = StyleSheet.create({
   // New individual earnings item card styles - COMPACT
   earningsItemCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 12,
     marginHorizontal: 16,
     marginBottom: 12,
     padding: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 6,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
+  // Earnings Card Header
+  earningsCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  earningsOrderNumberContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  earningsOrderNumberText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+    letterSpacing: -0.3,
+  },
+  earningsProfitBadge: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  earningsProfitText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  earningsDateText: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginBottom: 12,
+  },
+  earningsCardDivider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginBottom: 12,
+  },
+  // Earnings Product Section
+  earningsProductSection: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  earningsImageContainer: {
+    position: 'relative',
+    marginRight: 12,
+  },
+  earningsProductImage: {
+    width: 72,
+    height: 72,
+    borderRadius: 10,
+    backgroundColor: '#F8F8F8',
+  },
+  earningsImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+  },
+  earningsProductDetails: {
+    flex: 1,
+    justifyContent: 'flex-start',
+  },
+  earningsProductName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  earningsProductMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 8,
+  },
+  earningsMetaBadge: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  earningsMetaText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#6B7280',
+  },
+  earningsPricingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  earningsPricingLabel: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  earningsPricingValue: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6B7280',
+  },
+  earningsPricingArrow: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginHorizontal: 4,
+  },
+  earningsPricingSoldValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  earningsStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    gap: 6,
+  },
+  earningsStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  earningsStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  earningsChevron: {
+    justifyContent: 'center',
+    paddingLeft: 8,
+  },
+  // Legacy Styles kept for backward compatibility
   earningsItemTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
